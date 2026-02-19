@@ -155,6 +155,7 @@ class BatchedCCM:
 			verbose = False
 		)
 		dummy.EmbedData()
+		dummy.RemoveNan()
 
 		libraryIndices = dummy.trainIndices.copy()
 		N_libraryIndices = len(libraryIndices)
