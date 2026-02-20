@@ -120,6 +120,12 @@ class MDE:
 		self.TimeDelay = TimeDelay
 		self.optimalEmbeddingDimensions = {}
 
+		# True when the caller explicitly supplied embedDimensions > 0 (equivalent
+		# to dimx's args.E > 0). When False, _check_convergence finds optimal E
+		# per variable, matching dimx's default behavior of calling EmbedDimension()
+		# for each CCM candidate.
+		self._userProvidedE = embedDimensions != 0
+
 		if torch.cuda.is_available():
 			self.device = torch.device('cuda')
 		else:
@@ -239,7 +245,14 @@ class MDE:
 
 		trainData_tensor = torch.tensor(trainData, device = self.device, dtype = self.dtype)
 		testData_tensor = torch.tensor(testData, device = self.device, dtype = self.dtype)
-		current_best_distance_matrix = torch.tensor(dummy._BuildExclusionMask(), device = self.device, dtype = self.dtype)
+		# Initialize distance matrix from the exclusion mask. Excluded pairs must
+		# be set to inf so topk always ranks them last, matching pyEDM's handling.
+		# Casting the boolean mask to float would give 1.0 for excluded pairs,
+		# which is not large enough to guarantee exclusion from the top-k.
+		exclusion_mask = dummy._BuildExclusionMask()
+		current_best_distance_matrix = torch.zeros([nTrain, nTest], device = self.device, dtype = self.dtype)
+		if exclusion_mask.any():
+			current_best_distance_matrix[torch.tensor(exclusion_mask, device = self.device)] = float('inf')
 
 		# we offset the prediction horizon with the indices because this accounts for non-continuous data selection
 		train_y = self.data[trainIndices + self.predictionHorizon, self.target]
@@ -247,19 +260,24 @@ class MDE:
 		test_y = self.data[testIndices + self.predictionHorizon, self.target]
 		test_y_tensor = torch.tensor(test_y, device = self.device, dtype = self.dtype)
 
-		# Pre-allocate tensors at full batch size to avoid repeated allocation/deallocation
+		# Pre-allocate tensors whose size does not vary with knn.
+		# knn-dependent tensors (neighborDistances, nearestNeighbors, weights, select)
+		# are not pre-allocated because current_knn grows as variables are added.
 		batch_distances = torch.zeros([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
 		candidateDistances = torch.empty([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
-		neighborDistances = torch.empty([self.batch_size, self.knn, nTest], device = self.device, dtype = self.dtype)
-		nearestNeighbors = torch.empty([self.batch_size, self.knn, nTest], device = self.device, dtype = torch.long)
 		minDistances = torch.empty([self.batch_size, nTest], device = self.device, dtype = self.dtype)
-		weights = torch.empty([self.batch_size, self.knn, nTest], device = self.device, dtype = self.dtype)
 		weightSum = torch.empty([self.batch_size, nTest], device = self.device, dtype = self.dtype)
-		select = torch.empty([self.batch_size, self.knn, nTest], device = self.device, dtype = self.dtype)
 		predictions = torch.empty([self.batch_size, nTest], device = self.device, dtype = self.dtype)
 		perfs = torch.zeros(self.batch_size, device = self.device, dtype = self.dtype)
 
 		for i in range(self.maxD):
+			# knn grows as variables are added, matching dimx where knn = E + 1
+			# and E is the number of columns in the current embedding.
+			# At iteration i, the embedding contains len(selectedVariables) already-
+			# chosen columns plus the one candidate being evaluated, giving E =
+			# len(selectedVariables) + 1 and therefore knn = len(selectedVariables) + 2.
+			current_knn = len(self.selectedVariables) + 2
+
 			# Process remaining variables in batches to avoid OOM
 			metric_results = []
 
@@ -276,17 +294,24 @@ class MDE:
 				# Add current best distances (slice to actual batch size)
 				torch.add(batch_distances[:batch_size], current_best_distance_matrix.unsqueeze(0), out = candidateDistances[:batch_size])
 
-				# find k nearest neighbors (topk writes values and indices into pre-allocated buffers)
-				torch.topk(candidateDistances[:batch_size], self.knn, dim = 1, largest = False, out = (neighborDistances[:batch_size], nearestNeighbors[:batch_size]))
-				FloorArray(neighborDistances[:batch_size], 1e-6)
+				# Find current_knn nearest neighbors. current_knn varies per outer
+				# iteration so we do not use pre-allocated out= buffers here.
+				# candidateDistances holds squared Euclidean distances; topk ranking
+				# is identical on squared vs. Euclidean (sqrt is monotone), so
+				# neighbor selection is correct. We take sqrt afterward so that the
+				# weight formula exp(-d/d_min) uses Euclidean distances, matching
+				# Simplex. Without sqrt, weights would be exp(-d²/d²_min) instead.
+				neighborDistances, nearestNeighbors = torch.topk(candidateDistances[:batch_size], current_knn, dim = 1, largest = False)
+				neighborDistances.sqrt_()
+				FloorArray(neighborDistances, 1e-6)
 
-				# compute weights and predictions in-place
-				torch.amin(neighborDistances[:batch_size], dim = 1, out = minDistances[:batch_size])
-				torch.div(neighborDistances[:batch_size], minDistances[:batch_size].unsqueeze(1), out = weights[:batch_size])
-				weights[:batch_size].neg_().exp_()
-				torch.sum(weights[:batch_size], dim = 1, out = weightSum[:batch_size])
-				select[:batch_size] = train_y_tensor[nearestNeighbors[:batch_size]]
-				torch.sum(weights[:batch_size] * select[:batch_size], dim = 1, out = predictions[:batch_size])
+				# compute weights and predictions
+				torch.amin(neighborDistances, dim = 1, out = minDistances[:batch_size])
+				weights = neighborDistances / minDistances[:batch_size].unsqueeze(1)
+				weights.neg_().exp_()
+				torch.sum(weights, dim = 1, out = weightSum[:batch_size])
+				select = train_y_tensor[nearestNeighbors]
+				torch.sum(weights * select, dim = 1, out = predictions[:batch_size])
 				predictions[:batch_size].div_(weightSum[:batch_size])
 
 				# calculate performances (slice to actual batch size)
@@ -500,8 +525,11 @@ class MDE:
 		if len(lib_sizes) < 2:
 			return candidate_columns
 
+		# Normalize by maximum (matching dimx: libSizesVec / libSizesVec[-1]).
+		# Min-max normalization would shift the x-axis origin to 0 and change
+		# the slope values relative to the CCMConvergenceThreshold.
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
-		lib_sizes_normalized = (lib_sizes_normalized - lib_sizes_normalized.min()) / (lib_sizes_normalized.max() - lib_sizes_normalized.min())
+		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
 		X = self.data[:, candidate_columns]
 		Y = self.data[:, self.target]
@@ -512,7 +540,7 @@ class MDE:
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
 			embedDimensions = self.embedDimensions,
-			predictionHorizon = 0,
+			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else self.embedDimensions + 1,
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
@@ -563,11 +591,15 @@ class MDE:
 		from sklearn.linear_model import LinearRegression
 		from scipy.signal import argrelextrema
 
-		if self.embedDimensions > 0:
+		# If the user explicitly provided E, use it for all CCM checks (matching
+		# dimx when args.E > 0). Otherwise find optimal E per variable (matching
+		# dimx's default behavior of calling EmbedDimension() for each candidate).
+		# Results are cached in self.optimalEmbeddingDimensions to avoid redundant work.
+		if self._userProvidedE:
 			best_e = self.embedDimensions
 		elif column not in self.optimalEmbeddingDimensions:
-		# Determine optimal E for this column if not cached
-			e_results = FindOptimalEmbeddingDimensionality(
+			# FindOptimalEmbeddingDimensionality returns (dimensions_list, correlations_list).
+			dims, corrs = FindOptimalEmbeddingDimensionality(
 				self.data,
 				[column],
 				self.target,
@@ -578,24 +610,20 @@ class MDE:
 				noTime = self.noTime
 			)
 
-			# Apply firstEMax logic
-			correlations = e_results[:, 1]
+			correlations = numpy.array(corrs)
 
 			if self.FirstEMax:
-				# Find local maxima
 				local_max_indices = argrelextrema(correlations, numpy.greater)[0]
 				if len(local_max_indices) > 0:
 					best_e_idx = local_max_indices[0]
 				else:
 					best_e_idx = len(correlations) - 1
 			else:
-				# Use global maximum
 				best_e_idx = numpy.argmax(correlations)
 
-			best_e = int(e_results[best_e_idx, 0])
+			best_e = int(dims[best_e_idx])
 			best_e_correlation = correlations[best_e_idx]
 
-			# Check if correlation meets minimum threshold
 			if best_e_correlation < self.EmbedDimCorrelationMin:
 				return (False, 0.0)
 
@@ -603,24 +631,27 @@ class MDE:
 		else:
 			best_e = self.optimalEmbeddingDimensions[column]
 
-		# Compute library sizes for CCM
-		lib_sizes = self.CCMLibraryPercentiles
+		# Convert percentile values to absolute library sizes (matching dimx:
+		# libSizes = [int(N * p/100) for p in pLibSizes]). The original code
+		# passed raw percentile values directly as trainSizes, which are far too
+		# small for any dataset of reasonable size.
+		lib_sizes = [int(percentile / 100 * self.data.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
 		if len(lib_sizes) < 2:
 			if self.verbose:
 				print(f"Warning: Not enough library sizes for CCM convergence check on column {column}")
 			return (True, 0.5)
 
-		# Normalize library sizes to [0, 1] for slope calculation
+		# Normalize by maximum (matching dimx: libSizesVec / libSizesVec[-1]).
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
-		lib_sizes_normalized = (lib_sizes_normalized - lib_sizes_normalized.min()) / (lib_sizes_normalized.max() - lib_sizes_normalized.min())
+		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
 		# Run CCM
 		ccm = CCM(
 			data = self.data,
 			columns = [column],
 			target = [self.target],
-			trainSizes = self.CCMLibraryPercentiles,
+			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
 			embedDimensions = best_e,
 			predictionHorizon = self.predictionHorizon,
