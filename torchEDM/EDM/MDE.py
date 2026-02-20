@@ -587,8 +587,6 @@ class MDE:
 		:return: (convergent, ccm_value) tuple
 		:rtype: Tuple[bool, float]
 		"""
-		from .CCM import CCM
-		from sklearn.linear_model import LinearRegression
 		from scipy.signal import argrelextrema
 
 		# If the user explicitly provided E, use it for all CCM checks (matching
@@ -631,10 +629,6 @@ class MDE:
 		else:
 			best_e = self.optimalEmbeddingDimensions[column]
 
-		# Convert percentile values to absolute library sizes (matching dimx:
-		# libSizes = [int(N * p/100) for p in pLibSizes]). The original code
-		# passed raw percentile values directly as trainSizes, which are far too
-		# small for any dataset of reasonable size.
 		lib_sizes = [int(percentile / 100 * self.data.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
 		if len(lib_sizes) < 2:
@@ -642,15 +636,12 @@ class MDE:
 				print(f"Warning: Not enough library sizes for CCM convergence check on column {column}")
 			return (True, 0.5)
 
-		# Normalize by maximum (matching dimx: libSizesVec / libSizesVec[-1]).
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
 		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
-		# Run CCM
-		ccm = CCM(
-			data = self.data,
-			columns = [column],
-			target = [self.target],
+		batchedCCM = BatchedCCM(
+			X = self.data[:, [column]],
+			Y = self.data[:, self.target],
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
 			embedDimensions = best_e,
@@ -658,21 +649,33 @@ class MDE:
 			knn = self.knn if self.knn > 0 else best_e + 1,
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
-			noTime = self.noTime,
+			validLib = self.validLib,
+			includeData = False,
 			ignoreNan = self.ignoreNan,
-			verbose = False
+			directions = 'reverse',
+			trainBlockIndices = self.train,
+			testBlockIndices = self.test,
+			device = self.device,
+			batchSize = 1,
+			useHalfPrecision = self.use_half_precision,
+			showProgress = False
 		)
-		ccm.sequential = True
 
-		ccm_result = ccm.Run()
+		result = batchedCCM.Run()
 
-		# Extract reverse correlation values (column 2 of libMeans)
-		reverse_correlations = ccm_result.libMeans[:, 2]
+		del batchedCCM
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
 
-		# Fit linear regression to check convergence slope
-		lr = LinearRegression()
-		lr.fit(lib_sizes_normalized.reshape(-1, 1), reverse_correlations)
-		slope = lr.coef_[0]
+		# result.reverse_performance has shape [len(lib_sizes)] for a single column+target
+		x = torch.tensor(lib_sizes_normalized, dtype = torch.float32, device = self.device)
+		y = torch.tensor(result.reverse_performance, dtype = torch.float32, device = self.device)
+
+		x_mean = x.mean()
+		y_mean = y.mean()
+		xy_mean = (x * y).mean()
+		x_var = (x ** 2).mean() - x_mean ** 2
+		slope = float((xy_mean - x_mean * y_mean) / x_var)
 
 		return (slope > self.CCMConvergenceThreshold, slope)
 
