@@ -144,7 +144,7 @@ class BatchedCCM:
 			train = self.train,
 			test = self.test,
 			embedDimensions = self.embedDimensions,
-			predictionHorizon = 0,
+			predictionHorizon = self.predictionHorizon,
 			knn = self.knn,
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
@@ -157,7 +157,7 @@ class BatchedCCM:
 		dummy.EmbedData()
 		dummy.RemoveNan()
 
-		libraryIndices = dummy.trainIndices.copy()
+		libraryIndices = numpy.array(dummy.trainIndices)
 		N_libraryIndices = len(libraryIndices)
 
 		embeddings = []
@@ -174,7 +174,7 @@ class BatchedCCM:
 
 		performance = numpy.zeros([len(self.trainSizes), self.sample, numSources, numTargets])
 
-		target = torch.tensor(Y[libraryIndices, :], dtype = self.dtype, device = self.device)
+		target = torch.tensor(Y[libraryIndices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 
 		d = torch.zeros([embeddings[0].shape[1], N_libraryIndices, N_libraryIndices],
 						dtype = self.dtype, device = self.device)
