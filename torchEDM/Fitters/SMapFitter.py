@@ -1,13 +1,22 @@
-from typing import Optional
+from typing import Optional, List, Union
 
 import numpy
 
 from torchEDM.EDM.SMap import SMap
+from .DataAdapter import DataAdapter
 from .EDMFitter import EDMFitter
+
 
 class SMapFitter(EDMFitter):
 	"""
-	Wrapper class for SMap that provides sklearn-like API.
+	sklearn-compatible wrapper for S-Map (Sequential Locally Weighted Global Linear Maps).
+
+	Usage::
+
+	    fitter = SMapFitter(EmbedDimensions=4, Theta=2.0)
+	    fitter.fit(X_train, y_train)
+	    y_pred = fitter.predict(X_test)
+	    result = fitter.result_  # full SMapResult (includes coefficients)
 	"""
 
 	def __init__(self,
@@ -20,62 +29,104 @@ class SMapFitter(EDMFitter):
 				 Embedded: bool = False,
 				 Verbose: bool = False):
 		"""
-		Initialize SMap wrapper with sklearn-style separate arrays.
-
-		:param EmbedDimensions: 	Embedding dimension (E)
-		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param KNN: 				Number of nearest neighbors
-		:param Step: 				Time delay step size (tau)
-		:param Theta: 				S-Map localization parameter
-		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param Embedded: 			Whether data is already embedded
-		:param Verbose: 			Print diagnostic messages
+		:param EmbedDimensions:   Embedding dimension (E).
+		:param PredictionHorizon: Prediction time horizon (Tp).
+		:param KNN:               Number of nearest neighbours (0 → all library points).
+		:param Step:              Time-delay step size (tau).
+		:param Theta:             S-Map localisation parameter.
+		:param ExclusionRadius:   Temporal exclusion radius for neighbours.
+		:param Embedded:          Whether data are already embedded.
+		:param Verbose:           Print diagnostic messages.
 		"""
-
 		super().__init__()
 
-		self.EmbedDimensions = EmbedDimensions
+		self.EmbedDimensions  = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
-		self.KNN = KNN
-		self.Step = Step
-		self.Theta = Theta
-		self.ExclusionRadius = ExclusionRadius
-		self.Embedded = Embedded
-		self.Verbose = Verbose
+		self.KNN              = KNN
+		self.Step             = Step
+		self.Theta            = Theta
+		self.ExclusionRadius  = ExclusionRadius
+		self.Embedded         = Embedded
+		self.Verbose          = Verbose
 
 		self.SMap = None
 
-	def Fit(self, XTrain: numpy.ndarray, YTrain: numpy.ndarray, XTest: numpy.ndarray, YTest: numpy.ndarray,
-			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
-			TestTime: Optional[numpy.ndarray] = None):
-		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
+	# ------------------------------------------------------------------
 
-		Data = self.GetEDMData()
+	def fit(self,
+			X_train: Union[numpy.ndarray, List[numpy.ndarray]],
+			y_train: Union[numpy.ndarray, List[numpy.ndarray]],
+			TrainStart: int = 0,
+			TrainEnd: int = 0,
+			trainTime: Optional[numpy.ndarray] = None) -> 'SMapFitter':
+		"""
+		Store training data as the S-Map library.
+
+		:param X_train:    Training feature data.
+		:param y_train:    Training target data.
+		:param TrainStart: Rows to skip at the start of the training set.
+		:param TrainEnd:   Rows to drop at the end of the training set.
+		:param trainTime:  Optional time-stamp column for training data.
+		:return: self
+		"""
+		super().fit(X_train, y_train, TrainStart, TrainEnd, trainTime)
+		return self
+
+	def predict(self,
+				X_test: numpy.ndarray,
+				y_test: Optional[numpy.ndarray] = None,
+				TestStart: int = 0,
+				TestEnd: int = 0,
+				testTime: Optional[numpy.ndarray] = None) -> numpy.ndarray:
+		"""
+		Predict using S-Map on the supplied test points.
+
+		:param X_test:   Test feature data.
+		:param y_test:   Test target data (optional; used for evaluation only).
+		:param TestStart: Rows to skip at the start of the test set.
+		:param TestEnd:  Rows to drop at the end of the test set.
+		:param testTime: Optional time-stamp column for test data.
+		:return: 1-D array of predicted values (NaN where no prediction).
+		"""
+		self._check_is_fitted()
+		self._build_adapter(X_test, y_test, TestStart, TestEnd, testTime)
+
+		Data         = self.GetEDMData()
 		TrainIndices = self.GetTrainIndices()
-		TestIndices = self.GetTestIndices()
-		YIndex = self.GetYIndex()
-		NoTime = not self.HasTime()
-
+		TestIndices  = self.GetTestIndices()
+		YIndex       = self.GetYIndex()
+		NoTime       = not self.HasTime()
 		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd + 1))
-		Target = YIndex
+		Columns      = list(range(XStart, XEnd + 1))
 
 		self.SMap = SMap(
-			data = Data,
-			columns = Columns,
-			target = Target,
-			train = TrainIndices,
-			test = TestIndices,
-			embedDimensions = self.EmbedDimensions,
+			data             = Data,
+			columns          = Columns,
+			target           = YIndex,
+			train            = TrainIndices,
+			test             = TestIndices,
+			embedDimensions  = self.EmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			theta = self.Theta,
-			exclusionRadius = self.ExclusionRadius,
-			noTime = NoTime,
-			verbose = self.Verbose,
-			embedded = self.Embedded
+			knn              = self.KNN,
+			step             = self.Step,
+			theta            = self.Theta,
+			exclusionRadius  = self.ExclusionRadius,
+			noTime           = NoTime,
+			verbose          = self.Verbose,
+			embedded         = self.Embedded,
 		)
 
-		self.Result = self.SMap.Run()
-		return self.Result
+		self.result_ = self.SMap.Run()
+		return self.result_.predictions
+
+	def get_params(self, deep: bool = True) -> dict:
+		return {
+			'EmbedDimensions':   self.EmbedDimensions,
+			'PredictionHorizon': self.PredictionHorizon,
+			'KNN':               self.KNN,
+			'Step':              self.Step,
+			'Theta':             self.Theta,
+			'ExclusionRadius':   self.ExclusionRadius,
+			'Embedded':          self.Embedded,
+			'Verbose':           self.Verbose,
+		}

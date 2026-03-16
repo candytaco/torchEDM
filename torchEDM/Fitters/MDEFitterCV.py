@@ -13,7 +13,21 @@ from ..EDM.Simplex import Simplex
 
 class MDEFitterCV(EDMFitter):
 	"""
-	MDE with cross-validation that supports both n-fold and leave-one-run-out CV.
+	MDE with cross-validation – supports both n-fold and leave-one-run-out CV.
+
+	The fit/predict split maps naturally onto a two-stage workflow:
+
+	* ``fit(X_train, y_train)`` – runs cross-validated MDE feature selection on
+	  training data only; stores the best feature set.
+	* ``predict(X_test, y_test)`` – makes a final prediction on held-out test
+	  data using the features selected during ``fit``.
+
+	Usage::
+
+	    fitter = MDEFitterCV(MaxD=5, PredictionHorizon=1)
+	    fitter.fit(X_train, y_train)
+	    y_pred = fitter.predict(X_test, y_test)
+	    result = fitter.result_  # MDECVResult with fold details
 	"""
 
 	def __init__(self,
@@ -36,7 +50,7 @@ class MDEFitterCV(EDMFitter):
 				 UseSMap: bool = False,
 				 Theta: float = 0.0,
 				 stdThreshold: float = 1e-2,
-				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
+				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
 				 MinPredictionThreshold: float = 0.0,
@@ -45,266 +59,311 @@ class MDEFitterCV(EDMFitter):
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
-		Initialize MDE cross-validation fitter.
-
-		:param MaxD: 				Maximum number of features to select
-		:param IncludeTarget: 		Whether to start with target in feature list
-		:param Convergent: 			Whether to use convergence checking
-		:param Metric: 				Metric to use: "correlation" or "MAE"
-		:param BatchSize: 			Number of features to process in each batch
-		:param HalfPrecision: 		Use float16 instead of float32 for GPU tensors
-		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
-		:param LeaveOneRunOut: 		If True, use leave-one-run-out CV instead of n-fold
-		:param FinalFeatureMode: 	Method for selecting final features: "best_fold" or "frequency"
-		:param Embed:				Whether to embed the data
-		:param EmbedDimensions: 	Embedding dimension (E)
-		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param knn: 				Number of nearest neighbors
-		:param Step: 				Time delay step size (tau)
-		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param Verbose: 			Print diagnostic messages
-		:param UseSMap: 			Whether to use SMap instead of Simplex
-		:param Theta: 				S-Map localization parameter
-		:param stdThreshold:		Stdev threshold below which to ignore variables
+		:param MaxD:                     Maximum number of features to select.
+		:param IncludeTarget:            Start with target variable in the feature list.
+		:param Convergent:               CCM convergence mode: ``'pre'``, ``'post'``, or ``False``.
+		:param Metric:                   Optimisation metric: ``'correlation'`` or ``'MAE'``.
+		:param BatchSize:                Features processed per GPU batch.
+		:param HalfPrecision:            Use float16 tensors on GPU.
+		:param Folds:                    Number of CV folds (ignored when LeaveOneRunOut is True).
+		:param LeaveOneRunOut:           Use leave-one-run-out CV instead of n-fold.
+		:param FinalFeatureMode:         How to pick final features: ``'best_fold'``,
+		                                 ``'frequency'``, or ``'reselect'``.
+		:param Embed:                    Embed the data before feature selection.
+		:param EmbedDimensions:          Embedding dimension (E).
+		:param PredictionHorizon:        Prediction time horizon (Tp).
+		:param knn:                      Number of nearest neighbours (0 → E+1).
+		:param Step:                     Time-delay step size (tau).
+		:param ExclusionRadius:          Temporal exclusion radius for neighbours.
+		:param Verbose:                  Print diagnostic messages.
+		:param UseSMap:                  Use S-Map instead of Simplex.
+		:param Theta:                    S-Map localisation parameter.
+		:param stdThreshold:             Minimum std dev to include a variable.
+		:param CCMLibraryPercentiles:    Library-size percentiles for CCM pre-check.
+		:param CCMNumSamples:            Random samples per library size for CCM.
+		:param CCMConvergenceThreshold:  Minimum slope for CCM convergence.
+		:param MinPredictionThreshold:   Minimum correlation to add a feature.
+		:param EmbedDimCorrelationMin:   Minimum in-sample correlation for embedding.
+		:param FirstEMax:                Use highest-E model in first step.
+		:param TimeDelay:                Extra time delay (0 = none).
+		:param progressBar:              Show progress bar during CV.
 		"""
 		super().__init__(progressBar)
 
-		self.MaxD = MaxD
-		self.IncludeTarget = IncludeTarget
-		self.Convergent = Convergent
-		self.Metric = Metric
-		self.BatchSize = BatchSize
-		self.HalfPrecision = HalfPrecision
-		self.Folds = Folds
-		self.LeaveOneRunOut = LeaveOneRunOut
-		self.FinalFeatureMode = FinalFeatureMode
-		self.EmbedDimensions = EmbedDimensions
-		self.PredictionHorizon = PredictionHorizon
-		self.KNN = knn
-		self.Step = Step
-		self.ExclusionRadius = ExclusionRadius
-		self.Verbose = Verbose
-		self.UseSMap = UseSMap
-		self.Theta = Theta
-		self.embed = Embed
-		self.stdThreshold = stdThreshold
-
-		self.CCMLibraryPercentiles = CCMLibraryPercentiles
-		self.CCMNumSamples = CCMNumSamples
+		self.MaxD                    = MaxD
+		self.IncludeTarget           = IncludeTarget
+		self.Convergent              = Convergent
+		self.Metric                  = Metric
+		self.BatchSize               = BatchSize
+		self.HalfPrecision           = HalfPrecision
+		self.Folds                   = Folds
+		self.LeaveOneRunOut          = LeaveOneRunOut
+		self.FinalFeatureMode        = FinalFeatureMode
+		self.EmbedDimensions         = EmbedDimensions
+		self.PredictionHorizon       = PredictionHorizon
+		self.KNN                     = knn
+		self.Step                    = Step
+		self.ExclusionRadius         = ExclusionRadius
+		self.Verbose                 = Verbose
+		self.UseSMap                 = UseSMap
+		self.Theta                   = Theta
+		self.embed                   = Embed
+		self.stdThreshold            = stdThreshold
+		self.CCMLibraryPercentiles   = CCMLibraryPercentiles
+		self.CCMNumSamples           = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
-		self.MinPredictionThreshold = MinPredictionThreshold
-		self.EmbedDimCorrelationMin = EmbedDimCorrelationMin
-		self.FirstEMax = FirstEMax
-		self.TimeDelay = TimeDelay
+		self.MinPredictionThreshold  = MinPredictionThreshold
+		self.EmbedDimCorrelationMin  = EmbedDimCorrelationMin
+		self.FirstEMax               = FirstEMax
+		self.TimeDelay               = TimeDelay
 
-		self.trainDataAdapter = None
-		self.cvSplitter = None
-		self.foldResults = []
-		self.foldAccuracies = []
-		self.bestFold = None
-		self.bestFoldFeatures = None
-		self.bestFoldAccuracy = None
+		self.trainDataAdapter  = None
+		self.cvSplitter        = None
+		self.foldResults: List[MDEResult] = []
+		self.foldAccuracies: List[float]  = []
+		self.bestFold: Optional[int]      = None
+		self.bestFoldFeatures: Optional[List[int]] = None
+		self.bestFoldAccuracy: Optional[float]     = None
 
-	def Fit(self,
-			XTrain: Union[numpy.ndarray, List[numpy.ndarray]],
-			YTrain: Union[numpy.ndarray, List[numpy.ndarray]],
-			XTest: Optional[numpy.ndarray] = None,
-			YTest: Optional[numpy.ndarray] = None,
+	# ------------------------------------------------------------------
+	# sklearn-compatible public interface
+	# ------------------------------------------------------------------
+
+	def fit(self,
+			X_train: Union[numpy.ndarray, List[numpy.ndarray]],
+			y_train: Union[numpy.ndarray, List[numpy.ndarray]],
 			TrainStart: int = 0,
 			TrainEnd: int = 0,
-			TestStart: int = 0,
-			TestEnd: int = 0,
-			TrainTime: Optional[numpy.ndarray] = None,
-			TestTime: Optional[numpy.ndarray] = None,
-			initialVariables: Optional[List[int]] = None):
+			trainTime: Optional[numpy.ndarray] = None,
+			initialVariables: Optional[List[int]] = None) -> 'MDEFitterCV':
 		"""
-		Fit the model using cross-validation.
+		Run cross-validated MDE feature selection on training data.
 
-		:param XTrain:				Training features (single array or list of arrays for multiple runs)
-		:param YTrain:				Training target (single array or list of arrays for multiple runs)
-		:param XTest:				Test features (optional, for final prediction)
-		:param YTest:				Test target (optional, for final prediction)
-		:param TrainStart:			Samples to exclude at start of each run
-		:param TrainEnd:			Samples to exclude at end of each run
-		:param TestStart:			Samples to exclude at start of test data
-		:param TestEnd:				Samples to exclude at end of test data
-		:param TrainTime:			Time labels for train data
-		:param TestTime:			Time labels for test data
-		:param initialVariables: 	Initial columns to use
+		:param X_train:           Training features (array or list of arrays for
+		                          multiple independent runs).
+		:param y_train:           Training target (array or list of arrays).
+		:param TrainStart:        Rows to skip at the start of each training run.
+		:param TrainEnd:          Rows to drop at the end of each training run.
+		:param trainTime:         Optional time-stamp column for training data.
+		:param initialVariables:  Optional pre-selected column indices to start from.
+		:return: self
 		"""
-		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
+		super().fit(X_train, y_train, TrainStart, TrainEnd, trainTime)
 
 		self.trainDataAdapter = DataAdapter.MakeDataAdapter(
-			XTrain, YTrain, None, None, TrainStart, TrainEnd, 0, 0, TrainTime, None
+			X_train, y_train, None, None,
+			TrainStart, TrainEnd, 0, 0,
+			trainTime, None,
 		)
 
 		self.cvSplitter = EDMCVSplitter(
-			dataAdapter = self.trainDataAdapter,
-			nFolds = self.Folds,
+			dataAdapter    = self.trainDataAdapter,
+			nFolds         = self.Folds,
 			leaveOneRunOut = self.LeaveOneRunOut,
-			edmStyleIndices = True
+			edmStyleIndices = True,
 		)
 
 		trainData = self.trainDataAdapter.fullData
-		target = trainData.shape[1] - 1
+		target    = trainData.shape[1] - 1
 
-		self.foldResults = []
+		self.foldResults    = []
 		self.foldAccuracies = []
 
-		numSplits = self.cvSplitter.GetNSplits()
-		progressBar = ProgressBar(total = numSplits, desc = 'MDE CV Fold', leave = False)
+		numSplits   = self.cvSplitter.GetNSplits()
+		progressBar = ProgressBar(total=numSplits, desc='MDE CV Fold', leave=False)
 
 		for trainIndices, testIndices in self.cvSplitter.Split():
-			foldResult = self.FitSingleFold(trainData, trainIndices, testIndices, target, initialVariables)
+			foldResult = self._fit_single_fold(
+				trainData, trainIndices, testIndices, target, initialVariables
+			)
 			self.foldResults.append(foldResult)
 			self.foldAccuracies.append(foldResult.compute_error())
 			progressBar.update(1)
 
-		self.bestFold = numpy.argmax(self.foldAccuracies)
+		self.bestFold         = int(numpy.argmax(self.foldAccuracies))
 		self.bestFoldAccuracy = self.foldAccuracies[self.bestFold]
 		self.bestFoldFeatures = self.foldResults[self.bestFold].selected_features
 
 		return self
 
-	def FitSingleFold(self,
-					  data: numpy.ndarray,
-					  trainIndices: List[int],
-					  testIndices: List[int],
-					  target: int,
-					  initialVariables: Optional[List[int]] = None,
-					  convergent: bool = None) -> MDEResult:
+	def predict(self,
+				X_test: numpy.ndarray,
+				y_test: Optional[numpy.ndarray] = None,
+				TestStart: int = 0,
+				TestEnd: int = 0,
+				testTime: Optional[numpy.ndarray] = None) -> numpy.ndarray:
 		"""
-		Fit MDE on a single cross-validation fold.
+		Predict on test data using the feature set selected during ``fit``.
 
-		:param data: 			Full data array
-		:param trainIndices: 	EDM-style train indices [start1, end1, start2, end2, ...]
-		:param testIndices: 	EDM-style test indices [start1, end1, start2, end2, ...]
-		:param target: 			Target column index
-		:param initialVariables: Initial columns to use
-		:return: 				MDEResult for this fold
+		:param X_test:   Test feature data.
+		:param y_test:   Test target data (optional; used for evaluation only).
+		:param TestStart: Rows to skip at the start of the test set.
+		:param TestEnd:  Rows to drop at the end of the test set.
+		:param testTime: Optional time-stamp column for test data.
+		:return: 1-D array of predicted values (NaN where no prediction).
+		:raises RuntimeError: if ``fit`` has not been called yet.
+		:raises ValueError:   if no test data is provided.
 		"""
-		mde = MDE(
-			data = data,
-			target = target,
-			maxD = self.MaxD,
-			include_target = self.IncludeTarget,
-			convergent = convergent if convergent is not None else self.Convergent, # for final call without convergence
-			metric = self.Metric,
-			batch_size = self.BatchSize,
-			use_half_precision = self.HalfPrecision,
-			columns = initialVariables,
-			train = trainIndices,
-			test = testIndices,
-			embedDimensions = self.EmbedDimensions,
-			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			exclusionRadius = self.ExclusionRadius,
-			embedded = not self.embed,
-			noTime = not self.trainDataAdapter.HasTime,
-			verbose = self.Verbose,
-			useSMap = self.UseSMap,
-			theta = self.Theta,
-			stdThreshold = self.stdThreshold,
-			CCMLibraryPercentiles = self.CCMLibraryPercentiles,
-			CCMNumSamples = self.CCMNumSamples,
-			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
-			MinPredictionThreshold = self.MinPredictionThreshold,
-			EmbedDimCorrelationMin = self.EmbedDimCorrelationMin,
-			FirstEMax = self.FirstEMax,
-			TimeDelay = self.TimeDelay
+		self._check_is_fitted()
+
+		if len(self.foldResults) == 0:
+			raise RuntimeError("Model not fitted. Call fit() first.")
+
+		if X_test is None:
+			raise ValueError("X_test must be provided")
+
+		if y_test is None:
+			y_test = numpy.zeros((X_test.shape[0], 1))
+
+		# Build combined data adapter
+		self.DataAdapter = DataAdapter.MakeDataAdapter(
+			self.trainDataAdapter.XTrain,
+			self.trainDataAdapter.YTrain,
+			X_test, y_test,
+			self.trainDataAdapter.TrainStart,
+			self.trainDataAdapter.TrainEnd,
+			TestStart, TestEnd,
+			self.trainDataAdapter.trainTime,
+			testTime,
 		)
 
-		return mde.Run()
-
-	def Predict(self, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
-				TestStart = None, TestEnd = None,
-				testTime: Optional[numpy.ndarray] = None
-				) -> MDECVResult:
-		"""
-		Predict using the final chosen feature set on test data.
-
-		:param XTest: 	Test features (uses stored test data if None)
-		:param YTest: 	Test target (uses stored test data if None)
-		:return: 		Cross-validation results including final prediction
-		"""
-		if len(self.foldResults) == 0:
-			raise RuntimeError("Model not fitted. Call Fit() first.")
-
-		if XTest is None:
-			XTest = self.DataAdapter.XTest
-		if YTest is None:
-			YTest = self.DataAdapter.YTest
-
-		if TestStart is None:
-			TestStart = self.DataAdapter.TestStart
-		if TestEnd is None:
-			TestEnd = self.DataAdapter.TestEnd
-		if testTime is None:
-			testTime = self.DataAdapter.testTime
-
-		if XTest is None or YTest is None:
-			raise ValueError("No test data provided")
-
-		self.DataAdapter = DataAdapter.MakeDataAdapter(self.trainDataAdapter.XTrain, self.trainDataAdapter.YTrain,
-													   XTest, YTest, self.trainDataAdapter.TrainStart,
-													   self.trainDataAdapter.TrainEnd, TestStart, TestEnd,
-													   self.trainDataAdapter.TrainTime, testTime)
+		# Select final feature set
 		if self.FinalFeatureMode == "frequency":
-			features = self.GetFrequencyFeatures()
+			features = self._get_frequency_features()
 		elif self.FinalFeatureMode == 'reselect':
 			allSelected = []
 			for fold in self.foldResults:
 				allSelected += fold.selected_features
-			allSelected = list(set(allSelected))
-			allSelected.sort()
-			last = self.DataAdapter.YIndex
+			allSelected = sorted(set(allSelected))
+			last             = self.DataAdapter.YIndex
 			reselect_columns = allSelected + [last]
-			res = self.FitSingleFold(self.DataAdapter.fullData[:, reselect_columns],
-									self.DataAdapter.TrainIndices, self.DataAdapter.TestIndices,
-									 len(allSelected), convergent = False)
+			res = self._fit_single_fold(
+				self.DataAdapter.fullData[:, reselect_columns],
+				self.DataAdapter.TrainIndices,
+				self.DataAdapter.TestIndices,
+				len(allSelected),
+				convergent=False,
+			)
 			features = res.selected_features
-		else: # self.FinalFeatureMode == "best_fold":
+		else:  # "best_fold"
 			features = self.bestFoldFeatures
 
 		simplex = Simplex(
-			data = self.DataAdapter.fullData,
-			columns = features,
-			target = self.DataAdapter.YIndex,
-			train = self.DataAdapter.TrainIndices,
-			test = self.DataAdapter.TestIndices,
-			embedDimensions = self.EmbedDimensions,
+			data              = self.DataAdapter.fullData,
+			columns           = features,
+			target            = self.DataAdapter.YIndex,
+			train             = self.DataAdapter.TrainIndices,
+			test              = self.DataAdapter.TestIndices,
+			embedDimensions   = self.EmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			exclusionRadius = self.ExclusionRadius,
-			noTime = self.DataAdapter.hasTime,
-			verbose = self.Verbose,
-			embedded = True
+			knn               = self.KNN,
+			step              = self.Step,
+			exclusionRadius   = self.ExclusionRadius,
+			noTime            = self.DataAdapter.hasTime,
+			verbose           = self.Verbose,
+			embedded          = True,
 		)
 
-		result = simplex.Run()
-		self.Result = MDECVResult(
-			final_forecast = result,
+		simplex_result = simplex.Run()
+		self.result_   = MDECVResult(
+			final_forecast    = simplex_result,
 			selected_features = features,
-			fold_results = self.foldResults
+			fold_results      = self.foldResults,
+			accuracy          = self.foldAccuracies,
+			best_fold         = self.bestFold,
 		)
-		return self.Result
+		return self.result_.predictions
 
+	def get_params(self, deep: bool = True) -> dict:
+		return {
+			'MaxD':                    self.MaxD,
+			'IncludeTarget':           self.IncludeTarget,
+			'Convergent':              self.Convergent,
+			'Metric':                  self.Metric,
+			'BatchSize':               self.BatchSize,
+			'HalfPrecision':           self.HalfPrecision,
+			'Folds':                   self.Folds,
+			'LeaveOneRunOut':          self.LeaveOneRunOut,
+			'FinalFeatureMode':        self.FinalFeatureMode,
+			'Embed':                   self.embed,
+			'EmbedDimensions':         self.EmbedDimensions,
+			'PredictionHorizon':       self.PredictionHorizon,
+			'knn':                     self.KNN,
+			'Step':                    self.Step,
+			'ExclusionRadius':         self.ExclusionRadius,
+			'Verbose':                 self.Verbose,
+			'UseSMap':                 self.UseSMap,
+			'Theta':                   self.Theta,
+			'stdThreshold':            self.stdThreshold,
+			'CCMLibraryPercentiles':   self.CCMLibraryPercentiles,
+			'CCMNumSamples':           self.CCMNumSamples,
+			'CCMConvergenceThreshold': self.CCMConvergenceThreshold,
+			'MinPredictionThreshold':  self.MinPredictionThreshold,
+			'EmbedDimCorrelationMin':  self.EmbedDimCorrelationMin,
+			'FirstEMax':               self.FirstEMax,
+			'TimeDelay':               self.TimeDelay,
+		}
 
-	def GetFrequencyFeatures(self) -> List[int]:
+	# ------------------------------------------------------------------
+	# Private helpers
+	# ------------------------------------------------------------------
+
+	def _fit_single_fold(self,
+						 data: numpy.ndarray,
+						 trainIndices,
+						 testIndices,
+						 target: int,
+						 initialVariables: Optional[List[int]] = None,
+						 convergent=None) -> MDEResult:
 		"""
-		Get most frequent features across folds.
+		Run MDE on a single CV fold.
 
-		:return: List of most frequent feature indices
+		:param data:             Full data array for this fold.
+		:param trainIndices:     EDM-style train indices.
+		:param testIndices:      EDM-style test indices.
+		:param target:           Target column index.
+		:param initialVariables: Optional pre-selected column indices.
+		:param convergent:       Override convergence setting (None → use self.Convergent).
+		:return: MDEResult for this fold.
 		"""
-		allFeatures = []
+		mde = MDE(
+			data                    = data,
+			target                  = target,
+			maxD                    = self.MaxD,
+			include_target          = self.IncludeTarget,
+			convergent              = convergent if convergent is not None else self.Convergent,
+			metric                  = self.Metric,
+			batch_size              = self.BatchSize,
+			use_half_precision      = self.HalfPrecision,
+			columns                 = initialVariables,
+			train                   = trainIndices,
+			test                    = testIndices,
+			embedDimensions         = self.EmbedDimensions,
+			predictionHorizon       = self.PredictionHorizon,
+			knn                     = self.KNN,
+			step                    = self.Step,
+			exclusionRadius         = self.ExclusionRadius,
+			embedded                = not self.embed,
+			noTime                  = not self.trainDataAdapter.HasTime,
+			verbose                 = self.Verbose,
+			useSMap                 = self.UseSMap,
+			theta                   = self.Theta,
+			stdThreshold            = self.stdThreshold,
+			CCMLibraryPercentiles   = self.CCMLibraryPercentiles,
+			CCMNumSamples           = self.CCMNumSamples,
+			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
+			MinPredictionThreshold  = self.MinPredictionThreshold,
+			EmbedDimCorrelationMin  = self.EmbedDimCorrelationMin,
+			FirstEMax               = self.FirstEMax,
+			TimeDelay               = self.TimeDelay,
+		)
+		return mde.Run()
+
+	def _get_frequency_features(self) -> List[int]:
+		"""Return the MaxD most-frequent features across all CV folds."""
+		featureCounts: dict = {}
 		for result in self.foldResults:
-			allFeatures.extend(result.selected_features)
-
-		featureCounts = {}
-		for feature in allFeatures:
-			featureCounts[feature] = featureCounts.get(feature, 0) + 1
-
-		sortedFeatures = sorted(featureCounts.items(), key = lambda x: x[1], reverse = True)
-		return [feature for feature, count in sortedFeatures[:self.MaxD]]
+			for feature in result.selected_features:
+				featureCounts[feature] = featureCounts.get(feature, 0) + 1
+		sortedFeatures = sorted(featureCounts.items(), key=lambda x: x[1], reverse=True)
+		return [feature for feature, _ in sortedFeatures[: self.MaxD]]

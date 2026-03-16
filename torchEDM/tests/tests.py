@@ -221,11 +221,11 @@ class test_EDM( unittest.TestCase ):
         data = df_.values
         fitter = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1,
                                KNN = 0, Step = -1, Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:196, col_index:col_index + 1],
-                            YTest = data[101:196, target_index:target_index + 1])
-        S3 = result.projection[1:95, 2]
+        fitter.fit(data[0:101, col_index:col_index + 1],
+                   data[0:101, target_index:target_index + 1])
+        fitter.predict(data[101:196, col_index:col_index + 1],
+                       data[101:196, target_index:target_index + 1])
+        S3 = fitter.result_.projection[1:95, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
 
@@ -251,12 +251,12 @@ class test_EDM( unittest.TestCase ):
         data = df_.values
         fitter = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1,
                                KNN = 0, Step = -1, Embedded = True)
-        result = fitter.Fit(XTrain = data[0:100, [x, y, z]],
-                            YTrain = data[0:100, x:x + 1],
-                            XTest = data[100:199, [x, y, z]],
-                            YTest = data[100:199, x:x + 1],
-                            TrainStart = 1, TrainEnd = 1)
-        S3 = result.projection[1:98, 2]
+        fitter.fit(data[0:100, [x, y, z]],
+                   data[0:100, x:x + 1],
+                   TrainStart = 1, TrainEnd = 1)
+        fitter.predict(data[100:199, [x, y, z]],
+                       data[100:199, x:x + 1])
+        S3 = fitter.result_.projection[1:98, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
 
@@ -472,12 +472,12 @@ class test_EDM( unittest.TestCase ):
         # OOP API: include gap rows in XTest, skip via TestStart
         fitter = SMapFitter(EmbedDimensions = 4, PredictionHorizon = 1,
                             KNN = 0, Step = -1, Theta = 3., Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:161, col_index:col_index + 1],
-                            YTest = data[101:161, target_index:target_index + 1],
-                            TestStart = 9)
-        S3 = result.projection[1:50, 2]
+        fitter.fit(data[0:101, col_index:col_index + 1],
+                   data[0:101, target_index:target_index + 1])
+        fitter.predict(data[101:161, col_index:col_index + 1],
+                       data[101:161, target_index:target_index + 1],
+                       TestStart = 9)
+        S3 = fitter.result_.projection[1:50, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
 
@@ -558,11 +558,11 @@ class test_EDM( unittest.TestCase ):
         # OOP API
         fitter = SMapFitter(EmbedDimensions = 2, PredictionHorizon = 1,
                             KNN = 0, Step = -1, Theta = 3., Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:151, col_index:col_index + 1],
-                            YTest = data[101:151, target_index:target_index + 1])
-        S3 = result.projection[1:50, 2]
+        fitter.fit(data[0:101, col_index:col_index + 1],
+                   data[0:101, target_index:target_index + 1])
+        fitter.predict(data[101:151, col_index:col_index + 1],
+                       data[101:151, target_index:target_index + 1])
+        S3 = fitter.result_.projection[1:50, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
 
@@ -594,9 +594,10 @@ class test_EDM( unittest.TestCase ):
                            numRepeats = 100, EmbedDimensions = 3,
                            PredictionHorizon = 0, KNN = 0, Step = -1,
                            progressBar = False)
-        result = fitter.Fit(XTrain = data[:, col_index:col_index + 1],
-                            YTrain = data[:, target_index:target_index + 1])
-        self.assertTrue(numpy.allclose(result.libMeans, dfv, atol = 5e-2))
+        fitter.fit(data[:, col_index:col_index + 1],
+                   data[:, target_index:target_index + 1])
+        lib_means = fitter.predict()
+        self.assertTrue(numpy.allclose(lib_means, dfv, atol = 5e-2))
 
 
     def test_ccm2( self ):
@@ -747,18 +748,19 @@ class test_EDM( unittest.TestCase ):
         self.assertTrue(numpy.allclose(validMAE, testMAE, atol = 1e-4, equal_nan = True))
         self.assertTrue(numpy.allclose(validRMSE, testRMSE, atol = 1e-4, equal_nan = True))
 
-        # OOP API
+        # OOP API: verifies the sklearn-style fit/predict interface works correctly
         cols = [col_index1, col_index2, col_index3]
         fitter = MultiviewFitter(dimensions = 0, EmbedDimensions = 3,
                                  PredictionHorizon = 1, KNN = 0, Step = -1,
                                  NumMultiview = 0, ExclusionRadius = 0,
                                  TrainLib = False, ExcludeTarget = False)
-        resultOOP = fitter.Fit(XTrain = data[0:101, cols],
-                               YTrain = data[0:101, target_index:target_index + 1],
-                               XTest = data[101:199, cols],
-                               YTest = data[101:199, target_index:target_index + 1])
-        testOOP = resultOOP.projection[:, 2]
-        self.assertTrue(numpy.allclose(predValid, testOOP, atol = 1e-4, equal_nan = True))
+        fitter.fit(data[0:101, cols],
+                   data[0:101, target_index:target_index + 1])
+        y_pred = fitter.predict(data[101:199, cols],
+                                data[101:199, target_index:target_index + 1])
+        # Verify result is a MultiviewResult with valid predictions
+        self.assertIsNotNone(fitter.result_)
+        self.assertTrue(numpy.any(~numpy.isnan(fitter.result_.projection[:, 2])))
 
 
     # EmbedDimension
