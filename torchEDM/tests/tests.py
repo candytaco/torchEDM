@@ -758,9 +758,13 @@ class test_EDM( unittest.TestCase ):
                    data[0:101, target_index:target_index + 1])
         y_pred = fitter.predict(data[101:199, cols],
                                 data[101:199, target_index:target_index + 1])
-        # Verify result is a MultiviewResult with valid predictions
-        self.assertIsNotNone(fitter.result_)
-        self.assertTrue(numpy.any(~numpy.isnan(fitter.result_.projection[:, 2])))
+        # Verify result type, non-trivial predictions, and meaningful correlation
+        from torchEDM.EDM.Results import MultiviewResult
+        self.assertIsInstance(fitter.result_, MultiviewResult)
+        self.assertTrue(numpy.any(~numpy.isnan(y_pred)),
+                        "predict() should return at least some non-NaN values")
+        self.assertGreater(fitter.result_.compute_error(), 0.5,
+                           "Multiview OOP predictions should correlate with observations")
 
 
     # EmbedDimension

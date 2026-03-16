@@ -178,7 +178,7 @@ class EDMFitter:
 		"""
 		if y_test is None:
 			if X_test.ndim == 1:
-				X_test = X_test[:, None]
+				X_test = X_test[:, None].copy()
 			y_test = numpy.zeros((X_test.shape[0], 1))
 
 		self.DataAdapter = DataAdapter.MakeDataAdapter(

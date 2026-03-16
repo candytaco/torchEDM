@@ -231,17 +231,17 @@ class MDEFitterCV(EDMFitter):
 		if self.FinalFeatureMode == "frequency":
 			features = self._get_frequency_features()
 		elif self.FinalFeatureMode == 'reselect':
-			allSelected = []
+			allSelected: List[int] = []
 			for fold in self.foldResults:
 				allSelected += fold.selected_features
-			allSelected = sorted(set(allSelected))
+			uniqueSortedFeatures = sorted(set(allSelected))
 			last             = self.DataAdapter.YIndex
-			reselect_columns = allSelected + [last]
+			reselect_columns = uniqueSortedFeatures + [last]
 			res = self._fit_single_fold(
 				self.DataAdapter.fullData[:, reselect_columns],
 				self.DataAdapter.TrainIndices,
 				self.DataAdapter.TestIndices,
-				len(allSelected),
+				len(uniqueSortedFeatures),
 				convergent=False,
 			)
 			features = res.selected_features
@@ -310,11 +310,11 @@ class MDEFitterCV(EDMFitter):
 
 	def _fit_single_fold(self,
 						 data: numpy.ndarray,
-						 trainIndices,
-						 testIndices,
+						 trainIndices: List[int],
+						 testIndices: List[int],
 						 target: int,
 						 initialVariables: Optional[List[int]] = None,
-						 convergent=None) -> MDEResult:
+						 convergent: Optional[bool] = None) -> MDEResult:
 		"""
 		Run MDE on a single CV fold.
 
