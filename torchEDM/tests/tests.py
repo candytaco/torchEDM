@@ -1,6 +1,9 @@
+import os
 import unittest
 from datetime import datetime
 from warnings import filterwarnings, catch_warnings
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from numpy import nan, array, array_equal, ndarray
 import numpy
@@ -50,12 +53,12 @@ class test_EDM( unittest.TestCase ):
     @classmethod
     def setUpClass( self ):
         self.verbose = False
-        self.GetValidFiles( self )
+        self.GetValidationFiles(self)
 
     
     # 
     
-    def GetValidFiles( self ):
+    def GetValidationFiles(self):
         """Create dictionary of DataFrame values from file name keys"""
         self.ValidationFiles = {}
 
@@ -85,7 +88,7 @@ class test_EDM( unittest.TestCase ):
 
         # Create map of module validFiles pathnames in validFiles
         for file in validFiles:
-            filename = "validation/" + file
+            filename = os.path.join(_TESTS_DIR, "validation", file)
             self.ValidationFiles[ file] = read_csv(filename)
 
     
