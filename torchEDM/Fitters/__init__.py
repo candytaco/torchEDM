@@ -4,3 +4,6 @@ from .SMapFitter import SMapFitter
 from .MultiviewFitter import MultiviewFitter
 from .MDEFitter import MDEFitter
 from .MDEFitterCV import MDEFitterCV
+from .EmbedDimensionFitter import EmbedDimensionFitter
+from .PredictionHorizonFitter import PredictionHorizonFitter
+from .SMapNeighborhoodFitter import SMapNeighborhoodFitter

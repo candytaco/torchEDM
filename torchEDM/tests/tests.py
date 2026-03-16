@@ -18,6 +18,9 @@ from torchEDM.Fitters.SimplexFitter import SimplexFitter
 from torchEDM.Fitters.SMapFitter import SMapFitter
 from torchEDM.Fitters.CCMFitter import CCMFitter
 from torchEDM.Fitters.MultiviewFitter import MultiviewFitter
+from torchEDM.Fitters.EmbedDimensionFitter import EmbedDimensionFitter
+from torchEDM.Fitters.PredictionHorizonFitter import PredictionHorizonFitter
+from torchEDM.Fitters.SMapNeighborhoodFitter import SMapNeighborhoodFitter
 import torchEDM.EDM.Embed
 from torchEDM.ExampleData import dataFileNames
 import importlib.resources
@@ -789,6 +792,25 @@ class test_EDM( unittest.TestCase ):
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 1e-6))
 
+        # OOP API: EmbedDimensionFitter
+        data = df_.values
+        fitter = EmbedDimensionFitter(maxE = 12, PredictionHorizon = 15, Step = -5,
+                                       ExclusionRadius = 0, Embedded = False)
+        fitter.fit(data[0:500, col_index:col_index + 1],
+                   data[0:500, target_index:target_index + 1])
+        sweep = fitter.predict(data[500:800, col_index:col_index + 1],
+                               data[500:800, target_index:target_index + 1])
+        self.assertEqual(sweep.shape, (12, 2),
+                         "EmbedDimensionFitter.predict() should return shape (maxE, 2)")
+        self.assertTrue(numpy.array_equal(sweep[:, 0], numpy.arange(1, 13)),
+                        "First column should be E values 1..maxE")
+        self.assertIsNotNone(fitter.best_param_)
+        self.assertIn(fitter.best_param_, range(1, 13),
+                      "best_param_ should be within [1, maxE]")
+        self.assertGreater(fitter.score(data[500:800, col_index:col_index + 1],
+                                        data[500:800, target_index:target_index + 1]),
+                           0.0, "score() should return a positive correlation")
+
     
     # PredictInterval
     
@@ -811,6 +833,25 @@ class test_EDM( unittest.TestCase ):
         dfv = self.ValidationFiles["PredictInterval_valid.csv"].values
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 1e-6))
+
+        # OOP API: PredictionHorizonFitter
+        data = df_.values
+        fitter = PredictionHorizonFitter(maxTp = 15, EmbedDimensions = 3, Step = -1,
+                                          Embedded = False)
+        fitter.fit(data[0:150, col_index:col_index + 1],
+                   data[0:150, target_index:target_index + 1])
+        sweep = fitter.predict(data[150:198, col_index:col_index + 1],
+                               data[150:198, target_index:target_index + 1])
+        self.assertEqual(sweep.shape, (15, 2),
+                         "PredictionHorizonFitter.predict() should return shape (maxTp, 2)")
+        self.assertTrue(numpy.array_equal(sweep[:, 0], numpy.arange(1, 16)),
+                        "First column should be Tp values 1..maxTp")
+        self.assertIsNotNone(fitter.best_param_)
+        self.assertIn(fitter.best_param_, range(1, 16),
+                      "best_param_ should be within [1, maxTp]")
+        self.assertGreater(fitter.score(data[150:198, col_index:col_index + 1],
+                                        data[150:198, target_index:target_index + 1]),
+                           0.0, "score() should return a positive correlation")
 
     
     # PredictNonlinear
@@ -837,6 +878,27 @@ class test_EDM( unittest.TestCase ):
         dfv = self.ValidationFiles["PredictNonlinear_valid.csv"].values
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 1e-6))
+
+        # OOP API: SMapNeighborhoodFitter
+        data = df_.values
+        theta_vals = [0.01, 0.1, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20]
+        fitter = SMapNeighborhoodFitter(theta = theta_vals,
+                                         EmbedDimensions = 4, PredictionHorizon = 1,
+                                         KNN = 0, Step = -1, Embedded = False)
+        fitter.fit(data[0:500, col_index:col_index + 1],
+                   data[0:500, target_index:target_index + 1])
+        sweep = fitter.predict(data[500:800, col_index:col_index + 1],
+                               data[500:800, target_index:target_index + 1])
+        self.assertEqual(sweep.shape, (len(theta_vals), 2),
+                         "SMapNeighborhoodFitter.predict() should return shape (n_theta, 2)")
+        self.assertTrue(numpy.allclose(sweep[:, 0], theta_vals),
+                        "First column should be the requested theta values")
+        self.assertIsNotNone(fitter.best_param_)
+        self.assertIn(fitter.best_param_, theta_vals,
+                      "best_param_ should be one of the tested theta values")
+        self.assertGreater(fitter.score(data[500:800, col_index:col_index + 1],
+                                        data[500:800, target_index:target_index + 1]),
+                           0.0, "score() should return a positive correlation")
 
     
     # Generative mode

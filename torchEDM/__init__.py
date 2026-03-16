@@ -28,7 +28,10 @@ from .Visualization import (
     plot_predict_interval,
     plot_predict_nonlinear
 )
-# Import execution configuration
+# Import hyperparameter selector Fitters
+from .Fitters.EmbedDimensionFitter import EmbedDimensionFitter
+from .Fitters.PredictionHorizonFitter import PredictionHorizonFitter
+from .Fitters.SMapNeighborhoodFitter import SMapNeighborhoodFitter
 
 __version__     = "3"
 __versionDate__ = "2026-01-02"
