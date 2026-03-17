@@ -1,8 +1,7 @@
 
 # python modules
-from itertools import combinations, repeat
+from itertools import combinations
 from math import floor, sqrt
-from multiprocessing import get_context
 from warnings import warn
 
 # package modules
@@ -281,14 +280,9 @@ class Multiview:
             # Set test = train for in-sample training
             args['test'] = self.train
 
-        # Create iterable for Pool.starmap, repeated copies of data, args
-        poolArgs = zip( self.combos, repeat( self.Embedding ), repeat( args ) )
-
-        # Multiargument starmap : MultiviewSimplexcorrelation in PoolFunc
-        mpContext = get_context( self.mpMethod.value if self.mpMethod else None )
-        with mpContext.Pool( processes = self.numProcess ) as pool :
-            correlationList = pool.starmap(MultiviewSimplexcorrelation, poolArgs,
-										   chunksize = self.chunksize)
+        # Sequential evaluation of all combos
+        correlationList = [MultiviewSimplexcorrelation(combo, self.Embedding, args)
+                           for combo in self.combos]
 
         correlationVec    = array( correlationList, dtype = float )
         rank_i    = argsort( correlationVec )[::-1] # Reverse results 
@@ -318,14 +312,9 @@ class Multiview:
                  'noTime'          : True,
                  'ignoreNan'       : self.ignoreNan }
 
-        # Create iterable for Pool.starmap, repeated copies of data, args
-        poolArgs = zip( self.topRankCombos, repeat( self.Embedding ),
-                        repeat( args ) )
-
-        # Multiargument starmap : MultiviewSimplexPred in PoolFunc
-        mpContext = get_context( self.mpMethod.value if self.mpMethod else None )
-        with mpContext.Pool( processes = self.numProcess ) as pool :
-            dfList = pool.starmap(MultiviewSimplexPred, poolArgs)
+        # Sequential projection for top-ranked combos
+        dfList = [MultiviewSimplexPred(combo, self.Embedding, args)
+                  for combo in self.topRankCombos]
 
         self.topRankProjections = dict( zip( self.topRankCombos, dfList ) )
 
