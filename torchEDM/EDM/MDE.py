@@ -209,8 +209,8 @@ class MDE:
 			verbose = self.verbose
 		)
 		dummy.EmbedData()
-		trainIndices = numpy.array(dummy.trainIndices, dtype = numpy.int)
-		testIndices = numpy.array(dummy.testIndices, dtype = numpy.int)
+		trainIndices = numpy.array(dummy.trainIndices, dtype = int)
+		testIndices = numpy.array(dummy.testIndices, dtype = int)
 
 		trainData = dummy.Embedding[trainIndices, :]
 		testData = dummy.Embedding[testIndices, :]
