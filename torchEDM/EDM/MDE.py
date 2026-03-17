@@ -49,6 +49,8 @@ class MDE:
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
+				 CCMSeed = None,
+				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
 				 EmbedDimCorrelationMin: float = 0.0,
 				 FirstEMax: bool = False,
@@ -82,6 +84,8 @@ class MDE:
 		:param CCMLibraryPercentiles: 	Library sizes for CCM testing as percent of train data size
 		:param CCMNumSamples: 	Number of random samples per library size for CCM
 		:param CCMConvergenceThreshold: 	Minimum slope threshold for CCM convergence
+		:param CCMSeed: 	Random seed for reproducible CCM sampling (None for non-reproducible)
+		:param CCMMaxEmbeddingDimensions: 	Maximum embedding dimension for per-variable E search in CCM convergence check
 		:param MinPredictionThreshold: 	Minimum correlation threshold for candidate filtering
 		:param EmbedDimCorrelationMin: 	Minimum correlation for E selection
 		:param FirstEMax: 	Use first local maximum in E-rho curve instead of global max
@@ -114,6 +118,8 @@ class MDE:
 		self.CCMLibraryPercentiles = CCMLibraryPercentiles
 		self.CCMNumSamples = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
+		self.CCMSeed = CCMSeed
+		self.CCMMaxE = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.EmbedDimCorrelationMin = EmbedDimCorrelationMin
 		self.FirstEMax = FirstEMax
@@ -552,7 +558,8 @@ class MDE:
 			testBlockIndices = self.test,
 			device = self.device,
 			batchSize = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
-			useHalfPrecision = self.use_half_precision
+			useHalfPrecision = self.use_half_precision,
+			seed = self.CCMSeed
 		)
 
 		result = batchedCCM.Run()
@@ -601,7 +608,7 @@ class MDE:
 				self.data,
 				[column],
 				self.target,
-				self.maxD,
+				self.CCMMaxE,
 				train = self.train,
 				test = self.test,
 				predictionHorizon = self.predictionHorizon,
@@ -658,7 +665,8 @@ class MDE:
 			device = self.device,
 			batchSize = 1,
 			useHalfPrecision = self.use_half_precision,
-			showProgress = False
+			showProgress = False,
+			seed = self.CCMSeed
 		)
 
 		result = batchedCCM.Run()
