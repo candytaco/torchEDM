@@ -526,7 +526,7 @@ class MDE:
 		if len(candidate_columns) == 0:
 			return []
 
-		lib_sizes = [int(percentile / 100 * self.data.shape[0]) for percentile in self.CCMLibraryPercentiles]
+		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
 		if len(lib_sizes) < 2:
 			return candidate_columns
@@ -636,7 +636,7 @@ class MDE:
 		else:
 			best_e = self.optimalEmbeddingDimensions[column]
 
-		lib_sizes = [int(percentile / 100 * self.data.shape[0]) for percentile in self.CCMLibraryPercentiles]
+		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
 		if len(lib_sizes) < 2:
 			if self.verbose:
