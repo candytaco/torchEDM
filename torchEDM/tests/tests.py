@@ -874,28 +874,28 @@ class test_EDM( unittest.TestCase ):
         col_index    = df_.columns.get_loc('x_t')
         target_index = df_.columns.get_loc('x_t')
 
-        x_col   = data[:, col_index : col_index + 1]   # (N, 1)
-        y_col   = data[:, target_index]                 # (N,)
-        x_double = numpy.column_stack([x_col, x_col])  # (N, 2) — identical columns
+        xColumn    = data[:, col_index : col_index + 1]           # (N, 1)
+        yColumn    = data[:, target_index]                         # (N,)
+        xDuplicated = numpy.column_stack([xColumn, xColumn])       # (N, 2) — identical columns
 
-        dims, corrs = BatchedFindOptimalEmbeddingDimensionality(
-            X = x_double, Y = y_col, maxE = 5,
+        dimensions, correlations = BatchedFindOptimalEmbeddingDimensionality(
+            X = xDuplicated, Y = yColumn, maxE = 5,
             predictionHorizon = 1, step = -1,
             trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
             device = 'cpu')
 
         # Both variables are identical, so correlations must match
-        self.assertEqual(corrs.shape, (2, 5))
-        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+        self.assertEqual(correlations.shape, (2, 5))
+        self.assertTrue(numpy.allclose(correlations[0], correlations[1]))
 
         # Batched result for var-0 must match the single-variable iterative result
-        dims_single, corrs_single = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
+        singleVariableDimensions, singleVariableCorrelations = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             data = data, columns = [col_index], target = target_index,
             maxE = 5, train = [1, 150], test = [151, 198],
             predictionHorizon = 1, step = -1,
             embedded = False, validLib = [], noTime = False, ignoreNan = True)
 
-        self.assertTrue(numpy.allclose(corrs[0], numpy.array(corrs_single), atol = 1e-6))
+        self.assertTrue(numpy.allclose(correlations[0], numpy.array(singleVariableCorrelations), atol = 1e-6))
 
 
     def test_batched_PredictInterval( self ):
@@ -906,28 +906,28 @@ class test_EDM( unittest.TestCase ):
         col_index    = df_.columns.get_loc('x_t')
         target_index = df_.columns.get_loc('x_t')
 
-        x_col    = data[:, col_index : col_index + 1]  # (N, 1)
-        y_col    = data[:, target_index]                # (N,)
-        x_double = numpy.column_stack([x_col, x_col])  # (N, 2)
+        xColumn     = data[:, col_index : col_index + 1]         # (N, 1)
+        yColumn     = data[:, target_index]                       # (N,)
+        xDuplicated = numpy.column_stack([xColumn, xColumn])      # (N, 2)
 
-        TpVals, corrs = BatchedFindOptimalPredictionHorizon(
-            X = x_double, Y = y_col, maxTp = 5,
+        predictionHorizonValues, correlations = BatchedFindOptimalPredictionHorizon(
+            X = xDuplicated, Y = yColumn, maxTp = 5,
             embedDimensions = 3, step = -1,
             trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
             device = 'cpu')
 
         # Both variables are identical, so correlations must match
-        self.assertEqual(corrs.shape, (2, 5))
-        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+        self.assertEqual(correlations.shape, (2, 5))
+        self.assertTrue(numpy.allclose(correlations[0], correlations[1]))
 
         # Batched result for var-0 must match the single-variable iterative result
-        arr_single = torchEDM.Hyperparameters.FindOptimalPredictionHorizon(
+        singleVariableResult = torchEDM.Hyperparameters.FindOptimalPredictionHorizon(
             data = data, columns = [col_index], target = target_index,
             maxTp = 5, train = [1, 150], test = [151, 198],
             embedDimensions = 3, step = -1,
             embedded = False, validLib = [], noTime = False, ignoreNan = True)
 
-        self.assertTrue(numpy.allclose(corrs[0], arr_single[:, 1], atol = 1e-6))
+        self.assertTrue(numpy.allclose(correlations[0], singleVariableResult[:, 1], atol = 1e-6))
 
 
     def test_batched_FindOptimalDelay( self ):
@@ -938,29 +938,29 @@ class test_EDM( unittest.TestCase ):
         col_index    = df_.columns.get_loc('x_t')
         target_index = df_.columns.get_loc('x_t')
 
-        x_col    = data[:, col_index : col_index + 1]  # (N, 1)
-        y_col    = data[:, target_index]                # (N,)
-        x_double = numpy.column_stack([x_col, x_col])  # (N, 2)
+        xColumn     = data[:, col_index : col_index + 1]         # (N, 1)
+        yColumn     = data[:, target_index]                       # (N,)
+        xDuplicated = numpy.column_stack([xColumn, xColumn])      # (N, 2)
 
-        steps, corrs = BatchedFindOptimalDelay(
-            X = x_double, Y = y_col, maxTau = 5,
+        stepValues, correlations = BatchedFindOptimalDelay(
+            X = xDuplicated, Y = yColumn, maxTau = 5,
             embedDimensions = 3, predictionHorizon = 1,
             trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
             device = 'cpu')
 
         # Both variables are identical, so correlations must match
-        self.assertEqual(corrs.shape, (2, 5))
-        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+        self.assertEqual(correlations.shape, (2, 5))
+        self.assertTrue(numpy.allclose(correlations[0], correlations[1]))
 
         # Batched result for var-0 must match the single-variable result
-        arr_single = FindOptimalDelay(
+        singleVariableResult = FindOptimalDelay(
             data = data, columns = [col_index], target = target_index,
             maxTau = 5, train = [1, 150], test = [151, 198],
             embedDimensions = 3, predictionHorizon = 1,
             exclusionRadius = 0, embedded = False, validLib = [],
             noTime = False, ignoreNan = True)
 
-        self.assertTrue(numpy.allclose(corrs[0], arr_single[:, 1], atol = 1e-6))
+        self.assertTrue(numpy.allclose(correlations[0], singleVariableResult[:, 1], atol = 1e-6))
 
     
     # Generative mode
