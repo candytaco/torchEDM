@@ -6,7 +6,11 @@ from . import Functions
 from . import Fitters
 
 from .Utils import PlotObsPred, PlotCoeff, ComputeError
-from .Hyperparameters import FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon, FindSMapNeighborhood
+from .Hyperparameters import (FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon,
+                               FindSMapNeighborhood, FindOptimalDelay,
+                               BatchedFindOptimalEmbeddingDimensionality,
+                               BatchedFindOptimalPredictionHorizon,
+                               BatchedFindOptimalDelay)
 from .FunctionalExamples import FunctionalExamples
 from .FitterExamples import FitterExamples
 from .Utils import SurrogateData

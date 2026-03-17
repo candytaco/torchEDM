@@ -4,6 +4,7 @@ import numpy
 import torch
 
 from .Utils import ComputeError
+from .EDM.Embed import Embed
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
 from .Utils import IsNonStringIterable
@@ -499,3 +500,357 @@ def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test
 		torch.cuda.empty_cache()
 
 	return correlations
+
+
+def FindOptimalDelay(data: numpy.ndarray,
+					 columns: List[int] = None,
+					 target: int = None,
+					 stepValues: List[int] = None,
+					 maxTau: int = 10,
+					 train: Tuple[int, int] = None,
+					 test: Tuple[int, int] = None,
+					 embedDimensions: int = 1,
+					 predictionHorizon: int = 1,
+					 exclusionRadius: float = 0,
+					 embedded: bool = False,
+					 validLib: List = [],
+					 noTime: bool = False,
+					 ignoreNan: bool = True) -> numpy.ndarray:
+	"""
+	Estimate optimal time-delay step size (tau) using Simplex projection.
+
+	:param data: 			2D numpy array where column 0 is time
+	:param columns: 		Column indices to use (defaults to all except time)
+	:param target: 			Target column index (defaults to column 1)
+	:param stepValues: 		Step (tau) values to test; if None, uses [-1, -2, ..., -maxTau]
+	:param maxTau: 			Maximum absolute tau value when stepValues is None
+	:param train: 			Train indices [start, end]
+	:param test: 			Test indices [start, end]
+	:param embedDimensions: Embedding dimension
+	:param predictionHorizon: Prediction horizon
+	:param exclusionRadius: Exclusion radius
+	:param embedded: 		Whether data is already embedded
+	:param validLib: 		Valid library indices
+	:param noTime: 			Whether to exclude time column
+	:param ignoreNan: 		Whether to ignore NaN values
+	:return: Array with columns [step, correlation]
+	"""
+
+	if stepValues is None:
+		stepValues = [-i for i in range(1, maxTau + 1)]
+
+	correlations = []
+
+	for step in stepValues:
+		S = Simplex(data=data, columns=columns, target=target,
+					train=train, test=test, embedDimensions=embedDimensions,
+					predictionHorizon=predictionHorizon, knn=0,
+					step=step, exclusionRadius=exclusionRadius,
+					embedded=embedded, validLib=validLib,
+					noTime=noTime, ignoreNan=ignoreNan)
+
+		result = S.Run()
+		correlation = ComputeError(result.projection[:, 1], result.projection[:, 2], None)
+		correlations.append(correlation)
+
+	return numpy.column_stack([stepValues, correlations])
+
+
+def _BatchedSimplexPredict(X, Y, E, predictionHorizon, step, exclusionRadius,
+						   train, test, ignoreNan, device, dtype, batchSize):
+	"""
+	Core batched Simplex prediction helper. For each of M source variables
+	in X (N, M), embed with given E and step, find kNN, predict Y, and
+	return per-variable Pearson correlations.
+
+	Uses a dummy Simplex to obtain shared train/test indices (based on the
+	first column of X), then processes all M variables in batches on GPU.
+
+	:param X: 			(N, M) array without time column
+	:param Y: 			(N,) target array without time column
+	:param E: 			Embedding dimension
+	:param predictionHorizon: Prediction horizon
+	:param step: 		Time delay step size (tau)
+	:param exclusionRadius: Temporal exclusion radius
+	:param train: 		[start, end] train indices (1-indexed)
+	:param test: 		[start, end] test indices (1-indexed)
+	:param ignoreNan: 	Whether to ignore NaN values
+	:param device: 		torch.device
+	:param dtype: 		torch dtype
+	:param batchSize: 	Number of variables per GPU batch
+	:return: 			(M,) array of correlations
+	"""
+	N, M = X.shape
+	knn = E + 1
+
+	# Use a dummy Simplex on the first column to determine shared indices
+	dummy = Simplex(data=X, columns=[0], target=0,
+					train=train, test=test, embedDimensions=E,
+					predictionHorizon=predictionHorizon, knn=knn,
+					step=step, exclusionRadius=exclusionRadius,
+					embedded=False, validLib=[], noTime=True, ignoreNan=ignoreNan)
+	dummy.EmbedData()
+	dummy.RemoveNan()
+
+	trainIndices = dummy.trainIndices
+	testIndices  = dummy.testIndices
+	N_train = len(trainIndices)
+	N_test  = len(testIndices)
+
+	targetFull = Y  # (N,)
+
+	# Observations at testIndices + Tp
+	obsIndices   = testIndices + predictionHorizon
+	validObsMask = (obsIndices >= 0) & (obsIndices < N)
+	validObs     = obsIndices[validObsMask]
+	nValid       = int(validObsMask.sum())
+	observations = targetFull[validObs]
+
+	# Build exclusion mask once (shared for all variables)
+	exclusionMask = dummy._BuildExclusionMask()  # (N_train, N_test)
+	hasMask = exclusionMask.any()
+	if hasMask:
+		maskTensor = torch.tensor(exclusionMask, device=device, dtype=torch.bool)
+
+	# Pre-embed all M variables for this parameter value
+	allTrainEmb = []
+	allTestEmb  = []
+	for m in range(M):
+		emb = Embed(data=X, columns=[m], embeddingDimensions=E,
+					stepSize=step, includeTime=False)
+		allTrainEmb.append(emb[trainIndices, :])
+		allTestEmb.append(emb[testIndices, :])
+
+	targetTensor = torch.tensor(targetFull, device=device, dtype=dtype)
+	trainIdxTensor = torch.tensor(trainIndices, device=device, dtype=torch.long)
+
+	correlations = numpy.zeros(M)
+
+	for bStart in range(0, M, batchSize):
+		bEnd  = min(bStart + batchSize, M)
+		bM    = bEnd - bStart
+
+		trainStack = numpy.stack(allTrainEmb[bStart:bEnd])  # (bM, N_train, E)
+		testStack  = numpy.stack(allTestEmb[bStart:bEnd])   # (bM, N_test, E)
+
+		trainTensor = torch.tensor(trainStack, device=device, dtype=dtype)
+		testTensor  = torch.tensor(testStack,  device=device, dtype=dtype)
+
+		# Pairwise distances: (bM, N_train, N_test)
+		diff     = trainTensor.unsqueeze(2) - testTensor.unsqueeze(1)  # (bM, N_train, N_test, E)
+		distMat  = torch.sqrt((diff * diff).sum(dim=-1))               # (bM, N_train, N_test)
+
+		if hasMask:
+			distMat[:, maskTensor] = float('inf')
+
+		# topk along train dim → (bM, knn, N_test), then transpose → (bM, N_test, knn)
+		topkDist, topkIdx = torch.topk(distMat, knn, dim=1, largest=False)
+		topkDist = topkDist.permute(0, 2, 1)  # (bM, N_test, knn)
+		topkIdx  = topkIdx.permute(0, 2, 1)   # (bM, N_test, knn) — local indices into trainIndices
+
+		# Exponential weights
+		minDist = topkDist[:, :, 0].clone()
+		torch.clamp_min_(minDist, 1e-6)
+		weights    = torch.exp(-topkDist / minDist.unsqueeze(-1))  # (bM, N_test, knn)
+		weightSum  = weights.sum(dim=-1)                           # (bM, N_test)
+
+		# Map local kNN indices → actual row indices → +Tp
+		actualIdx   = trainIdxTensor[topkIdx] + predictionHorizon  # (bM, N_test, knn)
+		libTargets  = targetTensor[actualIdx]                       # (bM, N_test, knn)
+
+		predictions = (weights * libTargets).sum(dim=-1) / weightSum  # (bM, N_test)
+		predsNumpy  = predictions.cpu().numpy()
+
+		for m in range(bM):
+			c = ComputeError(observations[:nValid], predsNumpy[m, :nValid], None)
+			correlations[bStart + m] = c if c is not None else numpy.nan
+
+		del trainTensor, testTensor, diff, distMat, topkDist, topkIdx
+		del weights, weightSum, actualIdx, libTargets, predictions
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
+
+	del targetTensor, trainIdxTensor
+	if hasMask:
+		del maskTensor
+
+	return correlations
+
+
+def BatchedFindOptimalEmbeddingDimensionality(X: numpy.ndarray,
+											  Y: numpy.ndarray,
+											  maxE: int = 10,
+											  predictionHorizon: int = 1,
+											  step: int = -1,
+											  exclusionRadius: float = 0,
+											  trainBlockIndices: List[int] = None,
+											  testBlockIndices: List[int] = None,
+											  ignoreNan: bool = True,
+											  device=None,
+											  batchSize: int = 1000) -> Tuple[List[int], numpy.ndarray]:
+	"""
+	Find the optimal embedding dimension for multiple source variables in
+	parallel, analogous to how BatchedCCM evaluates multiple Xs against the
+	same Y simultaneously.
+
+	:param X: 				(N, M) array of source variables (no time column)
+	:param Y: 				(N,) or (N, 1) target variable (no time column)
+	:param maxE: 			Maximum embedding dimension to test
+	:param predictionHorizon: Prediction horizon
+	:param step: 			Time delay step size (tau)
+	:param exclusionRadius: Temporal exclusion radius
+	:param trainBlockIndices: [start, end] train indices (1-indexed)
+	:param testBlockIndices:  [start, end] test indices (1-indexed)
+	:param ignoreNan: 		Whether to ignore NaN values
+	:param device: 			torch device or device string ('cpu', 'cuda')
+	:param batchSize: 		Number of variables per GPU batch
+	:return: (dimensions, correlations) where dimensions is [1..maxE] and
+	         correlations is (M, maxE) — row m holds correlations for variable m
+	"""
+	if X.ndim == 1:
+		X = X[:, numpy.newaxis]
+	if Y.ndim == 2:
+		Y = Y.squeeze(axis=1)
+
+	N, M = X.shape
+
+	if device is None:
+		device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	elif isinstance(device, str):
+		device = torch.device(device)
+
+	dtype = torch.float64
+
+	train = trainBlockIndices if trainBlockIndices is not None else [1, N]
+	test  = testBlockIndices  if testBlockIndices  is not None else [1, N]
+
+	dimensions   = list(range(1, maxE + 1))
+	correlations = numpy.zeros((M, maxE))
+
+	for E in dimensions:
+		corrs = _BatchedSimplexPredict(
+			X, Y, E, predictionHorizon, step, exclusionRadius,
+			train, test, ignoreNan, device, dtype, batchSize)
+		correlations[:, E - 1] = corrs
+
+	return dimensions, correlations
+
+
+def BatchedFindOptimalPredictionHorizon(X: numpy.ndarray,
+										Y: numpy.ndarray,
+										maxTp: int = 10,
+										embedDimensions: int = 1,
+										step: int = -1,
+										exclusionRadius: float = 0,
+										trainBlockIndices: List[int] = None,
+										testBlockIndices: List[int] = None,
+										ignoreNan: bool = True,
+										device=None,
+										batchSize: int = 1000) -> Tuple[List[int], numpy.ndarray]:
+	"""
+	Find the optimal prediction horizon for multiple source variables in
+	parallel, analogous to how BatchedCCM evaluates multiple Xs against the
+	same Y simultaneously.
+
+	:param X: 				(N, M) array of source variables (no time column)
+	:param Y: 				(N,) or (N, 1) target variable (no time column)
+	:param maxTp: 			Maximum prediction horizon to test
+	:param embedDimensions: Embedding dimension
+	:param step: 			Time delay step size (tau)
+	:param exclusionRadius: Temporal exclusion radius
+	:param trainBlockIndices: [start, end] train indices (1-indexed)
+	:param testBlockIndices:  [start, end] test indices (1-indexed)
+	:param ignoreNan: 		Whether to ignore NaN values
+	:param device: 			torch device or device string ('cpu', 'cuda')
+	:param batchSize: 		Number of variables per GPU batch
+	:return: (TpValues, correlations) where TpValues is [1..maxTp] and
+	         correlations is (M, maxTp) — row m holds correlations for variable m
+	"""
+	if X.ndim == 1:
+		X = X[:, numpy.newaxis]
+	if Y.ndim == 2:
+		Y = Y.squeeze(axis=1)
+
+	N, M = X.shape
+
+	if device is None:
+		device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	elif isinstance(device, str):
+		device = torch.device(device)
+
+	dtype = torch.float64
+
+	train   = trainBlockIndices if trainBlockIndices is not None else [1, N]
+	test    = testBlockIndices  if testBlockIndices  is not None else [1, N]
+	TpVals  = list(range(1, maxTp + 1))
+	correlations = numpy.zeros((M, maxTp))
+
+	for i, Tp in enumerate(TpVals):
+		corrs = _BatchedSimplexPredict(
+			X, Y, embedDimensions, Tp, step, exclusionRadius,
+			train, test, ignoreNan, device, dtype, batchSize)
+		correlations[:, i] = corrs
+
+	return TpVals, correlations
+
+
+def BatchedFindOptimalDelay(X: numpy.ndarray,
+							Y: numpy.ndarray,
+							stepValues: List[int] = None,
+							maxTau: int = 10,
+							embedDimensions: int = 1,
+							predictionHorizon: int = 1,
+							exclusionRadius: float = 0,
+							trainBlockIndices: List[int] = None,
+							testBlockIndices: List[int] = None,
+							ignoreNan: bool = True,
+							device=None,
+							batchSize: int = 1000) -> Tuple[List[int], numpy.ndarray]:
+	"""
+	Find the optimal time-delay step size (tau) for multiple source variables
+	in parallel, analogous to how BatchedCCM evaluates multiple Xs against the
+	same Y simultaneously.
+
+	:param X: 				(N, M) array of source variables (no time column)
+	:param Y: 				(N,) or (N, 1) target variable (no time column)
+	:param stepValues: 		Step (tau) values to test; if None, uses [-1, -2, ..., -maxTau]
+	:param maxTau: 			Maximum absolute tau when stepValues is None
+	:param embedDimensions: Embedding dimension
+	:param predictionHorizon: Prediction horizon
+	:param exclusionRadius: Temporal exclusion radius
+	:param trainBlockIndices: [start, end] train indices (1-indexed)
+	:param testBlockIndices:  [start, end] test indices (1-indexed)
+	:param ignoreNan: 		Whether to ignore NaN values
+	:param device: 			torch device or device string ('cpu', 'cuda')
+	:param batchSize: 		Number of variables per GPU batch
+	:return: (stepValues, correlations) where correlations is (M, len(stepValues)) —
+	         row m holds correlations for variable m across all step values
+	"""
+	if X.ndim == 1:
+		X = X[:, numpy.newaxis]
+	if Y.ndim == 2:
+		Y = Y.squeeze(axis=1)
+
+	N, M = X.shape
+
+	if stepValues is None:
+		stepValues = [-i for i in range(1, maxTau + 1)]
+
+	if device is None:
+		device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	elif isinstance(device, str):
+		device = torch.device(device)
+
+	dtype = torch.float64
+
+	train        = trainBlockIndices if trainBlockIndices is not None else [1, N]
+	test         = testBlockIndices  if testBlockIndices  is not None else [1, N]
+	correlations = numpy.zeros((M, len(stepValues)))
+
+	for i, step in enumerate(stepValues):
+		corrs = _BatchedSimplexPredict(
+			X, Y, embedDimensions, predictionHorizon, step, exclusionRadius,
+			train, test, ignoreNan, device, dtype, batchSize)
+		correlations[:, i] = corrs
+
+	return stepValues, correlations

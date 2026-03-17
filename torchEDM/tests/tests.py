@@ -20,6 +20,10 @@ from torchEDM.Fitters.CCMFitter import CCMFitter
 from torchEDM.Fitters.MultiviewFitter import MultiviewFitter
 import torchEDM.EDM.Embed
 from torchEDM.ExampleData import dataFileNames
+from torchEDM.Hyperparameters import (FindOptimalDelay,
+                                       BatchedFindOptimalEmbeddingDimensionality,
+                                       BatchedFindOptimalPredictionHorizon,
+                                       BatchedFindOptimalDelay)
 import importlib.resources
 
 # because the example data are now numpy arrays but these tests read in dataframes
@@ -831,6 +835,132 @@ class test_EDM( unittest.TestCase ):
         dfv = self.ValidationFiles["PredictNonlinear_valid.csv"].values
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 1e-6))
+
+    
+    # FindOptimalDelay
+
+    def test_FindOptimalDelay( self ):
+        """FindOptimalDelay: sweep over tau values"""
+        if self.verbose : print ( "--- FindOptimalDelay ---" )
+        df_ = sampleDataFrames['block_3sp']
+        data = df_.values
+        col_index    = df_.columns.get_loc('x_t')
+        target_index = df_.columns.get_loc('x_t')
+
+        result = FindOptimalDelay(data = data, columns = [col_index], target = target_index,
+                                  maxTau = 5, train = [1, 150], test = [151, 198],
+                                  embedDimensions = 3, predictionHorizon = 1,
+                                  exclusionRadius = 0, embedded = False, validLib = [],
+                                  noTime = False, ignoreNan = True)
+
+        # Result shape is (maxTau, 2): first column is step values, second is correlations
+        self.assertEqual(result.shape, (5, 2))
+        # Step values should be [-1, -2, -3, -4, -5]
+        self.assertTrue(numpy.array_equal(result[:, 0], [-1, -2, -3, -4, -5]))
+        # Correlations should be finite and in [-1, 1]
+        self.assertTrue(numpy.all(numpy.isfinite(result[:, 1])))
+        self.assertTrue(numpy.all(numpy.abs(result[:, 1]) <= 1.0))
+        # tau=-1 should give highest correlation for x_t predicting itself
+        self.assertEqual(numpy.argmax(result[:, 1]), 0)
+
+
+    # Batched hyperparameter search
+
+    def test_batched_embedDimension( self ):
+        """BatchedFindOptimalEmbeddingDimensionality: duplicated columns must give identical results"""
+        if self.verbose : print ( "--- Batched EmbedDimension ---" )
+        df_ = sampleDataFrames['block_3sp']
+        data = df_.values
+        col_index    = df_.columns.get_loc('x_t')
+        target_index = df_.columns.get_loc('x_t')
+
+        x_col   = data[:, col_index : col_index + 1]   # (N, 1)
+        y_col   = data[:, target_index]                 # (N,)
+        x_double = numpy.column_stack([x_col, x_col])  # (N, 2) — identical columns
+
+        dims, corrs = BatchedFindOptimalEmbeddingDimensionality(
+            X = x_double, Y = y_col, maxE = 5,
+            predictionHorizon = 1, step = -1,
+            trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
+            device = 'cpu')
+
+        # Both variables are identical, so correlations must match
+        self.assertEqual(corrs.shape, (2, 5))
+        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+
+        # Batched result for var-0 must match the single-variable iterative result
+        dims_single, corrs_single = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
+            data = data, columns = [col_index], target = target_index,
+            maxE = 5, train = [1, 150], test = [151, 198],
+            predictionHorizon = 1, step = -1,
+            embedded = False, validLib = [], noTime = False, ignoreNan = True)
+
+        self.assertTrue(numpy.allclose(corrs[0], numpy.array(corrs_single), atol = 1e-6))
+
+
+    def test_batched_PredictInterval( self ):
+        """BatchedFindOptimalPredictionHorizon: duplicated columns must give identical results"""
+        if self.verbose : print ( "--- Batched PredictInterval ---" )
+        df_ = sampleDataFrames['block_3sp']
+        data = df_.values
+        col_index    = df_.columns.get_loc('x_t')
+        target_index = df_.columns.get_loc('x_t')
+
+        x_col    = data[:, col_index : col_index + 1]  # (N, 1)
+        y_col    = data[:, target_index]                # (N,)
+        x_double = numpy.column_stack([x_col, x_col])  # (N, 2)
+
+        TpVals, corrs = BatchedFindOptimalPredictionHorizon(
+            X = x_double, Y = y_col, maxTp = 5,
+            embedDimensions = 3, step = -1,
+            trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
+            device = 'cpu')
+
+        # Both variables are identical, so correlations must match
+        self.assertEqual(corrs.shape, (2, 5))
+        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+
+        # Batched result for var-0 must match the single-variable iterative result
+        arr_single = torchEDM.Hyperparameters.FindOptimalPredictionHorizon(
+            data = data, columns = [col_index], target = target_index,
+            maxTp = 5, train = [1, 150], test = [151, 198],
+            embedDimensions = 3, step = -1,
+            embedded = False, validLib = [], noTime = False, ignoreNan = True)
+
+        self.assertTrue(numpy.allclose(corrs[0], arr_single[:, 1], atol = 1e-6))
+
+
+    def test_batched_FindOptimalDelay( self ):
+        """BatchedFindOptimalDelay: duplicated columns must give identical results"""
+        if self.verbose : print ( "--- Batched FindOptimalDelay ---" )
+        df_ = sampleDataFrames['block_3sp']
+        data = df_.values
+        col_index    = df_.columns.get_loc('x_t')
+        target_index = df_.columns.get_loc('x_t')
+
+        x_col    = data[:, col_index : col_index + 1]  # (N, 1)
+        y_col    = data[:, target_index]                # (N,)
+        x_double = numpy.column_stack([x_col, x_col])  # (N, 2)
+
+        steps, corrs = BatchedFindOptimalDelay(
+            X = x_double, Y = y_col, maxTau = 5,
+            embedDimensions = 3, predictionHorizon = 1,
+            trainBlockIndices = [1, 150], testBlockIndices = [151, 198],
+            device = 'cpu')
+
+        # Both variables are identical, so correlations must match
+        self.assertEqual(corrs.shape, (2, 5))
+        self.assertTrue(numpy.allclose(corrs[0], corrs[1]))
+
+        # Batched result for var-0 must match the single-variable result
+        arr_single = FindOptimalDelay(
+            data = data, columns = [col_index], target = target_index,
+            maxTau = 5, train = [1, 150], test = [151, 198],
+            embedDimensions = 3, predictionHorizon = 1,
+            exclusionRadius = 0, embedded = False, validLib = [],
+            noTime = False, ignoreNan = True)
+
+        self.assertTrue(numpy.allclose(corrs[0], arr_single[:, 1], atol = 1e-6))
 
     
     # Generative mode
