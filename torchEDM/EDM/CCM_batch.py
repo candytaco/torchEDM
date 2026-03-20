@@ -33,7 +33,9 @@ class BatchedCCM:
 				 device = 'cuda',
 				 batchSize = 10000,
 				 useHalfPrecision = False,
-				 showProgress = True):
+				 showProgress = True,
+				 batchMode = 'variable',
+				 sampleBatchSize = None):
 		"""
 		Initialize BatchedCCM.
 
@@ -55,8 +57,10 @@ class BatchedCCM:
 		:param trainBlockIndices: 	Train block index range [start, end]. If None, uses all data.
 		:param testBlockIndices: 	Test block index range [start, end]. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Number of variables to process per batch to limit VRAM usage
+		:param batchSize: 			Number of variables to process per batch in 'variable' mode
 		:param useHalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param batchMode:			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
+		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
 		"""
 
 		self.name = 'BatchedCCM'
@@ -74,6 +78,8 @@ class BatchedCCM:
 		self.ignoreNan = ignoreNan
 		self.directions = directions
 		self.batchSize = batchSize
+		self.batchMode = batchMode
+		self.sampleBatchSize = sampleBatchSize
 
 		self.trainSizes = trainSizes if trainSizes is not None else []
 		self.sample = sample
@@ -172,10 +178,23 @@ class BatchedCCM:
 								  includeTime = False)
 			embeddings.append(embedding[libraryIndices, :])
 
+		target = torch.tensor(Y[libraryIndices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 		performance = numpy.zeros([len(self.trainSizes), self.sample, numSources, numTargets])
 
-		target = torch.tensor(Y[libraryIndices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
+		if self.batchMode == 'sample':
+			self.CrossMapSampleBatched(embeddings, N_libraryIndices,
+									   target, numSources, performance, RNG)
+		else:
+			self.CrossMapVariableBatched(embeddings, N_libraryIndices,
+										 target, numSources, numTargets, performance, RNG)
 
+		return numpy.mean(performance, axis = 1).squeeze()
+
+	def CrossMapVariableBatched(self, embeddings, N_libraryIndices,
+								target, numSources, numTargets, performance, RNG):
+		"""
+		Batch over source variables. Efficient when the number of source variables is large.
+		"""
 		d = torch.zeros([embeddings[0].shape[1], N_libraryIndices, N_libraryIndices],
 						dtype = self.dtype, device = self.device)
 		fullDistances = torch.zeros([self.batchSize, N_libraryIndices, N_libraryIndices],
@@ -244,4 +263,90 @@ class BatchedCCM:
 			if torch.cuda.is_available():
 				torch.cuda.empty_cache()
 
-		return numpy.mean(performance, axis = 1).squeeze()
+	def CrossMapSampleBatched(self, embeddings, N_libraryIndices,
+							  target, numSources, performance, RNG):
+		"""
+		Batch over subsamples per library size. Efficient when the number of source variables is small.
+
+		All M source variables are processed simultaneously. For each library size, subsamples are
+		drawn and evaluated in batches of sampleBatchSize, so the batch dimension runs over samples
+		rather than variables.
+		"""
+		numSamplesInBatch = self.sampleBatchSize if self.sampleBatchSize is not None else self.sample
+
+		# Build full distance matrix for all variables at once: [numSources, N_lib, N_lib]
+		trainEmbeddings = torch.tensor(numpy.array(embeddings), dtype = self.dtype, device = self.device)
+		d = torch.zeros([embeddings[0].shape[1], N_libraryIndices, N_libraryIndices],
+						dtype = self.dtype, device = self.device)
+		fullDistances = torch.zeros([numSources, N_libraryIndices, N_libraryIndices],
+									dtype = self.dtype, device = self.device)
+		for i in range(numSources):
+			ElementwisePairwiseDistance(trainEmbeddings[i, :, :], trainEmbeddings[i, :, :], d)
+			fullDistances[i, :, :] = torch.sum(d, dim = 0)
+		fullDistances = torch.sqrt(fullDistances)
+
+		if self.exclusionRadius == 0:
+			diagIndices = torch.arange(N_libraryIndices, device = self.device)
+			fullDistances[:, diagIndices, diagIndices] = float('inf')
+
+		del trainEmbeddings
+		del d
+
+		for size_i, libSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False, disable = not self.showProgress)):
+			libSizeActual = min(libSize, N_libraryIndices)
+
+			for batchStart in ProgressBar(range(0, self.sample, numSamplesInBatch), desc = 'Sample batch', leave = False, disable = not self.showProgress):
+				batchEnd = min(batchStart + numSamplesInBatch, self.sample)
+				numSamplesInThisBatch = batchEnd - batchStart
+
+				# Draw subsamples: [numSamplesInThisBatch, libSizeActual]
+				subsampleIndices = numpy.stack([
+					RNG.choice(N_libraryIndices, size = libSizeActual, replace = False)
+					for _ in range(numSamplesInThisBatch)
+				])
+				subsampleTorch = torch.as_tensor(subsampleIndices, dtype = torch.long, device = self.device)
+
+				# Gather subsampled distances: [numSources, numSamplesInThisBatch, libSizeActual, N_lib]
+				# fullDistances[:, subsampleTorch, :] uses advanced indexing:
+				#   subsampleTorch has shape [numSamplesInThisBatch, libSizeActual]
+				#   result has shape [numSources, numSamplesInThisBatch, libSizeActual, N_lib]
+				subsampledDistances = fullDistances[:, subsampleTorch, :]
+
+				# topk over libSizeActual dimension (dim=2): results are [numSources, numSamplesInThisBatch, knn, N_lib]
+				topkDistances, topkLocalNeighbors = torch.topk(subsampledDistances, self.knn, dim = 2, largest = False)
+
+				# Remap local neighbor indices (into the subsample) back to global library indices
+				# subsampleTorch[s, local] -> global index, for each sample s
+				# topkLocalNeighbors: [numSources, numSamplesInThisBatch, knn, N_lib]
+				# subsampleTorch:     [numSamplesInThisBatch, libSizeActual]
+				# We need to gather along the libSizeActual dim of subsampleTorch using topkLocalNeighbors
+				# Expand subsampleTorch to [1, numSamplesInThisBatch, libSizeActual, 1] for gathering
+				subsampleExpanded = subsampleTorch.unsqueeze(0).unsqueeze(-1)
+				# topkLocalNeighbors used as gather index along libSizeActual: [numSources, numSamplesInThisBatch, knn, N_lib]
+				globalNeighbors = subsampleExpanded.expand(numSources, -1, libSizeActual, N_libraryIndices).gather(
+					dim = 2, index = topkLocalNeighbors
+				)
+
+				FloorArray(topkDistances, 1e-6)
+				minDistances = topkDistances.min(dim = 2)[0]                                           # [numSources, numSamplesInThisBatch, N_lib]
+				weights = torch.exp(-topkDistances / minDistances.unsqueeze(2))                        # [numSources, numSamplesInThisBatch, knn, N_lib]
+				weightSum = weights.sum(dim = 2)                                                       # [numSources, numSamplesInThisBatch, N_lib]
+
+				# target[globalNeighbors]: [numSources, numSamplesInThisBatch, knn, N_lib, numTargets]
+				selectedTargets = target[globalNeighbors]
+				predictions = (weights.unsqueeze(-1) * selectedTargets).sum(dim = 2) / weightSum.unsqueeze(-1)
+				# predictions: [numSources, numSamplesInThisBatch, N_lib, numTargets]
+
+				# Correlation over the N_lib dimension (dim=2)
+				targetCentered = target - target.mean(dim = 0, keepdim = True)                         # [N_lib, numTargets]
+				targetStd = torch.sqrt((targetCentered ** 2).sum(dim = 0))                             # [numTargets]
+				predCentered = predictions - predictions.mean(dim = 2, keepdim = True)                 # [numSources, numSamplesInThisBatch, N_lib, numTargets]
+				predStd = torch.sqrt((predCentered ** 2).sum(dim = 2))                                 # [numSources, numSamplesInThisBatch, numTargets]
+				# targetCentered broadcast: [1, 1, N_lib, numTargets]
+				perfs_ = (targetCentered.unsqueeze(0).unsqueeze(0) * predCentered).sum(dim = 2) / (targetStd * predStd)
+				# perfs_: [numSources, numSamplesInThisBatch, numTargets]
+
+				performance[size_i, batchStart:batchEnd, :, :] = perfs_.permute(1, 0, 2).cpu().numpy()
+
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
