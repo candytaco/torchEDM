@@ -194,7 +194,8 @@ class MDEFitterCV(EDMFitter):
 					  testIndices: List[int],
 					  target: Union[int, List[int]],
 					  initialVariables: Optional[List[int]] = None,
-					  convergent: bool = None) -> MDEResult:
+					  convergent: bool = None,
+					  return_predictions: bool = True) -> MDEResult:
 		"""
 		Fit MDE on a single cross-validation fold.
 
@@ -203,6 +204,7 @@ class MDEFitterCV(EDMFitter):
 		:param testIndices: 	EDM-style test indices [start1, end1, start2, end2, ...]
 		:param target: 			Target column index
 		:param initialVariables: Initial columns to use
+		:param return_predictions: If False, the predictions field of the result will not be populated
 		:return: 				MDEResult for this fold
 		"""
 		mde = MDE(
@@ -237,17 +239,19 @@ class MDEFitterCV(EDMFitter):
 			TimeDelay = self.TimeDelay
 		)
 
-		return mde.Run()
+		return mde.Run(return_predictions = return_predictions)
 
 	def Predict(self, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
 				TestStart = None, TestEnd = None,
-				testTime: Optional[numpy.ndarray] = None
+				testTime: Optional[numpy.ndarray] = None,
+				return_predictions: bool = True
 				) -> MDECVResults:
 		"""
 		Predict using the final chosen feature set on test data.
 
 		:param XTest: 	Test features (uses stored test data if None)
 		:param YTest: 	Test target (uses stored test data if None)
+		:param return_predictions: If False, the predictions field of the result will not be populated
 		:return: 		Cross-validation results including final prediction
 		"""
 		if len(self.foldResults) == 0:
@@ -302,39 +306,37 @@ class MDEFitterCV(EDMFitter):
 			featuresPerTarget = self.bestFoldFeatures
 
 		timeValues = None
-		observations = None
 		predictions = None
 
-		for j in range(nTargets):
-			featuresJ = featuresPerTarget[j, :]
-			featuresJ = featuresJ[featuresJ != -1].tolist()
+		if return_predictions:
+			for j in range(nTargets):
+				featuresJ = featuresPerTarget[j, :]
+				featuresJ = featuresJ[featuresJ != -1].tolist()
 
-			simplex = Simplex(
-				data = self.DataAdapter.fullData,
-				columns = featuresJ,
-				target = yIndices[j],
-				train = self.DataAdapter.TrainIndices,
-				test = self.DataAdapter.TestIndices,
-				embedDimensions = self.EmbedDimensions,
-				predictionHorizon = self.PredictionHorizon,
-				knn = self.KNN,
-				step = self.Step,
-				exclusionRadius = self.ExclusionRadius,
-				noTime = not self.DataAdapter.HasTime,
-				verbose = self.Verbose,
-				embedded = True
-			)
+				simplex = Simplex(
+					data = self.DataAdapter.fullData,
+					columns = featuresJ,
+					target = yIndices[j],
+					train = self.DataAdapter.TrainIndices,
+					test = self.DataAdapter.TestIndices,
+					embedDimensions = self.EmbedDimensions,
+					predictionHorizon = self.PredictionHorizon,
+					knn = self.KNN,
+					step = self.Step,
+					exclusionRadius = self.ExclusionRadius,
+					noTime = not self.DataAdapter.HasTime,
+					verbose = self.Verbose,
+					embedded = True
+				)
 
-			resultJ = simplex.Run()
+				resultJ = simplex.Run()
 
-			if j == 0:
-				timeValues = resultJ.projection[:, 0]
-				nPredictions = len(timeValues)
-				observations = numpy.zeros([nPredictions, nTargets])
-				predictions = numpy.zeros([nPredictions, nTargets])
+				if j == 0:
+					timeValues = resultJ.time
+					nPredictions = len(timeValues)
+					predictions = numpy.zeros([nPredictions, nTargets])
 
-			observations[:, j] = resultJ.projection[:, 1]
-			predictions[:, j] = resultJ.projection[:, 2]
+				predictions[:, j] = resultJ.projection[:, 2]
 
 		self.Result = MDECVResults(
 			fold_selected_features = self.Result.fold_selected_features,
@@ -343,7 +345,6 @@ class MDEFitterCV(EDMFitter):
 			best_fold = self.bestFold,
 			selected_features = featuresPerTarget,
 			time = timeValues,
-			observations = observations,
 			predictions = predictions
 		)
 		return self.Result

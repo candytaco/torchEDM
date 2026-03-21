@@ -204,11 +204,12 @@ class Multiview:
     #-------------------------------------------------------------------
     # Methods
     #-------------------------------------------------------------------
-    def Run( self ) :
+    def Run( self, return_predictions: bool = True ) :
         """
         Execute Multiview prediction and return MultiviewResult.
 
-        :return: Multiview results with ensemble-averaged projection, view rankings, top-ranked projections, and statistics
+        :param return_predictions: If False, the predictions field of the result will not be populated
+        :return: Multiview results with ensemble-averaged predictions, view rankings, top-ranked projections, and statistics
         """
         self.Rank()
         self.Project()
@@ -217,8 +218,9 @@ class Multiview:
         # M.topRankProjections is dict of combo : numpy array
         # Each array has columns: [Time, Observations, Predictions, Pred_Variance]
 
-        # Get first projection for Time and Observations
+        # Get first projection for Time
         first_proj = next(iter(self.topRankProjections.values()))
+        time_values = first_proj[:, 0]
 
         # Collect all predictions (column 2) and average them
         all_predictions = [proj[:, 2] for proj in self.topRankProjections.values()]
@@ -251,13 +253,14 @@ class Multiview:
         self.View = view_rows  # List of lists
 
         return MultiviewResult(
-            projection=self.Projection,
+            time=time_values,
             view=self.View,
             topRankProjections=self.topRankProjections,
             topRankStats=self.topRankStats,
             D=self.D,
             embedDimensions=self.embedDimensions,
-            predictionHorizon=self.predictionHorizon
+            predictionHorizon=self.predictionHorizon,
+            predictions=multiviewPredict if return_predictions else None
         )
 
     #-------------------------------------------------------------------

@@ -128,11 +128,12 @@ class SMap(EDM):
     #-------------------------------------------------------------------
     # Methods
     #-------------------------------------------------------------------
-    def Run(self):
+    def Run(self, return_predictions: bool = True):
     #-------------------------------------------------------------------
         """
         Execute S-Map prediction and return SMapResult.
 
+        :param return_predictions: If False, the predictions field of the result will not be populated
         :return: Prediction results with projection array, coefficients, singular values, and metadata
         """
         self.EmbedData()
@@ -142,7 +143,8 @@ class SMap(EDM):
         self.FormatProjection()
 
         return SMapResult(
-            projection=self.Projection,
+            time=self.Projection[:, 0],
+            projection=self.Projection if return_predictions else None,
             coefficients=self.Coefficients,
             singularValues=self.SingularValues,
             embedDimensions=self.embedDimensions,
@@ -315,7 +317,7 @@ class SMap(EDM):
             torch.cuda.empty_cache()
 
     #-------------------------------------------------------------------
-    def Generate( self ) :
+    def Generate( self, return_predictions: bool = True ) :
     #-------------------------------------------------------------------
         """
         SMap Generation
@@ -324,6 +326,8 @@ class SMap(EDM):
 
         Note: Generation with datetime time values fails: incompatible
         numpy.datetime64, timedelta64 and python datetime, timedelta
+
+        :param return_predictions: If False, the predictions field of the result will not be populated
         """
         if self.verbose:
             print( f'{self.name}: Generate()' )
@@ -466,7 +470,8 @@ class SMap(EDM):
         self.SingularValues = genSV
 
         return SMapResult(
-            projection=self.Projection,
+            time=self.Projection[:, 0],
+            projection=self.Projection if return_predictions else None,
             coefficients=genCoeff,
             singularValues=genSV,
             embedDimensions=self.embedDimensions,

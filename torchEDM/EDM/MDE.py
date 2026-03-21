@@ -159,9 +159,10 @@ class MDE:
 		"""First target column index, for backward compatibility."""
 		return self.targets[0]
 
-	def Run(self) -> MDEResult:
+	def Run(self, return_predictions: bool = True) -> MDEResult:
 		"""Execute MDE feature selection and return results.
 
+		:param return_predictions: If False, the predictions field of the result will not be populated
 		:return: Results containing final predictions, selected features, accuracy, and CCM values
 		:rtype: MDEResult
 		"""
@@ -186,7 +187,7 @@ class MDE:
 
 		self._select_features()
 
-		final_forecasts, time_values, obs_values = self._final_prediction()
+		final_forecasts, time_values = self._final_prediction()
 
 		# Build padded 2D arrays for selected_features, accuracy, ccm_values
 		selected_features_arr = numpy.full([nTargets, self.maxD], -1, dtype = int)
@@ -205,8 +206,7 @@ class MDE:
 
 		self.results_ = MDEResult(
 			time = time_values,
-			observations = obs_values,
-			predictions = final_forecasts,
+			predictions = final_forecasts if return_predictions else None,
 			selected_features = selected_features_arr,
 			accuracy = accuracy_arr,
 			ccm_values = ccm_values_arr,
@@ -483,7 +483,7 @@ class MDE:
 	def _final_prediction(self):
 		"""Run final prediction for each target with its selected features.
 
-		:return: (predictions [N, K], time [N], observations [N, K])
+		:return: (predictions [N, K], time [N])
 		"""
 		nTargets = len(self.targets)
 		results = []
@@ -491,16 +491,14 @@ class MDE:
 			result = self._fit_single_EDM_instance(self._selected_variables[j], t)
 			results.append(result)
 
-		time_values = results[0].projection[:, 0]
+		time_values = results[0].time
 		n = len(time_values)
 
-		observations = numpy.zeros([n, nTargets])
 		predictions = numpy.zeros([n, nTargets])
 		for j, result in enumerate(results):
-			observations[:, j] = result.projection[:, 1]
 			predictions[:, j] = result.projection[:, 2]
 
-		return predictions, time_values, observations
+		return predictions, time_values
 
 	def _filter_convergent_variables(self, candidate_columns: List[int], target: int) -> List[int]:
 		"""Filter candidate variables to only include convergent ones using BatchedCCM.

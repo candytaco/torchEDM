@@ -171,7 +171,10 @@ class MDECV:
 		self.best_fold_accuracy = self.test_accuracy[self.bestFold]
 		self.best_fold_features = self.fold_results[self.bestFold].selected_features
 
-	def fitSingleFold(self, train_data : numpy.ndarray, val_data: numpy.ndarray) -> MDEResult:
+	def fitSingleFold(self,
+				   train_data: numpy.ndarray,
+				   val_data: numpy.ndarray,
+				   return_predictions: bool = True) -> MDEResult:
 		"""Process a single cross-validation fold.
 
 		Parameters
@@ -180,6 +183,8 @@ class MDECV:
 			Training data for this fold
 		val_data : numpy.ndarray
 			Validation data for this fold
+		return_predictions : bool
+			If False, the predictions field of the result will not be populated
 
 		Returns
 		-------
@@ -217,7 +222,7 @@ class MDECV:
 			stdThreshold = self.stdThreshold
 		)
 
-		return mde.Run()
+		return mde.Run(return_predictions = return_predictions)
 
 	def predict(self, testData: numpy.ndarray) -> MDECVResult:
 		"""Predict using the final chosen feature set on the test set.

@@ -107,10 +107,12 @@ class Simplex(EDM):
 	#-------------------------------------------------------------------
 	# Methods
 	#-------------------------------------------------------------------
-	def Run(self):
+	def Run(self, return_predictions: bool = True):
 	#-------------------------------------------------------------------
 		"""
 		Execute standard prediction and return SimplexResult.
+
+		:param return_predictions: If False, the predictions field of the result will not be populated
 		"""
 		self.EmbedData()
 		self.RemoveNan()
@@ -119,7 +121,8 @@ class Simplex(EDM):
 		self.FormatProjection()
 
 		return SimplexResult(
-			projection=self.Projection,
+			time=self.Projection[:, 0],
+			projection=self.Projection if return_predictions else None,
 			embedDimensions=self.embedDimensions,
 			predictionHorizon=self.predictionHorizon
 		)
@@ -222,12 +225,14 @@ class Simplex(EDM):
 			torch.cuda.empty_cache()
 
 	#-------------------------------------------------------------------
-	def Generate(self):
+	def Generate(self, return_predictions: bool = True):
 	#-------------------------------------------------------------------
 		"""
 		Simplex Generation
 		Given train: override test for single prediction at end of train
 		Replace self.Projection with G.Projection
+
+		:param return_predictions: If False, the predictions field of the result will not be populated
 		"""
 		if self.verbose:
 			print(f'{self.name}: Generate()')
@@ -322,7 +327,8 @@ class Simplex(EDM):
 			self.Projection = generated
 
 		return SimplexResult(
-			projection=self.Projection,
+			time=self.Projection[:, 0],
+			projection=self.Projection if return_predictions else None,
 			embedDimensions=self.embedDimensions,
 			predictionHorizon=self.predictionHorizon
 		)

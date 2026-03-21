@@ -8,352 +8,258 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple, Union
 import numpy as np
 
-from ..Scoring import Correlation
-
 
 @dataclass(frozen=True)
 class SimplexResult:
-    """
-    Results from Simplex prediction.
+	"""
+	Results from Simplex prediction.
 
-    :param projection: Array with columns [Time, Observations, Predictions]
-    :param embedDimensions: Embedding dimension used
-    :param predictionHorizon: Prediction horizon used
-    """
-    projection: np.ndarray
-    embedDimensions: int
-    predictionHorizon: int
+	:param time: Time values, shape [N]
+	:param projection: Array with columns [Time, Observations, Predictions, Variance], or None if predictions were not requested
+	:param embedDimensions: Embedding dimension used
+	:param predictionHorizon: Prediction horizon used
+	"""
+	time: np.ndarray
+	projection: Optional[np.ndarray]
+	embedDimensions: int
+	predictionHorizon: int
 
-    @property
-    def time(self) -> np.ndarray:
-        """
-        Time values from projection.
-        """
-        return self.projection[:, 0]
-
-    @property
-    def observations(self) -> np.ndarray:
-        """
-        Observed values from projection.
-        """
-        return self.projection[:, 1]
-
-    @property
-    def predictions(self) -> np.ndarray:
-        """
-        Predicted values from projection.
-        """
-        return self.projection[:, 2]
-
-    def score(self, scoring_function = Correlation) -> float:
-        """
-        Compute prediction error statistics.
-
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :return: Computed metric value
-        """
-        return scoring_function(self.observations, self.predictions)
+	@property
+	def predictions(self) -> Optional[np.ndarray]:
+		"""
+		Predicted values from projection, or None if not populated.
+		"""
+		if self.projection is None:
+			return None
+		return self.projection[:, 2]
 
 
 @dataclass(frozen=True)
 class SMapResult:
-    """
-    Results from S-Map prediction.
+	"""
+	Results from S-Map prediction.
 
-    :param projection: Array with columns [Time, Observations, Predictions]
-    :param coefficients: S-Map coefficients for each prediction (N_pred, E+1)
-    :param singularValues: Singular values from SVD for each prediction (N_pred, E+1)
-    :param embedDimensions: Embedding dimension used
-    :param predictionHorizon: Prediction horizon used
-    :param theta: Localization parameter used
-    """
-    projection: np.ndarray
-    coefficients: np.ndarray
-    singularValues: np.ndarray
-    embedDimensions: int
-    predictionHorizon: int
-    theta: float
+	:param time: Time values, shape [N]
+	:param projection: Array with columns [Time, Observations, Predictions, Variance], or None if predictions were not requested
+	:param coefficients: S-Map coefficients for each prediction (N_pred, E+1)
+	:param singularValues: Singular values from SVD for each prediction (N_pred, E+1)
+	:param embedDimensions: Embedding dimension used
+	:param predictionHorizon: Prediction horizon used
+	:param theta: Localization parameter used
+	"""
+	time: np.ndarray
+	projection: Optional[np.ndarray]
+	coefficients: np.ndarray
+	singularValues: np.ndarray
+	embedDimensions: int
+	predictionHorizon: int
+	theta: float
 
-    @property
-    def time(self) -> np.ndarray:
-        """
-        Time values from projection.
-        """
-        return self.projection[:, 0]
+	@property
+	def predictions(self) -> Optional[np.ndarray]:
+		"""
+		Predicted values from projection, or None if not populated.
+		"""
+		if self.projection is None:
+			return None
+		return self.projection[:, 2]
 
-    @property
-    def observations(self) -> np.ndarray:
-        """
-        Observed values from projection.
-        """
-        return self.projection[:, 1]
-
-    @property
-    def predictions(self) -> np.ndarray:
-        """
-        Predicted values from projection.
-        """
-        return self.projection[:, 2]
-
-    @property
-    def prediction_result(self) -> SimplexResult:
-        """
-        Get prediction as SimplexResult for compatibility.
-        """
-        return SimplexResult(
-            projection=self.projection,
-            embedDimensions=self.embedDimensions,
-            predictionHorizon=self.predictionHorizon
-        )
-
-    def score(self, scoring_function = Correlation) -> float:
-        """
-        Compute prediction error statistics.
-
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :return: Computed metric value
-        """
-        return scoring_function(self.observations, self.predictions)
+	@property
+	def prediction_result(self) -> SimplexResult:
+		"""
+		Get prediction as SimplexResult for compatibility.
+		"""
+		return SimplexResult(
+			time=self.time,
+			projection=self.projection,
+			embedDimensions=self.embedDimensions,
+			predictionHorizon=self.predictionHorizon
+		)
 
 
 @dataclass(frozen=True)
 class CCMResult:
-    """
-    Results from Convergent Cross Mapping.
+	"""
+	Results from Convergent Cross Mapping.
 
-    :param libMeans: Mean correlation at each library size. Shape (n_lib_sizes, 2 or 3): 
-        Column 0: Library size,
-        Column 1: Mean correlation for first direction, 
-        Column 2: Mean correlation for second direction (if applicable)
-    :param embedDimensions: Embedding dimension used
-    :param predictionHorizon: Prediction horizon used
-    :param predictStats1: Detailed prediction statistics for first direction (only if includeData=True)
-    :param predictStats2: Detailed prediction statistics for second direction (only if includeData=True)
-    """
-    libMeans: np.ndarray
-    embedDimensions: int
-    predictionHorizon: int
-    predictStats1: Optional[np.ndarray] = None
-    predictStats2: Optional[np.ndarray] = None
+	:param libMeans: Mean correlation at each library size. Shape (n_lib_sizes, 2 or 3):
+		Column 0: Library size,
+		Column 1: Mean correlation for first direction,
+		Column 2: Mean correlation for second direction (if applicable)
+	:param embedDimensions: Embedding dimension used
+	:param predictionHorizon: Prediction horizon used
+	:param predictStats1: Detailed prediction statistics for first direction (only if includeData=True)
+	:param predictStats2: Detailed prediction statistics for second direction (only if includeData=True)
+	"""
+	libMeans: np.ndarray
+	embedDimensions: int
+	predictionHorizon: int
+	predictStats1: Optional[np.ndarray] = None
+	predictStats2: Optional[np.ndarray] = None
 
-    @property
-    def library_sizes(self) -> np.ndarray:
-        """
-        Library sizes evaluated.
-        """
-        return self.libMeans[:, 0]
+	@property
+	def library_sizes(self) -> np.ndarray:
+		"""
+		Library sizes evaluated.
+		"""
+		return self.libMeans[:, 0]
 
-    @property
-    def correlations(self) -> np.ndarray:
-        """
-        Correlation values (excludes library size column).
-        """
-        return self.libMeans[:, 1:]
+	@property
+	def correlations(self) -> np.ndarray:
+		"""
+		Correlation values (excludes library size column).
+		"""
+		return self.libMeans[:, 1:]
 
 
 @dataclass(frozen=True)
 class MultiviewResult:
-    """
-    Results from Multiview prediction.
+	"""
+	Results from Multiview prediction.
 
-    :param projection: Ensemble-averaged prediction array [Time, Observations, Predictions]
-    :param view: Rankings of column combinations. Each element is [combo_string, correlation, MAE, CAE, RMSE]
-    :param topRankProjections: Dictionary mapping column combinations (tuples) to their prediction arrays [Time, Observations, Predictions, Variance]
-    :param topRankStats: Dictionary mapping column combinations (tuples) to their error statistics {'correlation', 'MAE', 'CAE', 'RMSE'}
-    :param D: State-space dimension used
-    :param embedDimensions: Embedding dimension for each variable
-    :param predictionHorizon: Prediction horizon used
-    """
-    projection: np.ndarray
-    view: List
-    topRankProjections: Dict
-    topRankStats: Dict
-    D: int
-    embedDimensions: int
-    predictionHorizon: int
+	:param time: Time values, shape [N]
+	:param view: Rankings of column combinations. Each element is [combo_string, correlation, MAE, CAE, RMSE]
+	:param topRankProjections: Dictionary mapping column combinations (tuples) to their prediction arrays [Time, Observations, Predictions, Variance]
+	:param topRankStats: Dictionary mapping column combinations (tuples) to their error statistics {'correlation', 'MAE', 'CAE', 'RMSE'}
+	:param D: State-space dimension used
+	:param embedDimensions: Embedding dimension for each variable
+	:param predictionHorizon: Prediction horizon used
+	:param predictions: Ensemble-averaged predictions, or None if predictions were not requested
+	"""
+	time: np.ndarray
+	view: List
+	topRankProjections: Dict
+	topRankStats: Dict
+	D: int
+	embedDimensions: int
+	predictionHorizon: int
+	predictions: Optional[np.ndarray] = None
 
-    @property
-    def time(self) -> np.ndarray:
-        """
-        Time values from projection.
-        """
-        return self.projection[:, 0]
+	@property
+	def top_combinations(self) -> List:
+		"""
+		Get list of top-ranked column combinations.
+		"""
+		return list(self.topRankProjections.keys())
 
-    @property
-    def observations(self) -> np.ndarray:
-        """
-        Observed values from projection.
-        """
-        return self.projection[:, 1]
+	def get_combination_stats(self, combo: tuple) -> Dict[str, float]:
+		"""
+		Get error statistics for a specific column combination.
 
-    @property
-    def predictions(self) -> np.ndarray:
-        """
-        Ensemble-averaged predictions.
-        """
-        return self.projection[:, 2]
-
-    @property
-    def top_combinations(self) -> List:
-        """
-        Get list of top-ranked column combinations.
-        """
-        return list(self.topRankProjections.keys())
-
-    def score(self, scoring_function = Correlation) -> float:
-        """
-        Compute prediction error statistics for ensemble prediction.
-
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :return: Computed metric value
-        """
-        return scoring_function(self.observations, self.predictions)
-
-    def get_combination_stats(self, combo: tuple) -> Dict[str, float]:
-        """
-        Get error statistics for a specific column combination.
-
-        :param combo: Column combination (e.g., (0, 2, 4))
-        :return: Error statistics for this combination
-        :raises ValueError: if combination not in top-ranked results
-        """
-        if combo not in self.topRankStats:
-            raise ValueError(f"Combination {combo} not in top-ranked results")
-        return self.topRankStats[combo]
+		:param combo: Column combination (e.g., (0, 2, 4))
+		:return: Error statistics for this combination
+		:raises ValueError: if combination not in top-ranked results
+		"""
+		if combo not in self.topRankStats:
+			raise ValueError(f"Combination {combo} not in top-ranked results")
+		return self.topRankStats[combo]
 
 
 @dataclass(frozen=True)
 class MDEResult:
-    """
-    Results from Multivariate Delay Embedding.
+	"""
+	Results from Multivariate Dimensional expansion.
 
-    :param time: Time values, shape [N]
-    :param observations: Observed values, shape [N, K] where K is the number of targets
-    :param predictions: Predicted values, shape [N, K]
-    :param selected_features: Selected feature column indices, shape [K, maxD], padded with -1
-    :param accuracy: Accuracy at each feature addition step, shape [K, maxD], padded with NaN
-    :param ccm_values: CCM convergence slopes for selected features, shape [K, maxD], padded with NaN
-    :param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
-    :param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
-    """
-    time: np.ndarray
-    observations: np.ndarray
-    predictions: np.ndarray
-    selected_features: np.ndarray
-    accuracy: np.ndarray
-    ccm_values: np.ndarray
-    stepwise_performance: np.ndarray
-    timeDelayResults: List[Tuple[int, int, float, float]] = None
+	:param time: Time values, shape [N]
+	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
+	:param selected_features: Selected feature column indices, shape [K, maxD], padded with -1
+	:param accuracy: Accuracy at each feature addition step, shape [K, maxD], padded with NaN
+	:param ccm_values: CCM convergence slopes for selected features, shape [K, maxD], padded with NaN
+	:param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
+	:param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
+	"""
+	time: np.ndarray
+	predictions: Optional[np.ndarray]
+	selected_features: np.ndarray
+	accuracy: np.ndarray
+	ccm_values: np.ndarray
+	stepwise_performance: np.ndarray
+	timeDelayResults: List[Tuple[int, int, float, float]] = None
 
-    def score(self, scoring_function = Correlation, target: int = 0) -> float:
-        """
-        Compute prediction error statistics for one target.
+	def score(self, target: int = 0) -> float:
+		"""
+		Return the last recorded accuracy for one target from feature selection.
 
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :param target: Target index (default 0)
-        :return: Computed metric value
-        """
-        return scoring_function(self.observations[:, target], self.predictions[:, target])
+		:param target: Target index (default 0)
+		:return: Last valid accuracy value for the given target
+		"""
+		acc = self.accuracy[target, :]
+		valid_acc = acc[~np.isnan(acc)]
+		return float(valid_acc[-1]) if len(valid_acc) > 0 else 0.0
 
 
 @dataclass(frozen=True)
 class MDECVResult:
-    """
-    Results from MDE Cross-Validation.
+	"""
+	Results from MDE Cross-Validation.
 
-    :param time: Time values, shape [N]
-    :param observations: Observed values, shape [N, K]
-    :param predictions: Predicted values, shape [N, K]
-    :param selected_features: Final selected feature indices, shape [K, maxD] padded with -1
-    :param fold_results: Results from each cross-validation fold
-    :param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
-    :param best_fold: Index of best performing fold
-    """
-    time: np.ndarray
-    observations: np.ndarray
-    predictions: np.ndarray
-    selected_features: np.ndarray
-    fold_results: List[MDEResult]
-    fold_accuracies: np.ndarray
-    best_fold: np.ndarray
+	:param time: Time values, shape [N]
+	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
+	:param selected_features: Final selected feature indices, shape [K, maxD] padded with -1
+	:param fold_results: Results from each cross-validation fold
+	:param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
+	:param best_fold: Index of best performing fold
+	"""
+	time: np.ndarray
+	predictions: Optional[np.ndarray]
+	selected_features: np.ndarray
+	fold_results: List[MDEResult]
+	fold_accuracies: np.ndarray
+	best_fold: np.ndarray
 
-    def compute_error(self, scoring_function = Correlation, target: int = 0) -> float:
-        """
-        Compute prediction error statistics for one target.
-
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :param target: Target index (default 0)
-        :return: Computed metric value
-        """
-        return scoring_function(self.observations[:, target], self.predictions[:, target])
 
 @dataclass(frozen=True)
 class MDECVResults:
-    """
-    Results from MDE Cross-Validation fitting.
+	"""
+	Results from MDE Cross-Validation fitting.
 
-    :param fold_selected_features: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
-    :param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
-    :param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
-    :param best_fold: Index of best performing fold per target, shape [nTargets]
-    :param selected_features: Final selected feature column indices, shape [nTargets, maxD] padded with -1
-    :param time: Time values for final prediction, shape [N] (None if no prediction computed)
-    :param observations: Observed values for final prediction, shape [N, nTargets] (None if no prediction computed)
-    :param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
-    """
-    fold_selected_features: np.ndarray
-    fold_stepwise_performances: np.ndarray
-    fold_accuracies: np.ndarray
-    best_fold: np.ndarray
-    selected_features: np.ndarray
-    time: Optional[np.ndarray] = None
-    observations: Optional[np.ndarray] = None
-    predictions: Optional[np.ndarray] = None
-
-    def score(self, scoring_function = Correlation, target: int = 0) -> float:
-        """
-        Compute prediction score for one target.
-
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-        :param target: Target index (default 0)
-        :return: Computed metric value
-        :raises RuntimeError: if no predictions have been computed
-        """
-        if self.observations is None or self.predictions is None:
-            raise RuntimeError("No predictions available. Call Predict() to compute final predictions.")
-        return scoring_function(self.observations[:, target], self.predictions[:, target])
+	:param fold_selected_features: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
+	:param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
+	:param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
+	:param best_fold: Index of best performing fold per target, shape [nTargets]
+	:param selected_features: Final selected feature column indices, shape [nTargets, maxD] padded with -1
+	:param time: Time values for final prediction, shape [N] (None if no prediction computed)
+	:param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
+	"""
+	fold_selected_features: np.ndarray
+	fold_stepwise_performances: np.ndarray
+	fold_accuracies: np.ndarray
+	best_fold: np.ndarray
+	selected_features: np.ndarray
+	time: Optional[np.ndarray] = None
+	predictions: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
 class BatchedCCMResult:
-    """
-    Results from Batched Convergent Cross Mapping.
+	"""
+	Results from Batched Convergent Cross Mapping.
 
-    :param forward_performance: Forward direction correlations. Shape (n_lib_sizes, 1+M):
-        Column 0: Library size
-        Columns 1-M: Mean correlation for each predictor variable
-    :param reverse_performance: Reverse direction correlations. Shape (n_lib_sizes, 1+M) or None:
-        Column 0: Library size
-        Columns 1-M: Mean correlation for each predictor variable
-    :param embedDimensions: Embedding dimension used
-    :param predictionHorizon: Prediction horizon used
-    """
-    forward_performance: np.ndarray
-    reverse_performance: Optional[np.ndarray]
-    embedDimensions: int
-    predictionHorizon: int
-    library_sizes: Union[np.ndarray, List]
+	:param forward_performance: Forward direction correlations. Shape (n_lib_sizes, 1+M):
+		Column 0: Library size
+		Columns 1-M: Mean correlation for each predictor variable
+	:param reverse_performance: Reverse direction correlations. Shape (n_lib_sizes, 1+M) or None:
+		Column 0: Library size
+		Columns 1-M: Mean correlation for each predictor variable
+	:param embedDimensions: Embedding dimension used
+	:param predictionHorizon: Prediction horizon used
+	"""
+	forward_performance: np.ndarray
+	reverse_performance: Optional[np.ndarray]
+	embedDimensions: int
+	predictionHorizon: int
+	library_sizes: Union[np.ndarray, List]
 
-    def GetVariableCorrelations(self, variableIndex: int) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """
-        Get correlations for a specific variable across all library sizes.
+	def GetVariableCorrelations(self, variableIndex: int) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+		"""
+		Get correlations for a specific variable across all library sizes.
 
-        :param variableIndex: Index of the variable (0-based)
-        :return: Tuple of (forward_correlations, reverse_correlations) as 1D arrays
-        """
-        forwardCorr = self.forward_performance[:, 1 + variableIndex]
-        reverseCorr = self.reverse_performance[:, 1 + variableIndex] if self.reverse_performance is not None else None
-        return forwardCorr, reverseCorr
+		:param variableIndex: Index of the variable (0-based)
+		:return: Tuple of (forward_correlations, reverse_correlations) as 1D arrays
+		"""
+		forwardCorr = self.forward_performance[:, 1 + variableIndex]
+		reverseCorr = self.reverse_performance[:, 1 + variableIndex] if self.reverse_performance is not None else None
+		return forwardCorr, reverseCorr
 
 
 class ResultsIO:
@@ -500,20 +406,28 @@ class ResultsIO:
 
 	@staticmethod
 	def _SimplexArrays(result: SimplexResult) -> dict:
-		return dict(
-			projection = result.projection,
+		arrays = dict(
+			time = result.time,
+			has_projection = np.array(result.projection is not None),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
+		if result.projection is not None:
+			arrays['projection'] = result.projection
+		return arrays
 
 	@staticmethod
 	def _SMapArrays(result: SMapResult) -> dict:
-		return dict(
-			projection = result.projection,
+		arrays = dict(
+			time = result.time,
+			has_projection = np.array(result.projection is not None),
 			coefficients = result.coefficients,
 			singularValues = result.singularValues,
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon),
 			theta = np.array(result.theta))
+		if result.projection is not None:
+			arrays['projection'] = result.projection
+		return arrays
 
 	@staticmethod
 	def _CCMArrays(result: CCMResult) -> dict:
@@ -546,14 +460,18 @@ class ResultsIO:
 			view_array[i] = entry
 
 		arrays = dict(
-			projection = result.projection,
+			time = result.time,
 			view = view_array,
 			combo_keys = combo_keys,
 			topRankStats_values = stats_values,
 			n_combos = np.array(len(combos)),
+			has_predictions = np.array(result.predictions is not None),
 			D = np.array(result.D),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
+
+		if result.predictions is not None:
+			arrays['predictions'] = result.predictions
 
 		for i, combo in enumerate(combos):
 			arrays[f'topRankProj_{i}'] = result.topRankProjections[combo]
@@ -565,13 +483,14 @@ class ResultsIO:
 		has_time_delay = result.timeDelayResults is not None
 		arrays = dict(
 			time = result.time,
-			observations = result.observations,
-			predictions = result.predictions,
+			has_predictions = np.array(result.predictions is not None),
 			selected_features = result.selected_features,
 			accuracy = result.accuracy,
 			ccm_values = result.ccm_values,
 			stepwise_performance = result.stepwise_performance,
 			has_timeDelayResults = np.array(has_time_delay))
+		if result.predictions is not None:
+			arrays['predictions'] = result.predictions
 		if has_time_delay:
 			arrays['timeDelayResults'] = np.array(result.timeDelayResults, dtype = float)
 		return arrays
@@ -581,12 +500,14 @@ class ResultsIO:
 		n_folds = len(result.fold_results)
 		arrays = dict(
 			time = result.time,
-			observations = result.observations,
-			predictions = result.predictions,
+			has_predictions = np.array(result.predictions is not None),
 			selected_features = result.selected_features,
 			fold_accuracies = result.fold_accuracies,
 			best_fold = result.best_fold,
 			n_folds = np.array(n_folds))
+
+		if result.predictions is not None:
+			arrays['predictions'] = result.predictions
 
 		for i, fold in enumerate(result.fold_results):
 			fold_arrays = ResultsIO._MDEArrays(fold)
@@ -611,15 +532,19 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
+		projection = data['projection'] if bool(data['has_projection']) else None
 		return SimplexResult(
-			projection = data['projection'],
+			time = data['time'],
+			projection = projection,
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']))
 
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
+		projection = data['projection'] if bool(data['has_projection']) else None
 		return SMapResult(
-			projection = data['projection'],
+			time = data['time'],
+			projection = projection,
 			coefficients = data['coefficients'],
 			singularValues = data['singularValues'],
 			embedDimensions = int(data['embedDimensions']),
@@ -649,14 +574,17 @@ class ResultsIO:
 			combo_keys[i]: stats_values[i]
 			for i in range(n_combos)}
 
+		predictions = data['predictions'] if bool(data['has_predictions']) else None
+
 		return MultiviewResult(
-			projection = data['projection'],
+			time = data['time'],
 			view = list(data['view']),
 			topRankProjections = topRankProjections,
 			topRankStats = topRankStats,
 			D = int(data['D']),
 			embedDimensions = int(data['embedDimensions']),
-			predictionHorizon = int(data['predictionHorizon']))
+			predictionHorizon = int(data['predictionHorizon']),
+			predictions = predictions)
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
@@ -665,10 +593,10 @@ class ResultsIO:
 			time_delay = [
 				(int(row[0]), int(row[1]), float(row[2]), float(row[3]))
 				for row in data['timeDelayResults']]
+		predictions = data['predictions'] if bool(data['has_predictions']) else None
 		return MDEResult(
 			time = data['time'],
-			observations = data['observations'],
-			predictions = data['predictions'],
+			predictions = predictions,
 			selected_features = data['selected_features'],
 			accuracy = data['accuracy'],
 			ccm_values = data['ccm_values'],
@@ -686,10 +614,10 @@ class ResultsIO:
 			             if key.startswith(f'fold_{i}_')}
 			fold_results.append(ResultsIO._LoadMDE(fold_data))
 
+		predictions = data['predictions'] if bool(data['has_predictions']) else None
 		return MDECVResult(
 			time = data['time'],
-			observations = data['observations'],
-			predictions = data['predictions'],
+			predictions = predictions,
 			selected_features = data['selected_features'],
 			fold_results = fold_results,
 			fold_accuracies = data['fold_accuracies'],
