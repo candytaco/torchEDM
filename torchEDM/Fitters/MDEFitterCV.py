@@ -158,7 +158,7 @@ class MDEFitterCV(EDMFitter):
 		for trainIndices, testIndices in self.cvSplitter.Split():
 			foldResult = self.FitSingleFold(trainData, trainIndices, testIndices, target, initialVariables)
 			self.foldResults.append(foldResult)
-			fold_accuracy_rows.append(numpy.array([foldResult.compute_error(target = j) for j in range(nTargets)]))
+			fold_accuracy_rows.append(numpy.array([foldResult.score(target = j) for j in range(nTargets)]))
 			progressBar.update(1)
 
 		# foldAccuracies: [nFolds, nTargets]

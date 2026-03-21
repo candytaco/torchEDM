@@ -3,7 +3,7 @@ from typing import List, Tuple, Any
 import numpy
 import torch
 
-from .Scoring import ComputeError
+from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
 from .Utils import IsNonStringIterable
@@ -24,7 +24,8 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 									   validLib: List = [],
 									   noTime: bool = False,
 									   ignoreNan: bool = True,
-									   batched: bool = False):
+									   batched: bool = False,
+									   scoring_function = Correlation):
 	"""
 	Estimate optimal embedding dimension for simplex
 
@@ -48,6 +49,7 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 	:param noTime: 				Whether to exclude time column
 	:param ignoreNan: 			Whether to ignore NaN values
 	:param batched: 			Use shared maxE indices for all E (faster, slightly less accurate for low E)
+	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
 	:return: best embedding dimensions
 	"""
 
@@ -57,12 +59,12 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 		correlations = _FindOptimalEmbeddingDimensionalityBatched(
 			data, columns, target, maxE, dimensions, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan)
+			validLib, noTime, ignoreNan, scoring_function)
 	else:
 		correlations = _FindOptimalEmbeddingDimensionalityIterative(
 			data, columns, target, dimensions, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan)
+			validLib, noTime, ignoreNan, scoring_function)
 
 	return dimensions, correlations
 
@@ -70,7 +72,8 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 def _FindOptimalEmbeddingDimensionalityIterative(data, columns, target, Evals,
 												  train, test, predictionHorizon,
 												  step, exclusionRadius, embedded,
-												  validLib, noTime, ignoreNan):
+												  validLib, noTime, ignoreNan,
+												  scoring_function):
 	"""
 	Evaluate each E with its own proper train/test indices.
 	Each E creates a Simplex and runs GPU-accelerated FindNeighbors/Project.
@@ -86,7 +89,7 @@ def _FindOptimalEmbeddingDimensionalityIterative(data, columns, target, Evals,
 					noTime=noTime, ignoreNan=ignoreNan)
 
 		result = S.Run()
-		correlation = ComputeError(result.projection[:, 1], result.projection[:, 2], None)
+		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
 		correlations.append(correlation)
 
 	return correlations
@@ -95,7 +98,8 @@ def _FindOptimalEmbeddingDimensionalityIterative(data, columns, target, Evals,
 def _FindOptimalEmbeddingDimensionalityBatched(data, columns, target, maxE, Evals,
 												train, test, predictionHorizon,
 												step, exclusionRadius, embedded,
-												validLib, noTime, ignoreNan):
+												validLib, noTime, ignoreNan,
+												scoring_function):
 	"""
 	Evaluate all E values using shared maxE indices and precomputed
 	cumulative per-column distances on GPU. Uses the most restrictive
@@ -183,7 +187,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(data, columns, target, maxE, Eval
 
 		predictionsNumpy = predictions.cpu().numpy()
 		nValid = len(validObsIndices)
-		correlation = ComputeError(observations[:nValid], predictionsNumpy[:nValid], None)
+		correlation = scoring_function(observations[:nValid], predictionsNumpy[:nValid])
 		correlations.append(correlation)
 
 	del cumulativeDistancesSq
@@ -208,7 +212,8 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 validLib: List = [],
 								 noTime: bool = False,
 								 ignoreNan: bool = True,
-								 batched: bool = False) -> numpy.ndarray:
+								 batched: bool = False,
+								 scoring_function = Correlation) -> numpy.ndarray:
 	"""
 	Estimate optimal prediction interval [1:maxTp] using GPU-accelerated Simplex.
 
@@ -231,6 +236,7 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 	:param noTime: 			Whether to exclude time column
 	:param ignoreNan: 		Whether to ignore NaN values
 	:param batched: 		Use shared maxTp library for all Tp (faster, slightly less accurate for low Tp)
+	:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
 	:return: Array with columns [predictionHorizon, correlation]
 	"""
 
@@ -240,12 +246,12 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 		correlations = _FindOptimalPredictionHorizonBatched(
 			data, columns, target, TpVals, train, test,
 			embedDimensions, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan)
+			validLib, noTime, ignoreNan, scoring_function)
 	else:
 		correlations = _FindOptimalPredictionHorizonIterative(
 			data, columns, target, TpVals, train, test,
 			embedDimensions, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan)
+			validLib, noTime, ignoreNan, scoring_function)
 
 	return numpy.column_stack([TpVals, correlations])
 
@@ -253,7 +259,8 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 											train, test, embedDimensions,
 											step, exclusionRadius, embedded,
-											validLib, noTime, ignoreNan):
+											validLib, noTime, ignoreNan,
+											scoring_function):
 	"""
 	Evaluate each Tp with its own proper train library.
 	"""
@@ -268,7 +275,7 @@ def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 					noTime=noTime, ignoreNan=ignoreNan)
 
 		result = S.Run()
-		correlation = ComputeError(result.projection[:, 1], result.projection[:, 2], None)
+		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
 		correlations.append(correlation)
 
 	return correlations
@@ -277,7 +284,8 @@ def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 def _FindOptimalPredictionHorizonBatched(data, columns, target, TpVals,
 										  train, test, embedDimensions,
 										  step, exclusionRadius, embedded,
-										  validLib, noTime, ignoreNan):
+										  validLib, noTime, ignoreNan,
+										  scoring_function):
 	"""
 	Evaluate all Tp values using shared maxTp library. Distances and neighbors
 	are computed once (using the most restrictive library from maxTp), then
@@ -330,7 +338,7 @@ def _FindOptimalPredictionHorizonBatched(data, columns, target, TpVals,
 		validObsIndices = observationIndices[observationIndices < len(S.targetVec)]
 		observations = S.targetVec[validObsIndices, 0]
 		nValid = len(validObsIndices)
-		correlation = ComputeError(observations[:nValid], predictionsNumpy[i, :nValid], None)
+		correlation = scoring_function(observations[:nValid], predictionsNumpy[i, :nValid])
 		correlations.append(correlation)
 
 	del distances, neighbors, targetVector, weights, weightRowSum
@@ -359,7 +367,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 						 ignoreNan: bool = True,
 						 numProcess: int = 4,
 						 mpMethod: Any = None,
-						 chunksize: int = 1) -> numpy.ndarray:
+						 chunksize: int = 1,
+						 scoring_function = Correlation) -> numpy.ndarray:
 	"""
 	Estimate the best neighborhood size for SMap, i.e. the
 	exponential decay factor for weighing neighbors by distance.
@@ -383,6 +392,7 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 	:param numProcess: 			Unused, kept for API compatibility
 	:param mpMethod: 			Unused, kept for API compatibility
 	:param chunksize: 			Unused, kept for API compatibility
+	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
 	:return: Array with columns [theta, correlation]
 	"""
 
@@ -395,14 +405,15 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 	correlations = _FindSMapNeighborhoodBatched(
 		data, columns, target, theta, train, test,
 		embedDimensions, predictionHorizon, knn, step,
-		exclusionRadius, embedded, validLib, noTime, ignoreNan)
+		exclusionRadius, embedded, validLib, noTime, ignoreNan, scoring_function)
 
 	return numpy.column_stack([theta, correlations])
 
 
 def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test,
 								 embedDimensions, predictionHorizon, knn, step,
-								 exclusionRadius, embedded, validLib, noTime, ignoreNan):
+								 exclusionRadius, embedded, validLib, noTime, ignoreNan,
+								 scoring_function):
 	"""
 	Evaluate all theta values using shared neighbor computation.
 	Neighbors are found once, then projections for all theta values
@@ -488,7 +499,7 @@ def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test
 		predictions = coefficients[:, 0] + torch.sum(coefficients[:, 1:] * testEmbeddings, dim = 1)
 		predictionsNumpy = predictions.cpu().numpy()
 
-		correlation = ComputeError(observations[:nValid], predictionsNumpy[:nValid], None)
+		correlation = scoring_function(observations[:nValid], predictionsNumpy[:nValid])
 		correlations.append(correlation)
 
 	# Clean up

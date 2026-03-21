@@ -9,7 +9,8 @@ from numpy import argsort, array, column_stack, mean
 
 # local modules
 from .Embed import Embed
-from .. import Functions, ComputeError
+from .. import Functions
+from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 from ..Utils import IsNonStringIterable
 from .Results import MultiviewResult
 
@@ -43,14 +44,15 @@ def MultiviewSimplexPred( combo, data, args ) :
 #----------------------------------------------------
 # Function to evaluate combo rank (correlation)
 #----------------------------------------------------
-def MultiviewSimplexcorrelation( combo, data, args ) :
+def MultiviewSimplexcorrelation( combo, data, args, scoring_function = Correlation ) :
 	"""
 	Function to evaluate combo rank (correlation)
 
 	:param combo: Column combination tuple
 	:param data: Embedded data array
 	:param args: Dictionary of Simplex arguments
-	:return: Correlation value
+	:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+	:return: Scoring value
 	"""
 	projection = Functions.FitSimplex(data       = data,
                                 columns         = list( combo ),
@@ -66,7 +68,7 @@ def MultiviewSimplexcorrelation( combo, data, args ) :
                                 ignoreNan       = args['ignoreNan'])
 
 	# projection is numpy array: Column 1 is Observations, Column 2 is Predictions
-	return ComputeError(projection[:, 1], projection[:, 2], None)
+	return scoring_function(projection[:, 1], projection[:, 2])
 
 #------------------------------------------------------------------
 class Multiview:
@@ -133,7 +135,8 @@ class Multiview:
                   verbose=False,
                   numProcess=4,
                   mpMethod=None,
-                  chunksize=1):
+                  chunksize=1,
+                  scoring_function=Correlation):
         """
         Initialize Multiview using plain arguments.
 
@@ -183,6 +186,7 @@ class Multiview:
         self.numProcess = numProcess
         self.mpMethod   = mpMethod
         self.chunksize  = chunksize
+        self.scoring_function = scoring_function
 
         self.Embedding  = None # numpy array
         self.View       = None # numpy array
@@ -230,10 +234,10 @@ class Multiview:
         for combo in colCombos :
             proj = self.topRankProjections[combo]
             # proj columns: 0=Time, 1=Observations, 2=Predictions, 3=Variance
-            metrics = [ComputeError(proj[:, 1], proj[:, 2], None),
-                       ComputeError(proj[:, 1], proj[:, 2], 'MAE'),
-                       ComputeError(proj[:, 1], proj[:, 2], 'CAE'),
-                       ComputeError(proj[:, 1], proj[:, 2], 'RMSE')]
+            metrics = [Correlation(proj[:, 1], proj[:, 2]),
+                       MaxAbsoluteError(proj[:, 1], proj[:, 2]),
+                       SumAbsoluteError(proj[:, 1], proj[:, 2]),
+                       RootMeanSquareError(proj[:, 1], proj[:, 2])]
             topRankStats[combo] = metrics
 
         self.topRankStats = topRankStats
@@ -281,7 +285,7 @@ class Multiview:
             args['test'] = self.train
 
         # Sequential evaluation of all combos
-        correlationList = [MultiviewSimplexcorrelation(combo, self.Embedding, args)
+        correlationList = [MultiviewSimplexcorrelation(combo, self.Embedding, args, self.scoring_function)
                            for combo in self.combos]
 
         correlationVec    = array( correlationList, dtype = float )

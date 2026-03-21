@@ -166,7 +166,7 @@ class MDECV:
 			progressBar.update(1)
 
 		# Identify best fold
-		self.test_accuracy = [r.compute_error() for r in self.fold_results]
+		self.test_accuracy = [r.score() for r in self.fold_results]
 		self.bestFold = numpy.argmax(self.test_accuracy)
 		self.best_fold_accuracy = self.test_accuracy[self.bestFold]
 		self.best_fold_features = self.fold_results[self.bestFold].selected_features

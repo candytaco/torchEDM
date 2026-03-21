@@ -23,7 +23,7 @@ def plot_prediction(result: Union['SimplexResult', 'SMapResult', 'MultiviewResul
 	:param predictionHorizon: Prediction horizon (only needed if passing numpy array)
 	:param block: Whether to block execution when showing plot
 	"""
-	from .Scoring import ComputeError
+	from .Scoring import Correlation, RootMeanSquareError
 
 	# Handle both Result objects and numpy arrays
 	if hasattr(result, 'projection'):
@@ -38,8 +38,8 @@ def plot_prediction(result: Union['SimplexResult', 'SMapResult', 'MultiviewResul
 		Tp = predictionHorizon or 0
 
 	# Compute error statistics
-	corr = ComputeError(data[:, 1], data[:, 2], None)
-	RMSE = ComputeError(data[:, 1], data[:, 2], 'RMSE')
+	corr = Correlation(data[:, 1], data[:, 2])
+	RMSE = RootMeanSquareError(data[:, 1], data[:, 2])
 
 	# Build title
 	plot_title = title

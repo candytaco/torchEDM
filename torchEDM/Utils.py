@@ -21,7 +21,7 @@ from numpy import absolute, arange, fft
 from numpy import mean, ptp, std, sqrt, zeros
 from scipy.interpolate import UnivariateSpline
 
-from torchEDM import ComputeError
+from torchEDM.Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 
 
 def Iterable( obj ):
@@ -213,10 +213,10 @@ def PlotObsPred( data, dataName = "", embedDimensions = 0, predictionHorizon = 0
 	import matplotlib.pyplot as plt
 
 	# stats: {'MAE': 0., 'RMSE': 0., 'correlation': 0. }
-	stats = [ComputeError(data[:, 1], data[:, 2], None),
-			 ComputeError(data[:, 1], data[:, 2], 'MAE'),
-			 ComputeError(data[:, 1], data[:, 2], 'CAE'),
-			 ComputeError(data[:, 1], data[:, 2], 'RMSE')]
+	stats = [Correlation(data[:, 1], data[:, 2]),
+			 MaxAbsoluteError(data[:, 1], data[:, 2]),
+			 SumAbsoluteError(data[:, 1], data[:, 2]),
+			 RootMeanSquareError(data[:, 1], data[:, 2])]
 
 	title = dataName + "\nEmbedding Dims = " + str(embedDimensions) + " predictionHorizon=" + str(predictionHorizon) +\
 			"  correlation="   + str( round( stats[0],  3 ) )   +\

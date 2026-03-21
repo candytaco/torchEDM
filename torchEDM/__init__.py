@@ -6,6 +6,7 @@ from . import Functions
 from . import Fitters
 
 from .Utils import PlotObsPred, PlotCoeff
+from .Scoring import ComputeError
 from .Hyperparameters import FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon, FindSMapNeighborhood
 from .FunctionalExamples import FunctionalExamples
 from .FitterExamples import FitterExamples

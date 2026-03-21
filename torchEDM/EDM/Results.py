@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple, Union
 import numpy as np
 
-from ..Scoring import ComputeError
+from ..Scoring import Correlation
 
 
 @dataclass(frozen=True)
@@ -45,14 +45,14 @@ class SimplexResult:
         """
         return self.projection[:, 2]
 
-    def compute_error(self, metric = None) -> float:
+    def score(self, scoring_function = Correlation) -> float:
         """
         Compute prediction error statistics.
 
-        :param metric: Error metric to compute
-        :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+        :return: Computed metric value
         """
-        return ComputeError(self.observations, self.predictions, metric)
+        return scoring_function(self.observations, self.predictions)
 
 
 @dataclass(frozen=True)
@@ -106,14 +106,14 @@ class SMapResult:
             predictionHorizon=self.predictionHorizon
         )
 
-    def compute_error(self, metric = None) -> float:
+    def score(self, scoring_function = Correlation) -> float:
         """
         Compute prediction error statistics.
 
-        :param metric: Error metric to compute
-        :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+        :return: Computed metric value
         """
-        return ComputeError(self.observations, self.predictions, metric)
+        return scoring_function(self.observations, self.predictions)
 
 
 @dataclass(frozen=True)
@@ -200,14 +200,14 @@ class MultiviewResult:
         """
         return list(self.topRankProjections.keys())
 
-    def compute_error(self, metric = None) -> float:
+    def score(self, scoring_function = Correlation) -> float:
         """
         Compute prediction error statistics for ensemble prediction.
 
-        :param metric: Error metric to compute
-        :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+        :return: Computed metric value
         """
-        return ComputeError(self.observations, self.predictions, metric)
+        return scoring_function(self.observations, self.predictions)
 
     def get_combination_stats(self, combo: tuple) -> Dict[str, float]:
         """
@@ -245,15 +245,15 @@ class MDEResult:
     stepwise_performance: np.ndarray
     timeDelayResults: List[Tuple[int, int, float, float]] = None
 
-    def compute_error(self, metric = None, target: int = 0) -> float:
+    def score(self, scoring_function = Correlation, target: int = 0) -> float:
         """
         Compute prediction error statistics for one target.
 
-        :param metric: Error metric to compute
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
         :param target: Target index (default 0)
-        :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
+        :return: Computed metric value
         """
-        return ComputeError(self.observations[:, target], self.predictions[:, target], metric)
+        return scoring_function(self.observations[:, target], self.predictions[:, target])
 
 
 @dataclass(frozen=True)
@@ -277,15 +277,15 @@ class MDECVResult:
     fold_accuracies: np.ndarray
     best_fold: np.ndarray
 
-    def compute_error(self, metric = None, target: int = 0) -> float:
+    def compute_error(self, scoring_function = Correlation, target: int = 0) -> float:
         """
         Compute prediction error statistics for one target.
 
-        :param metric: Error metric to compute
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
         :param target: Target index (default 0)
-        :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
+        :return: Computed metric value
         """
-        return ComputeError(self.observations[:, target], self.predictions[:, target], metric)
+        return scoring_function(self.observations[:, target], self.predictions[:, target])
 
 @dataclass(frozen=True)
 class BatchedCCMResult:

@@ -7,7 +7,7 @@ from numpy import array, exp, fmax, divide, mean, nan, roll, sum, zeros
 from numpy.random import default_rng
 
 from ..Utils import IsNonStringIterable
-from ..Scoring import ComputeError
+from ..Scoring import Correlation
 # local modules
 from .Simplex import Simplex as SimplexClass
 from .Results import CCMResult
@@ -42,7 +42,8 @@ class CCM:
 				 mpMethod = None,
 				 sequential = False,
 				 verbose = False,
-				 kdTree: bool = False):
+				 kdTree: bool = False,
+				 scoring_function = Correlation):
 		"""
 		Initialize CCM.
 
@@ -95,6 +96,7 @@ class CCM:
 		# Assign execution parameters
 		self.mpMethod = mpMethod
 		self.sequential = sequential
+		self.scoring_function = scoring_function
 
 		# Set train & test block indices
 		if trainBlockIndices is not None:
@@ -319,7 +321,7 @@ class CCM:
 				elif simplex.predictionHorizon < 0:
 					projection_[simplex.predictionHorizon:] = nan
 
-				err = ComputeError(simplex.targetVec[simplex.testIndices, 0], projection_, None)
+				err = self.scoring_function(simplex.targetVec[simplex.testIndices, 0], projection_)
 
 				correlations[s] = err
 
