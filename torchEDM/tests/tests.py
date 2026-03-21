@@ -691,6 +691,7 @@ class test_EDM( unittest.TestCase ):
                          sample = 100, embedDimensions = 3,
                          predictionHorizon = 0, knn = 0, step = -1,
                          embedded = False, validLib = [], includeData = False,
+                         batchMode = 'sample',
                          showProgress = False
                          )
         results = CCM.Run()
@@ -929,33 +930,79 @@ class test_MDE( unittest.TestCase ):
 	#------------------------------------------------------------
 	def test_mde1( self ):
 		"""MDE: selected variables and rho match dimx reference on Fly80XY"""
-		if self.verbose : print( "--- MDE 1 ---" )
+		if self.verbose: print("--- MDE 1 ---")
 
-		targetIdx = len( self.colNames ) - 1
+		targetIdx = len(self.colNames) - 1
 
 		mde = self.MDE(
-			data              = self.data,
-			target            = targetIdx,
-			maxD              = 5,
-			convergent        = False,
-			embedded          = True,
-			embedDimensions   = 1,
-			noTime            = True,
-			train             = [ 1, 300 ],
-			test              = [ 301, 600 ],
+			data = self.data,
+			target = targetIdx,
+			maxD = 5,
+			convergent = False,
+			embedded = True,
+			embedDimensions = 1,
+			noTime = True,
+			train = [1, 300],
+			test = [301, 600],
 			predictionHorizon = 1,
-			verbose           = False
+			verbose = False
 		)
 		mde.Run()
 
 		from pandas import read_csv
-		validDf = read_csv( self.validationPath )
+		groundTruthData = read_csv(self.validationPath)
 
-		selectedNames = [ self.colNames[ i ] for i in mde.selectedVariables ]
-		self.assertEqual( selectedNames, validDf[ 'variables' ].tolist() )
+		result = mde.results_
+		selectedForTarget = result.selected_features[0, result.selected_features[0] != -1]
+		selectedNames = [self.colNames[i] for i in selectedForTarget]
+		self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
 
-		for computed, expected in zip( mde.accuracy, validDf[ 'rho' ] ):
-			self.assertAlmostEqual( float( computed ), float( expected ), places = 4 )
+		accuracyForTarget = result.accuracy[0, result.accuracy[0] != numpy.nan]
+		accuracyForTarget = accuracyForTarget[~numpy.isnan(accuracyForTarget)]
+		for computed, expected in zip(accuracyForTarget, groundTruthData['rho']):
+			self.assertAlmostEqual(float(computed), float(expected), places = 4)
+
+	#------------------------------------------------------------
+	# Multi-target MDE with duplicated Y produces same result as single-target
+	#------------------------------------------------------------
+	def test_mde2(self):
+		"""MDE: multi-target with duplicated Y selects same features as single-target"""
+		if self.verbose: print("--- MDE 2 ---")
+
+		yColumn = self.data[:, -1]
+		dataTwo = numpy.hstack([self.data, yColumn[:, None]])
+		target1Index = dataTwo.shape[1] - 2
+		target2Index = dataTwo.shape[1] - 1
+
+		mde = self.MDE(
+			data = dataTwo,
+			target = [target1Index, target2Index],
+			maxD = 5,
+			convergent = False,
+			embedded = True,
+			embedDimensions = 1,
+			noTime = True,
+			train = [1, 300],
+			test = [301, 600],
+			predictionHorizon = 1,
+			verbose = False
+		)
+		mde.Run()
+
+		from pandas import read_csv
+		groundTruthData = read_csv(self.validationPath)
+
+		result = mde.results_
+		self.assertEqual(result.selected_features.shape[0], 2)
+
+		for j in range(2):
+			selectedForTarget = result.selected_features[j, result.selected_features[j] != -1]
+			selectedNames = [self.colNames[i] for i in selectedForTarget]
+			self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
+
+			accuracyForTarget = result.accuracy[j, ~numpy.isnan(result.accuracy[j])]
+			for computed, expected in zip(accuracyForTarget, groundTruthData['rho']):
+				self.assertAlmostEqual(float(computed), float(expected), places = 4)
 
 #
 

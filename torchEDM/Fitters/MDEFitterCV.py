@@ -146,10 +146,11 @@ class MDEFitterCV(EDMFitter):
 		)
 
 		trainData = self.trainDataAdapter.fullData
-		target = trainData.shape[1] - 1
+		target = self.trainDataAdapter.YIndex
+		nTargets = len(target)
 
 		self.foldResults = []
-		self.foldAccuracies = []
+		fold_accuracy_rows = []
 
 		numSplits = self.cvSplitter.GetNSplits()
 		progressBar = ProgressBar(total = numSplits, desc = 'MDE CV Fold', leave = False)
@@ -157,12 +158,20 @@ class MDEFitterCV(EDMFitter):
 		for trainIndices, testIndices in self.cvSplitter.Split():
 			foldResult = self.FitSingleFold(trainData, trainIndices, testIndices, target, initialVariables)
 			self.foldResults.append(foldResult)
-			self.foldAccuracies.append(foldResult.compute_error())
+			fold_accuracy_rows.append(numpy.array([foldResult.compute_error(target = j) for j in range(nTargets)]))
 			progressBar.update(1)
 
-		self.bestFold = numpy.argmax(self.foldAccuracies)
-		self.bestFoldAccuracy = self.foldAccuracies[self.bestFold]
-		self.bestFoldFeatures = self.foldResults[self.bestFold].selected_features
+		# foldAccuracies: [nFolds, nTargets]
+		self.foldAccuracies = numpy.array(fold_accuracy_rows)
+
+		# bestFold: [nTargets] — best fold index per target
+		self.bestFold = numpy.argmax(self.foldAccuracies, axis = 0)
+		self.bestFoldAccuracy = self.foldAccuracies[self.bestFold, numpy.arange(nTargets)]
+
+		# bestFoldFeatures: [nTargets, maxD]
+		self.bestFoldFeatures = numpy.full([nTargets, self.MaxD], -1, dtype = int)
+		for j in range(nTargets):
+			self.bestFoldFeatures[j, :] = self.foldResults[self.bestFold[j]].selected_features[j, :]
 
 		return self
 
@@ -170,7 +179,7 @@ class MDEFitterCV(EDMFitter):
 					  data: numpy.ndarray,
 					  trainIndices: List[int],
 					  testIndices: List[int],
-					  target: int,
+					  target: Union[int, List[int]],
 					  initialVariables: Optional[List[int]] = None,
 					  convergent: bool = None) -> MDEResult:
 		"""
@@ -249,62 +258,102 @@ class MDEFitterCV(EDMFitter):
 		self.DataAdapter = DataAdapter.MakeDataAdapter(self.trainDataAdapter.XTrain, self.trainDataAdapter.YTrain,
 													   XTest, YTest, self.trainDataAdapter.TrainStart,
 													   self.trainDataAdapter.TrainEnd, TestStart, TestEnd,
-													   self.trainDataAdapter.TrainTime, testTime)
+													   self.trainDataAdapter.trainTime, testTime)
+
+		yIndices = self.DataAdapter.YIndex
+		nTargets = len(yIndices)
+
 		if self.FinalFeatureMode == "frequency":
-			features = self.GetFrequencyFeatures()
+			featuresPerTarget = self.GetFrequencyFeatures()
 		elif self.FinalFeatureMode == 'reselect':
-			allSelected = []
+			allSelected = set()
 			for fold in self.foldResults:
-				allSelected += fold.selected_features
-			allSelected = list(set(allSelected))
-			allSelected.sort()
-			last = self.DataAdapter.YIndex
-			reselect_columns = allSelected + [last]
-			res = self.FitSingleFold(self.DataAdapter.fullData[:, reselect_columns],
-									self.DataAdapter.TrainIndices, self.DataAdapter.TestIndices,
-									 len(allSelected), convergent = False)
-			features = res.selected_features
-		else: # self.FinalFeatureMode == "best_fold":
-			features = self.bestFoldFeatures
+				for j in range(nTargets):
+					row = fold.selected_features[j, :]
+					allSelected |= set(int(f) for f in row[row != -1])
+			allSelected -= set(yIndices)
+			allSelectedList = sorted(allSelected)
+			reselectColumns = allSelectedList + yIndices
+			reselectData = self.DataAdapter.fullData[:, reselectColumns]
+			reselectTargets = list(range(len(allSelectedList), len(reselectColumns)))
+			res = self.FitSingleFold(reselectData, self.DataAdapter.TrainIndices, self.DataAdapter.TestIndices,
+									 reselectTargets, convergent = False)
+			# Map indices back to original columns
+			featuresPerTarget = numpy.full_like(res.selected_features, -1)
+			for j in range(nTargets):
+				for k in range(res.selected_features.shape[1]):
+					f = res.selected_features[j, k]
+					if f != -1:
+						featuresPerTarget[j, k] = reselectColumns[f]
+		else:
+			featuresPerTarget = self.bestFoldFeatures
 
-		simplex = Simplex(
-			data = self.DataAdapter.fullData,
-			columns = features,
-			target = self.DataAdapter.YIndex,
-			train = self.DataAdapter.TrainIndices,
-			test = self.DataAdapter.TestIndices,
-			embedDimensions = self.EmbedDimensions,
-			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			exclusionRadius = self.ExclusionRadius,
-			noTime = self.DataAdapter.hasTime,
-			verbose = self.Verbose,
-			embedded = True
-		)
+		timeValues = None
+		observations = None
+		predictions = None
 
-		result = simplex.Run()
+		for j in range(nTargets):
+			featuresJ = featuresPerTarget[j, :]
+			featuresJ = featuresJ[featuresJ != -1].tolist()
+
+			simplex = Simplex(
+				data = self.DataAdapter.fullData,
+				columns = featuresJ,
+				target = yIndices[j],
+				train = self.DataAdapter.TrainIndices,
+				test = self.DataAdapter.TestIndices,
+				embedDimensions = self.EmbedDimensions,
+				predictionHorizon = self.PredictionHorizon,
+				knn = self.KNN,
+				step = self.Step,
+				exclusionRadius = self.ExclusionRadius,
+				noTime = not self.DataAdapter.HasTime,
+				verbose = self.Verbose,
+				embedded = True
+			)
+
+			resultJ = simplex.Run()
+
+			if j == 0:
+				timeValues = resultJ.projection[:, 0]
+				nPredictions = len(timeValues)
+				observations = numpy.zeros([nPredictions, nTargets])
+				predictions = numpy.zeros([nPredictions, nTargets])
+
+			observations[:, j] = resultJ.projection[:, 1]
+			predictions[:, j] = resultJ.projection[:, 2]
+
 		self.Result = MDECVResult(
-			final_forecast = result,
-			selected_features = features,
-			fold_results = self.foldResults
+			time = timeValues,
+			observations = observations,
+			predictions = predictions,
+			selected_features = featuresPerTarget,
+			fold_results = self.foldResults,
+			fold_accuracies = self.foldAccuracies,
+			best_fold = self.bestFold
 		)
 		return self.Result
 
 
-	def GetFrequencyFeatures(self) -> List[int]:
+	def GetFrequencyFeatures(self) -> numpy.ndarray:
 		"""
-		Get most frequent features across folds.
+		Get most frequent features across folds, per target.
 
-		:return: List of most frequent feature indices
+		:return: Selected features array [nTargets, maxD] padded with -1
 		"""
-		allFeatures = []
-		for result in self.foldResults:
-			allFeatures.extend(result.selected_features)
+		nTargets = len(self.trainDataAdapter.YIndex)
+		result = numpy.full([nTargets, self.MaxD], -1, dtype = int)
 
-		featureCounts = {}
-		for feature in allFeatures:
-			featureCounts[feature] = featureCounts.get(feature, 0) + 1
+		for j in range(nTargets):
+			featureCounts = {}
+			for foldResult in self.foldResults:
+				row = foldResult.selected_features[j, :]
+				for feature in row[row != -1]:
+					feature = int(feature)
+					featureCounts[feature] = featureCounts.get(feature, 0) + 1
 
-		sortedFeatures = sorted(featureCounts.items(), key = lambda x: x[1], reverse = True)
-		return [feature for feature, count in sortedFeatures[:self.MaxD]]
+			sortedFeatures = sorted(featureCounts.items(), key = lambda x: x[1], reverse = True)
+			topFeatures = [feature for feature, count in sortedFeatures[:self.MaxD]]
+			result[j, :len(topFeatures)] = topFeatures
+
+		return result

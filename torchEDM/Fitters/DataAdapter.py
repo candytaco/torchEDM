@@ -5,7 +5,7 @@ Provides bridge from SKLearn style to EDM single-array style.
 
 Note: the EDM-style API, when given indices along the time dimension, are stop-inclusive
 """
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 
 import numpy
 
@@ -151,11 +151,11 @@ class DataAdapter:
 		raise NotImplementedError
 
 	@property
-	def YIndex(self) -> int:
+	def YIndex(self) -> List[int]:
 		"""
-		Index for Y variable, assumes we only do one.
+		Indices for Y variable columns.
 
-		:return: Y index
+		:return: Y column indices
 		"""
 		raise NotImplementedError
 
@@ -182,9 +182,10 @@ class DataAdapterSingleRun(DataAdapter):
 		super().__init__(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, trainTime, testTime)
 
 	def StackData(self):
-		self.YTrain = self.YTrain.squeeze()[:, None]
-		if self.YTest is not None:
-			self.YTest = self.YTest.squeeze()[:, None]
+		if self.YTrain.ndim == 1:
+			self.YTrain = self.YTrain[:, None]
+		if self.YTest is not None and self.YTest.ndim == 1:
+			self.YTest = self.YTest[:, None]
 
 		train = numpy.hstack([self.XTrain, self.YTrain])
 		self.trainOffset = self.TrainStart
@@ -228,8 +229,10 @@ class DataAdapterSingleRun(DataAdapter):
 		return (0 + int(self.hasTime), self.XTrain.shape[1] + int(self.hasTime) - 1)
 
 	@property
-	def YIndex(self) -> int:
-		return self.fullData.shape[1] - 1
+	def YIndex(self) -> List[int]:
+		total = self.fullData.shape[1]
+		nY = self.YTrain.shape[1]
+		return list(range(total - nY, total))
 
 
 class DataAdapterMultipleRuns(DataAdapter):
@@ -256,7 +259,9 @@ class DataAdapterMultipleRuns(DataAdapter):
 
 		trainRuns = []
 		for X, Y in zip(self.XTrain, self.YTrain):
-			trainRuns.append(numpy.hstack([X, Y.squeeze()[:, None]]))
+			if Y.ndim == 1:
+				Y = Y[:, None]
+			trainRuns.append(numpy.hstack([X, Y]))
 
 		# calculate indices for each run in the stacked data
 		n = 0
@@ -271,6 +276,8 @@ class DataAdapterMultipleRuns(DataAdapter):
 
 		# add test data if we have it
 		if self.YTest is not None:
+			if self.YTest.ndim == 1:
+				self.YTest = self.YTest[:, None]
 			test = numpy.hstack([self.XTest, self.YTest])
 			data = numpy.vstack([data, test])
 
@@ -304,5 +311,8 @@ class DataAdapterMultipleRuns(DataAdapter):
 		return (0 + int(self.hasTime), self.XTrain[0].shape[1] + int(self.hasTime) - 1)
 
 	@property
-	def YIndex(self) -> int:
-		return self.fullData.shape[1] - 1
+	def YIndex(self) -> List[int]:
+		total = self.fullData.shape[1]
+		first_Y = self.YTrain[0]
+		nY = first_Y.shape[1] if first_Y.ndim == 2 else 1
+		return list(range(total - nY, total))

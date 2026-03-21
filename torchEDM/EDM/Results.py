@@ -227,49 +227,33 @@ class MDEResult:
     """
     Results from Multivariate Delay Embedding.
 
-    :param final_forecast: Final forecast array [Time, Observations, Predictions]
-    :param selected_features: Column indices of selected features
-    :param accuracy: Correlation/MAE at each feature addition step
-    :param ccm_values: CCM convergence values for selected features
-    :param stepwise_performance: ranking of adding each feature at each iteration
+    :param time: Time values, shape [N]
+    :param observations: Observed values, shape [N, K] where K is the number of targets
+    :param predictions: Predicted values, shape [N, K]
+    :param selected_features: Selected feature column indices, shape [K, maxD], padded with -1
+    :param accuracy: Accuracy at each feature addition step, shape [K, maxD], padded with NaN
+    :param ccm_values: CCM convergence slopes for selected features, shape [K, maxD], padded with NaN
+    :param stepwise_performance: Performance of adding each candidate at each step, shape [K, maxD, nVars]
     :param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
     """
-    final_forecast: np.ndarray
-    selected_features: List[int]
-    accuracy: List[float]
-    ccm_values: List[float]
-    stepwise_performance: List[Tuple[int, float]]
+    time: np.ndarray
+    observations: np.ndarray
+    predictions: np.ndarray
+    selected_features: np.ndarray
+    accuracy: np.ndarray
+    ccm_values: np.ndarray
+    stepwise_performance: np.ndarray
     timeDelayResults: List[Tuple[int, int, float, float]] = None
 
-    @property
-    def time(self) -> np.ndarray:
+    def compute_error(self, metric = None, target: int = 0) -> float:
         """
-        Time values from forecast.
-        """
-        return self.final_forecast[:, 0]
-
-    @property
-    def observations(self) -> np.ndarray:
-        """
-        Observed values from forecast.
-        """
-        return self.final_forecast[:, 1]
-
-    @property
-    def predictions(self) -> np.ndarray:
-        """
-        Predicted values from forecast.
-        """
-        return self.final_forecast[:, 2]
-
-    def compute_error(self, metric = None) -> float:
-        """
-        Compute prediction error statistics.
+        Compute prediction error statistics for one target.
 
         :param metric: Error metric to compute
+        :param target: Target index (default 0)
         :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
         """
-        return ComputeError(self.observations, self.predictions, metric)
+        return ComputeError(self.observations[:, target], self.predictions[:, target], metric)
 
 
 @dataclass(frozen=True)
@@ -277,47 +261,31 @@ class MDECVResult:
     """
     Results from MDE Cross-Validation.
 
-    :param final_forecast: Final forecast array from test set prediction
-    :param selected_features: Final selected feature indices
+    :param time: Time values, shape [N]
+    :param observations: Observed values, shape [N, K]
+    :param predictions: Predicted values, shape [N, K]
+    :param selected_features: Final selected feature indices, shape [K, maxD] padded with -1
     :param fold_results: Results from each cross-validation fold
-    :param accuracy: Test set accuracy for each fold
+    :param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
     :param best_fold: Index of best performing fold
     """
-    final_forecast: np.ndarray
-    selected_features: List[int]
+    time: np.ndarray
+    observations: np.ndarray
+    predictions: np.ndarray
+    selected_features: np.ndarray
     fold_results: List[MDEResult]
-    accuracy: List[float]
-    best_fold: int
+    fold_accuracies: np.ndarray
+    best_fold: np.ndarray
 
-    @property
-    def time(self) -> np.ndarray:
+    def compute_error(self, metric = None, target: int = 0) -> float:
         """
-        Time values from forecast.
-        """
-        return self.final_forecast[:, 0]
-
-    @property
-    def observations(self) -> np.ndarray:
-        """
-        Observed values from forecast.
-        """
-        return self.final_forecast[:, 1]
-
-    @property
-    def predictions(self) -> np.ndarray:
-        """
-        Predicted values from forecast.
-        """
-        return self.final_forecast[:, 2]
-
-    def compute_error(self, metric = None) -> float:
-        """
-        Compute prediction error statistics.
+        Compute prediction error statistics for one target.
 
         :param metric: Error metric to compute
+        :param target: Target index (default 0)
         :return: Dictionary with keys: 'correlation', 'MAE', 'CAE', 'RMSE'
         """
-        return ComputeError(self.observations, self.predictions, metric)
+        return ComputeError(self.observations[:, target], self.predictions[:, target], metric)
 
 @dataclass(frozen=True)
 class BatchedCCMResult:

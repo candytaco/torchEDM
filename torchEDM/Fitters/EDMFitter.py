@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import numpy
 
@@ -82,11 +82,11 @@ class EDMFitter:
 
 		return self.DataAdapter.XIndices
 
-	def GetYIndex(self) -> int:
+	def GetYIndex(self) -> List[int]:
 		"""
-		Get the Y target index.
+		Get the Y target column indices.
 
-		:return: Y index
+		:return: Y indices
 		"""
 
 		return self.DataAdapter.YIndex
