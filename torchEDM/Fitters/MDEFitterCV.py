@@ -7,7 +7,7 @@ from .DataAdapter import DataAdapter
 from .EDMFitter import EDMFitter
 from .CVSplitter import EDMCVSplitter
 from ..EDM.MDE import MDE
-from ..EDM.Results import MDEResult, MDECVResult
+from ..EDM.Results import MDEResult, MDECVResults
 from ..EDM.Simplex import Simplex
 
 
@@ -149,6 +149,9 @@ class MDEFitterCV(EDMFitter):
 		target = self.trainDataAdapter.YIndex
 		nTargets = len(target)
 
+		xStart, xEnd = self.trainDataAdapter.XIndices
+		effectiveColumns = initialVariables if initialVariables is not None else list(range(xStart, xEnd + 1))
+
 		self.foldResults = []
 		fold_accuracy_rows = []
 
@@ -156,7 +159,7 @@ class MDEFitterCV(EDMFitter):
 		progressBar = ProgressBar(total = numSplits, desc = 'MDE CV Fold', leave = False)
 
 		for trainIndices, testIndices in self.cvSplitter.Split():
-			foldResult = self.FitSingleFold(trainData, trainIndices, testIndices, target, initialVariables)
+			foldResult = self.FitSingleFold(trainData, trainIndices, testIndices, target, effectiveColumns)
 			self.foldResults.append(foldResult)
 			fold_accuracy_rows.append(numpy.array([foldResult.score(target = j) for j in range(nTargets)]))
 			progressBar.update(1)
@@ -173,7 +176,17 @@ class MDEFitterCV(EDMFitter):
 		for j in range(nTargets):
 			self.bestFoldFeatures[j, :] = self.foldResults[self.bestFold[j]].selected_features[j, :]
 
-		return self
+		foldSelectedFeatures = numpy.stack([r.selected_features for r in self.foldResults], axis = 0)
+		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)
+
+		self.Result = MDECVResults(
+			fold_selected_features = foldSelectedFeatures,
+			fold_stepwise_performances = foldStepwisePerformances,
+			fold_accuracies = self.foldAccuracies,
+			best_fold = self.bestFold,
+			selected_features = self.bestFoldFeatures
+		)
+		return self.Result
 
 	def FitSingleFold(self,
 					  data: numpy.ndarray,
@@ -229,7 +242,7 @@ class MDEFitterCV(EDMFitter):
 	def Predict(self, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
 				TestStart = None, TestEnd = None,
 				testTime: Optional[numpy.ndarray] = None
-				) -> MDECVResult:
+				) -> MDECVResults:
 		"""
 		Predict using the final chosen feature set on test data.
 
@@ -267,9 +280,9 @@ class MDEFitterCV(EDMFitter):
 			featuresPerTarget = self.GetFrequencyFeatures()
 		elif self.FinalFeatureMode == 'reselect':
 			allSelected = set()
-			for fold in self.foldResults:
+			for i in range(self.Result.fold_selected_features.shape[0]):
 				for j in range(nTargets):
-					row = fold.selected_features[j, :]
+					row = self.Result.fold_selected_features[i, j, :]
 					allSelected |= set(int(f) for f in row[row != -1])
 			allSelected -= set(yIndices)
 			allSelectedList = sorted(allSelected)
@@ -323,14 +336,15 @@ class MDEFitterCV(EDMFitter):
 			observations[:, j] = resultJ.projection[:, 1]
 			predictions[:, j] = resultJ.projection[:, 2]
 
-		self.Result = MDECVResult(
+		self.Result = MDECVResults(
+			fold_selected_features = self.Result.fold_selected_features,
+			fold_stepwise_performances = self.Result.fold_stepwise_performances,
+			fold_accuracies = self.foldAccuracies,
+			best_fold = self.bestFold,
+			selected_features = featuresPerTarget,
 			time = timeValues,
 			observations = observations,
-			predictions = predictions,
-			selected_features = featuresPerTarget,
-			fold_results = self.foldResults,
-			fold_accuracies = self.foldAccuracies,
-			best_fold = self.bestFold
+			predictions = predictions
 		)
 		return self.Result
 
@@ -346,8 +360,8 @@ class MDEFitterCV(EDMFitter):
 
 		for j in range(nTargets):
 			featureCounts = {}
-			for foldResult in self.foldResults:
-				row = foldResult.selected_features[j, :]
+			for i in range(self.Result.fold_selected_features.shape[0]):
+				row = self.Result.fold_selected_features[i, j, :]
 				for feature in row[row != -1]:
 					feature = int(feature)
 					featureCounts[feature] = featureCounts.get(feature, 0) + 1

@@ -288,6 +288,43 @@ class MDECVResult:
         return scoring_function(self.observations[:, target], self.predictions[:, target])
 
 @dataclass(frozen=True)
+class MDECVResults:
+    """
+    Results from MDE Cross-Validation fitting.
+
+    :param fold_selected_features: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
+    :param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
+    :param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
+    :param best_fold: Index of best performing fold per target, shape [nTargets]
+    :param selected_features: Final selected feature column indices, shape [nTargets, maxD] padded with -1
+    :param time: Time values for final prediction, shape [N] (None if no prediction computed)
+    :param observations: Observed values for final prediction, shape [N, nTargets] (None if no prediction computed)
+    :param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
+    """
+    fold_selected_features: np.ndarray
+    fold_stepwise_performances: np.ndarray
+    fold_accuracies: np.ndarray
+    best_fold: np.ndarray
+    selected_features: np.ndarray
+    time: Optional[np.ndarray] = None
+    observations: Optional[np.ndarray] = None
+    predictions: Optional[np.ndarray] = None
+
+    def score(self, scoring_function = Correlation, target: int = 0) -> float:
+        """
+        Compute prediction score for one target.
+
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+        :param target: Target index (default 0)
+        :return: Computed metric value
+        :raises RuntimeError: if no predictions have been computed
+        """
+        if self.observations is None or self.predictions is None:
+            raise RuntimeError("No predictions available. Call Predict() to compute final predictions.")
+        return scoring_function(self.observations[:, target], self.predictions[:, target])
+
+
+@dataclass(frozen=True)
 class BatchedCCMResult:
     """
     Results from Batched Convergent Cross Mapping.
