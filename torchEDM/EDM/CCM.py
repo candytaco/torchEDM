@@ -319,7 +319,7 @@ class CCM:
 				elif simplex.predictionHorizon < 0:
 					projection_[simplex.predictionHorizon:] = nan
 
-				err = ComputeError(simplex.targetVec[simplex.testIndices, 0], projection_, None, digits = 5)
+				err = ComputeError(simplex.targetVec[simplex.testIndices, 0], projection_, None)
 
 				correlations[s] = err
 
