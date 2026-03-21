@@ -6,7 +6,8 @@ import numpy
 from numpy import array, exp, fmax, divide, mean, nan, roll, sum, zeros
 from numpy.random import default_rng
 
-from ..Utils import ComputeError, IsNonStringIterable
+from ..Utils import IsNonStringIterable
+from ..Scoring import ComputeError
 # local modules
 from .Simplex import Simplex as SimplexClass
 from .Results import CCMResult

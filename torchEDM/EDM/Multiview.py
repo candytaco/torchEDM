@@ -9,8 +9,8 @@ from numpy import argsort, array, column_stack, mean
 
 # local modules
 from .Embed import Embed
-from .. import Functions
-from ..Utils import IsNonStringIterable, ComputeError
+from .. import Functions, ComputeError
+from ..Utils import IsNonStringIterable
 from .Results import MultiviewResult
 
 

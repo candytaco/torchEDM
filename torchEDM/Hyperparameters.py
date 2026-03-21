@@ -3,7 +3,7 @@ from typing import List, Tuple, Any
 import numpy
 import torch
 
-from .Utils import ComputeError
+from .Scoring import ComputeError
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
 from .Utils import IsNonStringIterable

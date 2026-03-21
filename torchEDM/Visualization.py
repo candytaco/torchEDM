@@ -23,7 +23,7 @@ def plot_prediction(result: Union['SimplexResult', 'SMapResult', 'MultiviewResul
 	:param predictionHorizon: Prediction horizon (only needed if passing numpy array)
 	:param block: Whether to block execution when showing plot
 	"""
-	from .Utils import ComputeError
+	from .Scoring import ComputeError
 
 	# Handle both Result objects and numpy arrays
 	if hasattr(result, 'projection'):

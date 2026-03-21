@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple, Union
 import numpy as np
 
-from ..Utils import ComputeError
+from ..Scoring import ComputeError
 
 
 @dataclass(frozen=True)

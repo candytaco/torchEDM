@@ -5,7 +5,7 @@ from . import Functions
 # provide object-based API with train/test splits
 from . import Fitters
 
-from .Utils import PlotObsPred, PlotCoeff, ComputeError
+from .Utils import PlotObsPred, PlotCoeff
 from .Hyperparameters import FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon, FindSMapNeighborhood
 from .FunctionalExamples import FunctionalExamples
 from .FitterExamples import FitterExamples
