@@ -5,6 +5,7 @@ from numpy import array, full, nan, linspace, column_stack
 
 from .EDM import EDM
 from .Results import SimplexResult
+from ..Scoring import Correlation
 
 
 #-----------------------------------------------------------
@@ -107,12 +108,13 @@ class Simplex(EDM):
 	#-------------------------------------------------------------------
 	# Methods
 	#-------------------------------------------------------------------
-	def Run(self, return_predictions: bool = True):
+	def Run(self, return_predictions: bool = True, scoring_function = Correlation):
 	#-------------------------------------------------------------------
 		"""
 		Execute standard prediction and return SimplexResult.
 
 		:param return_predictions: If False, the predictions field of the result will not be populated
+		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
 		"""
 		self.EmbedData()
 		self.RemoveNan()
@@ -120,11 +122,14 @@ class Simplex(EDM):
 		self.Project()
 		self.FormatProjection()
 
+		score = scoring_function(self.Projection[:, 1], self.Projection[:, 2])
+
 		return SimplexResult(
 			time=self.Projection[:, 0],
 			projection=self.Projection if return_predictions else None,
 			embedDimensions=self.embedDimensions,
-			predictionHorizon=self.predictionHorizon
+			predictionHorizon=self.predictionHorizon,
+			score=score
 		)
 
 	#-------------------------------------------------------------------
@@ -225,7 +230,7 @@ class Simplex(EDM):
 			torch.cuda.empty_cache()
 
 	#-------------------------------------------------------------------
-	def Generate(self, return_predictions: bool = True):
+	def Generate(self, return_predictions: bool = True, scoring_function = Correlation):
 	#-------------------------------------------------------------------
 		"""
 		Simplex Generation
@@ -233,6 +238,7 @@ class Simplex(EDM):
 		Replace self.Projection with G.Projection
 
 		:param return_predictions: If False, the predictions field of the result will not be populated
+		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
 		"""
 		if self.verbose:
 			print(f'{self.name}: Generate()')
@@ -328,7 +334,8 @@ class Simplex(EDM):
 
 		return SimplexResult(
 			time=self.Projection[:, 0],
-			projection=self.Projection if return_predictions else None,
+			projection=self.Projection,
 			embedDimensions=self.embedDimensions,
-			predictionHorizon=self.predictionHorizon
+			predictionHorizon=self.predictionHorizon,
+			score=None
 		)

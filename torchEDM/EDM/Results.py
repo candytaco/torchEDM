@@ -18,11 +18,13 @@ class SimplexResult:
 	:param projection: Array with columns [Time, Observations, Predictions, Variance], or None if predictions were not requested
 	:param embedDimensions: Embedding dimension used
 	:param predictionHorizon: Prediction horizon used
+	:param score: Prediction score computed by the calling function, or None if not computed
 	"""
 	time: np.ndarray
 	projection: Optional[np.ndarray]
 	embedDimensions: int
 	predictionHorizon: int
+	score: Optional[float] = None
 
 	@property
 	def predictions(self) -> Optional[np.ndarray]:
@@ -46,6 +48,7 @@ class SMapResult:
 	:param embedDimensions: Embedding dimension used
 	:param predictionHorizon: Prediction horizon used
 	:param theta: Localization parameter used
+	:param score: Prediction score computed by the calling function, or None if not computed
 	"""
 	time: np.ndarray
 	projection: Optional[np.ndarray]
@@ -54,6 +57,7 @@ class SMapResult:
 	embedDimensions: int
 	predictionHorizon: int
 	theta: float
+	score: Optional[float] = None
 
 	@property
 	def predictions(self) -> Optional[np.ndarray]:
@@ -125,6 +129,7 @@ class MultiviewResult:
 	:param embedDimensions: Embedding dimension for each variable
 	:param predictionHorizon: Prediction horizon used
 	:param predictions: Ensemble-averaged predictions, or None if predictions were not requested
+	:param score: Prediction score computed by the calling function, or None if not computed
 	"""
 	time: np.ndarray
 	view: List
@@ -134,6 +139,7 @@ class MultiviewResult:
 	embedDimensions: int
 	predictionHorizon: int
 	predictions: Optional[np.ndarray] = None
+	score: Optional[float] = None
 
 	@property
 	def top_combinations(self) -> List:
@@ -167,6 +173,7 @@ class MDEResult:
 	:param ccm_values: CCM convergence slopes for selected features, shape [K, maxD], padded with NaN
 	:param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
 	:param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
+	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
 	"""
 	time: np.ndarray
 	predictions: Optional[np.ndarray]
@@ -175,17 +182,7 @@ class MDEResult:
 	ccm_values: np.ndarray
 	stepwise_performance: np.ndarray
 	timeDelayResults: List[Tuple[int, int, float, float]] = None
-
-	def score(self, target: int = 0) -> float:
-		"""
-		Return the last recorded accuracy for one target from feature selection.
-
-		:param target: Target index (default 0)
-		:return: Last valid accuracy value for the given target
-		"""
-		acc = self.accuracy[target, :]
-		valid_acc = acc[~np.isnan(acc)]
-		return float(valid_acc[-1]) if len(valid_acc) > 0 else 0.0
+	score: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +196,7 @@ class MDECVResult:
 	:param fold_results: Results from each cross-validation fold
 	:param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
 	:param best_fold: Index of best performing fold
+	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
 	"""
 	time: np.ndarray
 	predictions: Optional[np.ndarray]
@@ -206,6 +204,7 @@ class MDECVResult:
 	fold_results: List[MDEResult]
 	fold_accuracies: np.ndarray
 	best_fold: np.ndarray
+	score: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +219,7 @@ class MDECVResults:
 	:param selected_features: Final selected feature column indices, shape [nTargets, maxD] padded with -1
 	:param time: Time values for final prediction, shape [N] (None if no prediction computed)
 	:param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
+	:param score: Per-target prediction score computed by the calling function, shape [nTargets], or None if not computed
 	"""
 	fold_selected_features: np.ndarray
 	fold_stepwise_performances: np.ndarray
@@ -228,6 +228,7 @@ class MDECVResults:
 	selected_features: np.ndarray
 	time: Optional[np.ndarray] = None
 	predictions: Optional[np.ndarray] = None
+	score: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -409,10 +410,13 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			has_projection = np.array(result.projection is not None),
+			has_score = np.array(result.score is not None),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
 		if result.projection is not None:
 			arrays['projection'] = result.projection
+		if result.score is not None:
+			arrays['score'] = np.array(result.score)
 		return arrays
 
 	@staticmethod
@@ -420,6 +424,7 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			has_projection = np.array(result.projection is not None),
+			has_score = np.array(result.score is not None),
 			coefficients = result.coefficients,
 			singularValues = result.singularValues,
 			embedDimensions = np.array(result.embedDimensions),
@@ -427,6 +432,8 @@ class ResultsIO:
 			theta = np.array(result.theta))
 		if result.projection is not None:
 			arrays['projection'] = result.projection
+		if result.score is not None:
+			arrays['score'] = np.array(result.score)
 		return arrays
 
 	@staticmethod
@@ -466,12 +473,15 @@ class ResultsIO:
 			topRankStats_values = stats_values,
 			n_combos = np.array(len(combos)),
 			has_predictions = np.array(result.predictions is not None),
+			has_score = np.array(result.score is not None),
 			D = np.array(result.D),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
 
 		if result.predictions is not None:
 			arrays['predictions'] = result.predictions
+		if result.score is not None:
+			arrays['score'] = np.array(result.score)
 
 		for i, combo in enumerate(combos):
 			arrays[f'topRankProj_{i}'] = result.topRankProjections[combo]
@@ -484,6 +494,7 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			has_predictions = np.array(result.predictions is not None),
+			has_score = np.array(result.score is not None),
 			selected_features = result.selected_features,
 			accuracy = result.accuracy,
 			ccm_values = result.ccm_values,
@@ -491,6 +502,8 @@ class ResultsIO:
 			has_timeDelayResults = np.array(has_time_delay))
 		if result.predictions is not None:
 			arrays['predictions'] = result.predictions
+		if result.score is not None:
+			arrays['score'] = result.score
 		if has_time_delay:
 			arrays['timeDelayResults'] = np.array(result.timeDelayResults, dtype = float)
 		return arrays
@@ -501,6 +514,7 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			has_predictions = np.array(result.predictions is not None),
+			has_score = np.array(result.score is not None),
 			selected_features = result.selected_features,
 			fold_accuracies = result.fold_accuracies,
 			best_fold = result.best_fold,
@@ -508,6 +522,8 @@ class ResultsIO:
 
 		if result.predictions is not None:
 			arrays['predictions'] = result.predictions
+		if result.score is not None:
+			arrays['score'] = result.score
 
 		for i, fold in enumerate(result.fold_results):
 			fold_arrays = ResultsIO._MDEArrays(fold)
@@ -533,15 +549,18 @@ class ResultsIO:
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
 		projection = data['projection'] if bool(data['has_projection']) else None
+		score = float(data['score']) if bool(data['has_score']) else None
 		return SimplexResult(
 			time = data['time'],
 			projection = projection,
 			embedDimensions = int(data['embedDimensions']),
-			predictionHorizon = int(data['predictionHorizon']))
+			predictionHorizon = int(data['predictionHorizon']),
+			score = score)
 
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
 		projection = data['projection'] if bool(data['has_projection']) else None
+		score = float(data['score']) if bool(data['has_score']) else None
 		return SMapResult(
 			time = data['time'],
 			projection = projection,
@@ -549,7 +568,8 @@ class ResultsIO:
 			singularValues = data['singularValues'],
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			theta = float(data['theta']))
+			theta = float(data['theta']),
+			score = score)
 
 	@staticmethod
 	def _LoadCCM(data) -> CCMResult:
@@ -575,6 +595,7 @@ class ResultsIO:
 			for i in range(n_combos)}
 
 		predictions = data['predictions'] if bool(data['has_predictions']) else None
+		score = float(data['score']) if bool(data['has_score']) else None
 
 		return MultiviewResult(
 			time = data['time'],
@@ -584,7 +605,8 @@ class ResultsIO:
 			D = int(data['D']),
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			predictions = predictions)
+			predictions = predictions,
+			score = score)
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
@@ -594,6 +616,7 @@ class ResultsIO:
 				(int(row[0]), int(row[1]), float(row[2]), float(row[3]))
 				for row in data['timeDelayResults']]
 		predictions = data['predictions'] if bool(data['has_predictions']) else None
+		score = data['score'] if bool(data['has_score']) else None
 		return MDEResult(
 			time = data['time'],
 			predictions = predictions,
@@ -601,7 +624,8 @@ class ResultsIO:
 			accuracy = data['accuracy'],
 			ccm_values = data['ccm_values'],
 			stepwise_performance = data['stepwise_performance'],
-			timeDelayResults = time_delay)
+			timeDelayResults = time_delay,
+			score = score)
 
 	@staticmethod
 	def _LoadMDECV(data) -> MDECVResult:
@@ -615,13 +639,15 @@ class ResultsIO:
 			fold_results.append(ResultsIO._LoadMDE(fold_data))
 
 		predictions = data['predictions'] if bool(data['has_predictions']) else None
+		score = data['score'] if bool(data['has_score']) else None
 		return MDECVResult(
 			time = data['time'],
 			predictions = predictions,
 			selected_features = data['selected_features'],
 			fold_results = fold_results,
 			fold_accuracies = data['fold_accuracies'],
-			best_fold = data['best_fold'])
+			best_fold = data['best_fold'],
+			score = score)
 
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:

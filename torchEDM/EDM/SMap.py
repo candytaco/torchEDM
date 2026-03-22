@@ -10,6 +10,7 @@ from numpy import full, linspace, mean, nan, power, sum, array
 # local modules
 from .EDM import EDM
 from .Results import SMapResult
+from ..Scoring import Correlation
 
 
 #-----------------------------------------------------------
@@ -128,12 +129,13 @@ class SMap(EDM):
     #-------------------------------------------------------------------
     # Methods
     #-------------------------------------------------------------------
-    def Run(self, return_predictions: bool = True):
+    def Run(self, return_predictions: bool = True, scoring_function = Correlation):
     #-------------------------------------------------------------------
         """
         Execute S-Map prediction and return SMapResult.
 
         :param return_predictions: If False, the predictions field of the result will not be populated
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
         :return: Prediction results with projection array, coefficients, singular values, and metadata
         """
         self.EmbedData()
@@ -142,6 +144,8 @@ class SMap(EDM):
         self.ProjectTorch()
         self.FormatProjection()
 
+        score = scoring_function(self.Projection[:, 1], self.Projection[:, 2])
+
         return SMapResult(
             time=self.Projection[:, 0],
             projection=self.Projection if return_predictions else None,
@@ -149,7 +153,8 @@ class SMap(EDM):
             singularValues=self.SingularValues,
             embedDimensions=self.embedDimensions,
             predictionHorizon=self.predictionHorizon,
-            theta=self.theta
+            theta=self.theta,
+            score=score
         )
 
     #-------------------------------------------------------------------
@@ -317,7 +322,7 @@ class SMap(EDM):
             torch.cuda.empty_cache()
 
     #-------------------------------------------------------------------
-    def Generate( self, return_predictions: bool = True ) :
+    def Generate( self, return_predictions: bool = True, scoring_function = Correlation ) :
     #-------------------------------------------------------------------
         """
         SMap Generation
@@ -328,6 +333,7 @@ class SMap(EDM):
         numpy.datetime64, timedelta64 and python datetime, timedelta
 
         :param return_predictions: If False, the predictions field of the result will not be populated
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
         """
         if self.verbose:
             print( f'{self.name}: Generate()' )
@@ -471,10 +477,11 @@ class SMap(EDM):
 
         return SMapResult(
             time=self.Projection[:, 0],
-            projection=self.Projection if return_predictions else None,
+            projection=self.Projection,
             coefficients=genCoeff,
             singularValues=genSV,
             embedDimensions=self.embedDimensions,
             predictionHorizon=self.predictionHorizon,
-            theta=self.theta
+            theta=self.theta,
+            score=None
         )

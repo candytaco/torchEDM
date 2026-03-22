@@ -11,6 +11,7 @@ from .Simplex import Simplex
 
 from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
+from ..Scoring import Correlation
 
 
 class MDE:
@@ -159,10 +160,11 @@ class MDE:
 		"""First target column index, for backward compatibility."""
 		return self.targets[0]
 
-	def Run(self, return_predictions: bool = True) -> MDEResult:
+	def Run(self, return_predictions: bool = True, scoring_function = Correlation) -> MDEResult:
 		"""Execute MDE feature selection and return results.
 
 		:param return_predictions: If False, the predictions field of the result will not be populated
+		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
 		:return: Results containing final predictions, selected features, accuracy, and CCM values
 		:rtype: MDEResult
 		"""
@@ -187,7 +189,7 @@ class MDE:
 
 		self._select_features()
 
-		final_forecasts, time_values = self._final_prediction()
+		final_forecasts, time_values, scores = self._final_prediction(scoring_function)
 
 		# Build padded 2D arrays for selected_features, accuracy, ccm_values
 		selected_features_arr = numpy.full([nTargets, self.maxD], -1, dtype = int)
@@ -211,7 +213,8 @@ class MDE:
 			accuracy = accuracy_arr,
 			ccm_values = ccm_values_arr,
 			stepwise_performance = self.stepwise_performance,
-			timeDelayResults = self.timeDelayResults
+			timeDelayResults = self.timeDelayResults,
+			score = scores
 		)
 		return self.results_
 
@@ -480,10 +483,11 @@ class MDE:
 			)
 			return simplex.Run()
 
-	def _final_prediction(self):
+	def _final_prediction(self, scoring_function = Correlation):
 		"""Run final prediction for each target with its selected features.
 
-		:return: (predictions [N, K], time [N])
+		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar.
+		:return: (predictions [N, K], time [N], scores [K])
 		"""
 		nTargets = len(self.targets)
 		results = []
@@ -495,10 +499,12 @@ class MDE:
 		n = len(time_values)
 
 		predictions = numpy.zeros([n, nTargets])
+		scores = numpy.zeros(nTargets)
 		for j, result in enumerate(results):
 			predictions[:, j] = result.projection[:, 2]
+			scores[j] = scoring_function(result.projection[:, 1], result.projection[:, 2])
 
-		return predictions, time_values
+		return predictions, time_values, scores
 
 	def _filter_convergent_variables(self, candidate_columns: List[int], target: int) -> List[int]:
 		"""Filter candidate variables to only include convergent ones using BatchedCCM.

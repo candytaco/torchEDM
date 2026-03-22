@@ -204,11 +204,12 @@ class Multiview:
     #-------------------------------------------------------------------
     # Methods
     #-------------------------------------------------------------------
-    def Run( self, return_predictions: bool = True ) :
+    def Run( self, return_predictions: bool = True, scoring_function = Correlation ) :
         """
         Execute Multiview prediction and return MultiviewResult.
 
         :param return_predictions: If False, the predictions field of the result will not be populated
+        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
         :return: Multiview results with ensemble-averaged predictions, view rankings, top-ranked projections, and statistics
         """
         self.Rank()
@@ -252,6 +253,8 @@ class Multiview:
 
         self.View = view_rows  # List of lists
 
+        score = scoring_function(first_proj[:, 1], multiviewPredict)
+
         return MultiviewResult(
             time=time_values,
             view=self.View,
@@ -260,7 +263,8 @@ class Multiview:
             D=self.D,
             embedDimensions=self.embedDimensions,
             predictionHorizon=self.predictionHorizon,
-            predictions=multiviewPredict if return_predictions else None
+            predictions=multiviewPredict if return_predictions else None,
+            score=score
         )
 
     #-------------------------------------------------------------------

@@ -4,6 +4,7 @@ from tqdm import tqdm as ProgressBar
 from sklearn.model_selection import KFold
 from .Results import MDECVResult, MDEResult
 from .MDE import MDE
+from ..Scoring import Correlation
 
 
 class MDECV:
@@ -144,8 +145,11 @@ class MDECV:
 		self.best_fold_features = None
 		self.best_fold_accuracy = None
 
-	def fit(self) -> None:
-		"""Perform cross-validation using MDE in each fold."""
+	def fit(self, scoring_function = Correlation) -> None:
+		"""Perform cross-validation using MDE in each fold.
+
+		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
+		"""
 
 		# Build fold indices
 		if self.folds <= 1:
@@ -161,12 +165,13 @@ class MDECV:
 		# Process each fold
 		progressBar = ProgressBar(total = self.folds, desc = 'MDE CV Fold', leave = False)
 		for fold, (trainIndices, validationIndices) in enumerate(fold_indices, start = 1):
-			fold_result = self.fitSingleFold(self.data[trainIndices], self.data[validationIndices])
+			fold_result = self.fitSingleFold(self.data[trainIndices], self.data[validationIndices],
+											 scoring_function = scoring_function)
 			self.fold_results.append(fold_result)
 			progressBar.update(1)
 
 		# Identify best fold
-		self.test_accuracy = [r.score() for r in self.fold_results]
+		self.test_accuracy = [float(r.score[0]) for r in self.fold_results]
 		self.bestFold = numpy.argmax(self.test_accuracy)
 		self.best_fold_accuracy = self.test_accuracy[self.bestFold]
 		self.best_fold_features = self.fold_results[self.bestFold].selected_features
@@ -174,7 +179,8 @@ class MDECV:
 	def fitSingleFold(self,
 				   train_data: numpy.ndarray,
 				   val_data: numpy.ndarray,
-				   return_predictions: bool = True) -> MDEResult:
+				   return_predictions: bool = True,
+				   scoring_function = Correlation) -> MDEResult:
 		"""Process a single cross-validation fold.
 
 		Parameters
@@ -185,6 +191,8 @@ class MDECV:
 			Validation data for this fold
 		return_predictions : bool
 			If False, the predictions field of the result will not be populated
+		scoring_function : callable
+			Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
 
 		Returns
 		-------
@@ -222,7 +230,7 @@ class MDECV:
 			stdThreshold = self.stdThreshold
 		)
 
-		return mde.Run(return_predictions = return_predictions)
+		return mde.Run(return_predictions = return_predictions, scoring_function = scoring_function)
 
 	def predict(self, testData: numpy.ndarray) -> MDECVResult:
 		"""Predict using the final chosen feature set on the test set.
