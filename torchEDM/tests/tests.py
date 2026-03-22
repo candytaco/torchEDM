@@ -953,7 +953,7 @@ class test_MDE( unittest.TestCase ):
 		groundTruthData = read_csv(self.validationPath)
 
 		result = mde.results_
-		selectedForTarget = result.selected_features[0, result.selected_features[0] != -1]
+		selectedForTarget = result.selected_variables[0, result.selected_variables[0] != -1]
 		selectedNames = [self.colNames[i] for i in selectedForTarget]
 		self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
 
@@ -993,10 +993,10 @@ class test_MDE( unittest.TestCase ):
 		groundTruthData = read_csv(self.validationPath)
 
 		result = mde.results_
-		self.assertEqual(result.selected_features.shape[0], 2)
+		self.assertEqual(result.selected_variables.shape[0], 2)
 
 		for j in range(2):
-			selectedForTarget = result.selected_features[j, result.selected_features[j] != -1]
+			selectedForTarget = result.selected_variables[j, result.selected_variables[j] != -1]
 			selectedNames = [self.colNames[i] for i in selectedForTarget]
 			self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
 

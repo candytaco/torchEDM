@@ -168,16 +168,16 @@ class MDEResult:
 
 	:param time: Time values, shape [N]
 	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
-	:param selected_features: Selected feature column indices, shape [K, maxD], padded with -1
-	:param accuracy: Accuracy at each feature addition step, shape [K, maxD], padded with NaN
-	:param ccm_values: CCM convergence slopes for selected features, shape [K, maxD], padded with NaN
+	:param selected_variables: Selected variable column indices, shape [K, maxD], padded with -1
+	:param accuracy: Accuracy at each variable addition step, shape [K, maxD], padded with NaN
+	:param ccm_values: CCM convergence slopes for selected variables, shape [K, maxD], padded with NaN
 	:param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
 	:param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
 	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
 	"""
 	time: np.ndarray
 	predictions: Optional[np.ndarray]
-	selected_features: np.ndarray
+	selected_variables: np.ndarray
 	accuracy: np.ndarray
 	ccm_values: np.ndarray
 	stepwise_performance: np.ndarray
@@ -190,9 +190,11 @@ class MDECVResult:
 	"""
 	Results from MDE Cross-Validation.
 
+	TODO: this should be combined with MDECVResults - this is from the EDM-style class, the other is from fitters
+
 	:param time: Time values, shape [N]
 	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
-	:param selected_features: Final selected feature indices, shape [K, maxD] padded with -1
+	:param selected_variables: Final selected variable indices, shape [K, maxD] padded with -1
 	:param fold_results: Results from each cross-validation fold
 	:param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
 	:param best_fold: Index of best performing fold
@@ -200,7 +202,7 @@ class MDECVResult:
 	"""
 	time: np.ndarray
 	predictions: Optional[np.ndarray]
-	selected_features: np.ndarray
+	selected_variables: np.ndarray
 	fold_results: List[MDEResult]
 	fold_accuracies: np.ndarray
 	best_fold: np.ndarray
@@ -212,20 +214,20 @@ class MDECVResults:
 	"""
 	Results from MDE Cross-Validation fitting.
 
-	:param fold_selected_features: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
+	:param fold_selected_variables: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
 	:param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
 	:param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
 	:param best_fold: Index of best performing fold per target, shape [nTargets]
-	:param selected_features: Final selected feature column indices, shape [nTargets, maxD] padded with -1
+	:param selected_variables: Final selected feature column indices, shape [nTargets, maxD] padded with -1
 	:param time: Time values for final prediction, shape [N] (None if no prediction computed)
 	:param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
 	:param score: Per-target prediction score computed by the calling function, shape [nTargets], or None if not computed
 	"""
-	fold_selected_features: np.ndarray
+	fold_selected_variables: np.ndarray
 	fold_stepwise_performances: np.ndarray
 	fold_accuracies: np.ndarray
 	best_fold: np.ndarray
-	selected_features: np.ndarray
+	selected_variables: np.ndarray
 	time: Optional[np.ndarray] = None
 	predictions: Optional[np.ndarray] = None
 	score: Optional[np.ndarray] = None
@@ -495,7 +497,7 @@ class ResultsIO:
 			time = result.time,
 			has_predictions = np.array(result.predictions is not None),
 			has_score = np.array(result.score is not None),
-			selected_features = result.selected_features,
+			selected_variables = result.selected_variables,
 			accuracy = result.accuracy,
 			ccm_values = result.ccm_values,
 			stepwise_performance = result.stepwise_performance,
@@ -515,7 +517,7 @@ class ResultsIO:
 			time = result.time,
 			has_predictions = np.array(result.predictions is not None),
 			has_score = np.array(result.score is not None),
-			selected_features = result.selected_features,
+			selected_features = result.selected_variables,
 			fold_accuracies = result.fold_accuracies,
 			best_fold = result.best_fold,
 			n_folds = np.array(n_folds))
@@ -620,7 +622,7 @@ class ResultsIO:
 		return MDEResult(
 			time = data['time'],
 			predictions = predictions,
-			selected_features = data['selected_features'],
+			selected_variables = data['selected_variables'],
 			accuracy = data['accuracy'],
 			ccm_values = data['ccm_values'],
 			stepwise_performance = data['stepwise_performance'],
@@ -643,7 +645,7 @@ class ResultsIO:
 		return MDECVResult(
 			time = data['time'],
 			predictions = predictions,
-			selected_features = data['selected_features'],
+			selected_variables = data['selected_variables'],
 			fold_results = fold_results,
 			fold_accuracies = data['fold_accuracies'],
 			best_fold = data['best_fold'],

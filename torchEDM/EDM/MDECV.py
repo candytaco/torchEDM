@@ -284,7 +284,7 @@ class MDECV:
 
 		return MDECVResult(
 			final_forecast = final_result.final_forecast,
-			selected_features = features,
+			selected_variables = features,
 			fold_results = self.fold_results,
 			accuracy = self.test_accuracy,
 			best_fold = self.bestFold

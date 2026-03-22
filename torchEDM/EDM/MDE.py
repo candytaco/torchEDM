@@ -15,11 +15,11 @@ from ..Scoring import Correlation
 
 
 class MDE:
-	"""Manifold dimensional expansion for feature selection.
+	"""Manifold dimensional expansion for variable selection.
 
-	This class implements the iterative feature selection algorithm that
-	evaluates combinations of features using EDM methods and selects the
-	best performing features based on convergence criteria.
+	This class implements the iterative variable selection algorithm that
+	evaluates combinations of variables using EDM methods and selects the
+	best performing variables based on convergence criteria.
 
 	Supports multiple simultaneous target variables. Each target independently
 	selects the best combination of X variables to predict it.
@@ -63,11 +63,11 @@ class MDE:
 
 		:param data: 	2D numpy array where column 0 is time (unless noTime=True)
 		:param target: 	Column index or list of column indices of the target column(s) to forecast
-		:param maxD: 	Maximum number of features to select per target (including target if include_target=True)
-		:param include_target: 	Whether to start with target in feature list
+		:param maxD: 	Maximum number of variables to select per target (including target if include_target=True)
+		:param include_target: 	Whether to start with target in variable list
 		:param convergent: 	Convergence checking mode: 'pre' runs batch CCM on all variables before selection, 'post' checks convergence within each selection loop iteration, False disables convergence checking
 		:param metric: 	Metric to use: "correlation" or "MAE"
-		:param batch_size: 	Number of features to process in each batch
+		:param batch_size: 	Number of variables to process in each batch
 		:param use_half_precision: 	Use float16 instead of float32 for GPU tensors to save memory
 		:param columns: 	Column indices to use for embedding (defaults to all except time)
 		:param train: 	Training set indices [start, end]
@@ -161,11 +161,11 @@ class MDE:
 		return self.targets[0]
 
 	def Run(self, return_predictions: bool = True, scoring_function = Correlation) -> MDEResult:
-		"""Execute MDE feature selection and return results.
+		"""Execute MDE variable selection and return results.
 
 		:param return_predictions: If False, the predictions field of the result will not be populated
 		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
-		:return: Results containing final predictions, selected features, accuracy, and CCM values
+		:return: Results containing final predictions, selected variables, accuracy, and CCM values
 		:rtype: MDEResult
 		"""
 		nTargets = len(self.targets)
@@ -187,18 +187,18 @@ class MDE:
 		if self.knn == 0:
 			self.knn = self.embedDimensions + 1
 
-		self._select_features()
+		self._select_variables()
 
 		final_forecasts, time_values, scores = self._final_prediction(scoring_function)
 
-		# Build padded 2D arrays for selected_features, accuracy, ccm_values
-		selected_features_arr = numpy.full([nTargets, self.maxD], -1, dtype = int)
+		# Build padded 2D arrays for selected_variables, accuracy, ccm_values
+		selected_variables_arr = numpy.full([nTargets, self.maxD], -1, dtype = int)
 		accuracy_arr = numpy.full([nTargets, self.maxD], numpy.nan)
 		ccm_values_arr = numpy.full([nTargets, self.maxD], numpy.nan)
 
 		for j in range(nTargets):
 			n = len(self._selected_variables[j])
-			selected_features_arr[j, :n] = self._selected_variables[j]
+			selected_variables_arr[j, :n] = self._selected_variables[j]
 			n_acc = len(self._accuracy[j])
 			accuracy_arr[j, :n_acc] = self._accuracy[j]
 			n_ccm = len(self._ccm_values[j])
@@ -209,7 +209,7 @@ class MDE:
 		self.results_ = MDEResult(
 			time = time_values,
 			predictions = final_forecasts if return_predictions else None,
-			selected_features = selected_features_arr,
+			selected_variables = selected_variables_arr,
 			accuracy = accuracy_arr,
 			ccm_values = ccm_values_arr,
 			stepwise_performance = self.stepwise_performance,
@@ -218,8 +218,8 @@ class MDE:
 		)
 		return self.results_
 
-	def _select_features(self) -> None:
-		"""Perform iterative feature selection for all targets in parallel."""
+	def _select_variables(self) -> None:
+		"""Perform iterative variable selection for all targets in parallel."""
 		nTargets = len(self.targets)
 
 		self._selected_variables = [[] for _ in range(nTargets)]
@@ -484,7 +484,7 @@ class MDE:
 			return simplex.Run()
 
 	def _final_prediction(self, scoring_function = Correlation):
-		"""Run final prediction for each target with its selected features.
+		"""Run final prediction for each target with its selected variables.
 
 		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar.
 		:return: (predictions [N, K], time [N], scores [K])
@@ -572,7 +572,7 @@ class MDE:
 		return convergent_vars
 
 	def _check_convergence(self, column: int, target: int) -> Tuple[bool, float]:
-		"""Check CCM convergence for a candidate feature predicting a given target.
+		"""Check CCM convergence for a candidate variable predicting a given target.
 
 		:param column: Column index to check
 		:param target: Target column index

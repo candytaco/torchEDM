@@ -26,7 +26,7 @@ class MDEFitterCV(EDMFitter):
 				 HalfPrecision: bool = False,
 				 Folds: int = 5,
 				 LeaveOneRunOut: bool = True,
-				 FinalFeatureMode: str = "best_fold",
+				 FinalVariableSelection: str = "best_fold",
 				 Embed: bool = False,
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
@@ -48,15 +48,15 @@ class MDEFitterCV(EDMFitter):
 		"""
 		Initialize MDE cross-validation fitter.
 
-		:param MaxD: 				Maximum number of features to select
-		:param IncludeTarget: 		Whether to start with target in feature list
+		:param MaxD: 				Maximum number of variables to select
+		:param IncludeTarget: 		Whether to start with target in variable list
 		:param Convergent: 			Whether to use convergence checking
 		:param Metric: 				Metric to use: "correlation" or "MAE"
-		:param BatchSize: 			Number of features to process in each batch
+		:param BatchSize: 			Number of variables to process in each batch
 		:param HalfPrecision: 		Use float16 instead of float32 for GPU tensors
 		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
 		:param LeaveOneRunOut: 		If True, use leave-one-run-out CV instead of n-fold
-		:param FinalFeatureMode: 	Method for selecting final features: "best_fold" or "frequency"
+		:param FinalVariableSelection: 	Method for selecting final variables: "best_fold", "frequency", or 'reselect'
 		:param Embed:				Whether to embed the data
 		:param EmbedDimensions: 	Embedding dimension (E)
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
@@ -78,7 +78,7 @@ class MDEFitterCV(EDMFitter):
 		self.HalfPrecision = HalfPrecision
 		self.Folds = Folds
 		self.LeaveOneRunOut = LeaveOneRunOut
-		self.FinalFeatureMode = FinalFeatureMode
+		self.FinalVariableSelection = FinalVariableSelection
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = knn
@@ -103,7 +103,7 @@ class MDEFitterCV(EDMFitter):
 		self.foldResults = []
 		self.foldAccuracies = []
 		self.bestFold = None
-		self.bestFoldFeatures = None
+		self.bestVariablesInFold = None
 		self.bestFoldAccuracy = None
 
 	def Fit(self,
@@ -122,9 +122,9 @@ class MDEFitterCV(EDMFitter):
 		"""
 		Fit the model using cross-validation.
 
-		:param XTrain:				Training features (single array or list of arrays for multiple runs)
+		:param XTrain:				Training variables (single array or list of arrays for multiple runs)
 		:param YTrain:				Training target (single array or list of arrays for multiple runs)
-		:param XTest:				Test features (optional, for final prediction)
+		:param XTest:				Test variables (optional, for final prediction)
 		:param YTest:				Test target (optional, for final prediction)
 		:param TrainStart:			Samples to exclude at start of each run
 		:param TrainEnd:			Samples to exclude at end of each run
@@ -175,20 +175,20 @@ class MDEFitterCV(EDMFitter):
 		self.bestFold = numpy.argmax(self.foldAccuracies, axis = 0)
 		self.bestFoldAccuracy = self.foldAccuracies[self.bestFold, numpy.arange(nTargets)]
 
-		# bestFoldFeatures: [nTargets, maxD]
-		self.bestFoldFeatures = numpy.full([nTargets, self.MaxD], -1, dtype = int)
+		# bestVariablesInFold: [nTargets, maxD]
+		self.bestVariablesInFold = numpy.full([nTargets, self.MaxD], -1, dtype = int)
 		for j in range(nTargets):
-			self.bestFoldFeatures[j, :] = self.foldResults[self.bestFold[j]].selected_features[j, :]
+			self.bestVariablesInFold[j, :] = self.foldResults[self.bestFold[j]].selected_variables[j, :]
 
-		foldSelectedFeatures = numpy.stack([r.selected_features for r in self.foldResults], axis = 0)
+		foldSelectedVariables = numpy.stack([r.selected_variables for r in self.foldResults], axis = 0)
 		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)
 
 		self.Result = MDECVResults(
-			fold_selected_features = foldSelectedFeatures,
+			fold_selected_variables = foldSelectedVariables,
 			fold_stepwise_performances = foldStepwisePerformances,
 			fold_accuracies = self.foldAccuracies,
 			best_fold = self.bestFold,
-			selected_features = self.bestFoldFeatures
+			selected_variables = self.bestVariablesInFold
 		)
 		return self.Result
 
@@ -254,9 +254,9 @@ class MDEFitterCV(EDMFitter):
 				scoring_function = Correlation
 				) -> MDECVResults:
 		"""
-		Predict using the final chosen feature set on test data.
+		Predict using the final chosen variable set on test data.
 
-		:param XTest: 	Test features (uses stored test data if None)
+		:param XTest: 	Test variables (uses stored test data if None)
 		:param YTest: 	Test target (uses stored test data if None)
 		:param return_predictions: If False, the predictions field of the result will not be populated
 		:param scoring_function:	Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
@@ -288,13 +288,15 @@ class MDEFitterCV(EDMFitter):
 		yIndices = self.DataAdapter.YIndex
 		nTargets = len(yIndices)
 
-		if self.FinalFeatureMode == "frequency":
-			featuresPerTarget = self.GetFrequencyFeatures()
-		elif self.FinalFeatureMode == 'reselect':
+		if self.FinalVariableSelection == "frequency":
+			variablesPerTarget = self.GetMostFrequentVariables()
+		elif self.FinalVariableSelection == 'best_fold':
+			variablesPerTarget = self.bestVariablesInFold
+		elif self.FinalVariableSelection == 'reselect':
 			allSelected = set()
-			for i in range(self.Result.fold_selected_features.shape[0]):
+			for i in range(self.Result.fold_selected_variables.shape[0]):
 				for j in range(nTargets):
-					row = self.Result.fold_selected_features[i, j, :]
+					row = self.Result.fold_selected_variables[i, j, :]
 					allSelected |= set(int(f) for f in row[row != -1])
 			allSelected -= set(yIndices)
 			allSelectedList = sorted(allSelected)
@@ -304,14 +306,14 @@ class MDEFitterCV(EDMFitter):
 			res = self.FitSingleFold(reselectData, self.DataAdapter.TrainIndices, self.DataAdapter.TestIndices,
 									 reselectTargets, convergent = False)
 			# Map indices back to original columns
-			featuresPerTarget = numpy.full_like(res.selected_features, -1)
+			variablesPerTarget = numpy.full_like(res.selected_variables, -1)
 			for j in range(nTargets):
-				for k in range(res.selected_features.shape[1]):
-					f = res.selected_features[j, k]
+				for k in range(res.selected_variables.shape[1]):
+					f = res.selected_variables[j, k]
 					if f != -1:
-						featuresPerTarget[j, k] = reselectColumns[f]
+						variablesPerTarget[j, k] = reselectColumns[f]
 		else:
-			featuresPerTarget = self.bestFoldFeatures
+			variablesPerTarget = self.bestVariablesInFold
 
 		timeValues = None
 		predictions = None
@@ -319,12 +321,12 @@ class MDEFitterCV(EDMFitter):
 
 		scores = numpy.zeros(nTargets)
 		for j in range(nTargets):
-			featuresJ = featuresPerTarget[j, :]
-			featuresJ = featuresJ[featuresJ != -1].tolist()
+			theseVariables = variablesPerTarget[j, :]
+			theseVariables = theseVariables[theseVariables != -1].tolist()
 
 			simplex = Simplex(
 				data = self.DataAdapter.fullData,
-				columns = featuresJ,
+				columns = theseVariables,
 				target = yIndices[j],
 				train = self.DataAdapter.TrainIndices,
 				test = self.DataAdapter.TestIndices,
@@ -349,11 +351,11 @@ class MDEFitterCV(EDMFitter):
 			scores[j] = scoring_function(resultJ.projection[:, 1], resultJ.projection[:, 2])
 
 		self.Result = MDECVResults(
-			fold_selected_features = self.Result.fold_selected_features,
+			fold_selected_variables = self.Result.fold_selected_variables,
 			fold_stepwise_performances = self.Result.fold_stepwise_performances,
 			fold_accuracies = self.foldAccuracies,
 			best_fold = self.bestFold,
-			selected_features = featuresPerTarget,
+			selected_variables = variablesPerTarget,
 			time = timeValues,
 			predictions = predictions if return_predictions else None,
 			score = scores
@@ -361,25 +363,25 @@ class MDEFitterCV(EDMFitter):
 		return self.Result
 
 
-	def GetFrequencyFeatures(self) -> numpy.ndarray:
+	def GetMostFrequentVariables(self) -> numpy.ndarray:
 		"""
-		Get most frequent features across folds, per target.
+		Get most frequent variables across folds, per target.
 
-		:return: Selected features array [nTargets, maxD] padded with -1
+		:return: Selected variables array [nTargets, maxD] padded with -1
 		"""
 		nTargets = len(self.trainDataAdapter.YIndex)
 		result = numpy.full([nTargets, self.MaxD], -1, dtype = int)
 
 		for j in range(nTargets):
-			featureCounts = {}
-			for i in range(self.Result.fold_selected_features.shape[0]):
-				row = self.Result.fold_selected_features[i, j, :]
-				for feature in row[row != -1]:
-					feature = int(feature)
-					featureCounts[feature] = featureCounts.get(feature, 0) + 1
+			variableCounts = {}
+			for i in range(self.Result.fold_selected_variables.shape[0]):
+				row = self.Result.fold_selected_variables[i, j, :]
+				for var in row[row != -1]:
+					var = int(var)
+					variableCounts[var] = variableCounts.get(var, 0) + 1
 
-			sortedFeatures = sorted(featureCounts.items(), key = lambda x: x[1], reverse = True)
-			topFeatures = [feature for feature, count in sortedFeatures[:self.MaxD]]
-			result[j, :len(topFeatures)] = topFeatures
+			sortedVariables = sorted(variableCounts.items(), key = lambda x: x[1], reverse = True)
+			topVariables = [var for var, count in sortedVariables[:self.MaxD]]
+			result[j, :len(topVariables)] = topVariables
 
 		return result
