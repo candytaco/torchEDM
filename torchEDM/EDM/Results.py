@@ -295,6 +295,8 @@ class ResultsIO:
 			arrays = ResultsIO._MDEArrays(result)
 		elif isinstance(result, MDECVResult):
 			arrays = ResultsIO._MDECVArrays(result)
+		elif isinstance(result, MDECVResults):
+			arrays = ResultsIO._MDECVResultsArrays(result)
 		elif isinstance(result, BatchedCCMResult):
 			arrays = ResultsIO._BatchedCCMArrays(result)
 		else:
@@ -326,6 +328,8 @@ class ResultsIO:
 			return ResultsIO._LoadMDE(data)
 		elif result_type == 'MDECVResult':
 			return ResultsIO._LoadMDECV(data)
+		elif result_type == 'MDECVResults':
+			return ResultsIO._LoadMDECVResults(data)
 		elif result_type == 'BatchedCCMResult':
 			return ResultsIO._LoadBatchedCCM(data)
 		else:
@@ -358,6 +362,8 @@ class ResultsIO:
 			arrays = ResultsIO._MDEArrays(result)
 		elif isinstance(result, MDECVResult):
 			arrays = ResultsIO._MDECVArrays(result)
+		elif isinstance(result, MDECVResults):
+			arrays = ResultsIO._MDECVResultsArrays(result)
 		elif isinstance(result, BatchedCCMResult):
 			arrays = ResultsIO._BatchedCCMArrays(result)
 		else:
@@ -366,10 +372,10 @@ class ResultsIO:
 		arrays['result_type'] = np.array(result_type)
 		path = path.rstrip('/')
 		for key, value in arrays.items():
-			cloud.upload_npy_array(f'{path}/{key}', value)
+			cloud.upload_npy_array(f'{path}/{key}.npy', value)
 
 	@staticmethod
-	def LoadFromCloud(path: str, cloud = None):
+	def DownloadFromCloud(path: str, cloud = None):
 		"""
 		Load a result object from S3.
 
@@ -379,11 +385,11 @@ class ResultsIO:
 		"""
 		if cloud is None:
 			import cottoncandy
-			cloud = cottoncandy.get_interface()
+			cloud = cottoncandy.get_interface(verbose = False)
 
 		path = path.rstrip('/')
 		object_names = cloud.ls(path)
-		data = {name[len(path) + 1:]: cloud.download_npy_array(name)
+		data = {name.split('/')[-1].split('.')[0]: cloud.download_npy_array(name)
 		        for name in object_names}
 
 		result_type = str(data['result_type'])
@@ -400,6 +406,8 @@ class ResultsIO:
 			return ResultsIO._LoadMDE(data)
 		elif result_type == 'MDECVResult':
 			return ResultsIO._LoadMDECV(data)
+		elif result_type == 'MDECVResults':
+			return ResultsIO._LoadMDECVResults(data)
 		elif result_type == 'BatchedCCMResult':
 			return ResultsIO._LoadBatchedCCM(data)
 		else:
@@ -411,8 +419,6 @@ class ResultsIO:
 	def _SimplexArrays(result: SimplexResult) -> dict:
 		arrays = dict(
 			time = result.time,
-			has_projection = np.array(result.projection is not None),
-			has_score = np.array(result.score is not None),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
 		if result.projection is not None:
@@ -425,8 +431,6 @@ class ResultsIO:
 	def _SMapArrays(result: SMapResult) -> dict:
 		arrays = dict(
 			time = result.time,
-			has_projection = np.array(result.projection is not None),
-			has_score = np.array(result.score is not None),
 			coefficients = result.coefficients,
 			singularValues = result.singularValues,
 			embedDimensions = np.array(result.embedDimensions),
@@ -443,9 +447,7 @@ class ResultsIO:
 		arrays = dict(
 			libMeans = result.libMeans,
 			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon),
-			has_predictStats1 = np.array(result.predictStats1 is not None),
-			has_predictStats2 = np.array(result.predictStats2 is not None))
+			predictionHorizon = np.array(result.predictionHorizon))
 		if result.predictStats1 is not None:
 			arrays['predictStats1'] = result.predictStats1
 		if result.predictStats2 is not None:
@@ -474,8 +476,6 @@ class ResultsIO:
 			combo_keys = combo_keys,
 			topRankStats_values = stats_values,
 			n_combos = np.array(len(combos)),
-			has_predictions = np.array(result.predictions is not None),
-			has_score = np.array(result.score is not None),
 			D = np.array(result.D),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon))
@@ -492,21 +492,17 @@ class ResultsIO:
 
 	@staticmethod
 	def _MDEArrays(result: MDEResult) -> dict:
-		has_time_delay = result.timeDelayResults is not None
 		arrays = dict(
 			time = result.time,
-			has_predictions = np.array(result.predictions is not None),
-			has_score = np.array(result.score is not None),
 			selected_variables = result.selected_variables,
 			accuracy = result.accuracy,
 			ccm_values = result.ccm_values,
-			stepwise_performance = result.stepwise_performance,
-			has_timeDelayResults = np.array(has_time_delay))
+			stepwise_performance = result.stepwise_performance)
 		if result.predictions is not None:
 			arrays['predictions'] = result.predictions
 		if result.score is not None:
 			arrays['score'] = result.score
-		if has_time_delay:
+		if result.timeDelayResults is not None:
 			arrays['timeDelayResults'] = np.array(result.timeDelayResults, dtype = float)
 		return arrays
 
@@ -515,8 +511,6 @@ class ResultsIO:
 		n_folds = len(result.fold_results)
 		arrays = dict(
 			time = result.time,
-			has_predictions = np.array(result.predictions is not None),
-			has_score = np.array(result.score is not None),
 			selected_features = result.selected_variables,
 			fold_accuracies = result.fold_accuracies,
 			best_fold = result.best_fold,
@@ -535,10 +529,25 @@ class ResultsIO:
 		return arrays
 
 	@staticmethod
+	def _MDECVResultsArrays(result: MDECVResults) -> dict:
+		arrays = dict(
+			fold_selected_variables = result.fold_selected_variables,
+			fold_stepwise_performances = result.fold_stepwise_performances,
+			fold_accuracies = result.fold_accuracies,
+			best_fold = result.best_fold,
+			selected_variables = result.selected_variables)
+		if result.time is not None:
+			arrays['time'] = result.time
+		if result.predictions is not None:
+			arrays['predictions'] = result.predictions
+		if result.score is not None:
+			arrays['score'] = result.score
+		return arrays
+
+	@staticmethod
 	def _BatchedCCMArrays(result: BatchedCCMResult) -> dict:
 		arrays = dict(
 			forward_performance = result.forward_performance,
-			has_reverse_performance = np.array(result.reverse_performance is not None),
 			embedDimensions = np.array(result.embedDimensions),
 			predictionHorizon = np.array(result.predictionHorizon),
 			library_sizes = np.array(result.library_sizes))
@@ -550,28 +559,24 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
-		projection = data['projection'] if bool(data['has_projection']) else None
-		score = float(data['score']) if bool(data['has_score']) else None
 		return SimplexResult(
 			time = data['time'],
-			projection = projection,
+			projection = data['projection'] if 'projection' in data else None,
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			score = score)
+			score = float(data['score']) if 'score' in data else None)
 
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
-		projection = data['projection'] if bool(data['has_projection']) else None
-		score = float(data['score']) if bool(data['has_score']) else None
 		return SMapResult(
 			time = data['time'],
-			projection = projection,
+			projection = data['projection'] if 'projection' in data else None,
 			coefficients = data['coefficients'],
 			singularValues = data['singularValues'],
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
 			theta = float(data['theta']),
-			score = score)
+			score = float(data['score']) if 'score' in data else None)
 
 	@staticmethod
 	def _LoadCCM(data) -> CCMResult:
@@ -579,8 +584,8 @@ class ResultsIO:
 			libMeans = data['libMeans'],
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			predictStats1 = data['predictStats1'] if bool(data['has_predictStats1']) else None,
-			predictStats2 = data['predictStats2'] if bool(data['has_predictStats2']) else None)
+			predictStats1 = data['predictStats1'] if 'predictStats1' in data else None,
+			predictStats2 = data['predictStats2'] if 'predictStats2' in data else None)
 
 	@staticmethod
 	def _LoadMultiview(data) -> MultiviewResult:
@@ -596,9 +601,6 @@ class ResultsIO:
 			combo_keys[i]: stats_values[i]
 			for i in range(n_combos)}
 
-		predictions = data['predictions'] if bool(data['has_predictions']) else None
-		score = float(data['score']) if bool(data['has_score']) else None
-
 		return MultiviewResult(
 			time = data['time'],
 			view = list(data['view']),
@@ -607,27 +609,25 @@ class ResultsIO:
 			D = int(data['D']),
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			predictions = predictions,
-			score = score)
+			predictions = data['predictions'] if 'predictions' in data else None,
+			score = float(data['score']) if 'score' in data else None)
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
 		time_delay = None
-		if bool(data['has_timeDelayResults']):
+		if 'timeDelayResults' in data:
 			time_delay = [
 				(int(row[0]), int(row[1]), float(row[2]), float(row[3]))
 				for row in data['timeDelayResults']]
-		predictions = data['predictions'] if bool(data['has_predictions']) else None
-		score = data['score'] if bool(data['has_score']) else None
 		return MDEResult(
 			time = data['time'],
-			predictions = predictions,
+			predictions = data['predictions'] if 'predictions' in data else None,
 			selected_variables = data['selected_variables'],
 			accuracy = data['accuracy'],
 			ccm_values = data['ccm_values'],
 			stepwise_performance = data['stepwise_performance'],
 			timeDelayResults = time_delay,
-			score = score)
+			score = data['score'] if 'score' in data else None)
 
 	@staticmethod
 	def _LoadMDECV(data) -> MDECVResult:
@@ -640,22 +640,32 @@ class ResultsIO:
 			             if key.startswith(f'fold_{i}_')}
 			fold_results.append(ResultsIO._LoadMDE(fold_data))
 
-		predictions = data['predictions'] if bool(data['has_predictions']) else None
-		score = data['score'] if bool(data['has_score']) else None
 		return MDECVResult(
 			time = data['time'],
-			predictions = predictions,
+			predictions = data['predictions'] if 'predictions' in data else None,
 			selected_variables = data['selected_variables'],
 			fold_results = fold_results,
 			fold_accuracies = data['fold_accuracies'],
 			best_fold = data['best_fold'],
-			score = score)
+			score = data['score'] if 'score' in data else None)
+
+	@staticmethod
+	def _LoadMDECVResults(data) -> MDECVResults:
+		return MDECVResults(
+			fold_selected_variables = data['fold_selected_variables'],
+			fold_stepwise_performances = data['fold_stepwise_performances'],
+			fold_accuracies = data['fold_accuracies'],
+			best_fold = data['best_fold'],
+			selected_variables = data['selected_variables'],
+			time = data['time'] if 'time' in data else None,
+			predictions = data['predictions'] if 'predictions' in data else None,
+			score = data['score'] if 'score' in data else None)
 
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
 		return BatchedCCMResult(
 			forward_performance = data['forward_performance'],
-			reverse_performance = data['reverse_performance'] if bool(data['has_reverse_performance']) else None,
+			reverse_performance = data['reverse_performance'] if 'reverse_performance' in data else None,
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
 			library_sizes = data['library_sizes'])
