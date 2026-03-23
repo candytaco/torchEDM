@@ -1,14 +1,13 @@
 from typing import List, Tuple, Union
 
 import numpy
-from tqdm import tqdm as ProgressBar
 import torch
+from tqdm import tqdm as ProgressBar
 
 from .CCM_batch import BatchedCCM
 from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
-
 from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
@@ -34,23 +33,23 @@ class MDE:
 				 metric: str = "correlation",
 				 batch_size: int = 1000,
 				 use_half_precision: bool = False,
-				 columns=None,
-				 train=None,
-				 test=None,
-				 embedDimensions=0,
-				 predictionHorizon=0,
-				 knn=0,
-				 step=-1,
-				 exclusionRadius=0,
-				 embedded=False,
-				 validLib=None,
-				 noTime=False,
-				 ignoreNan=True,
-				 verbose=False,
+				 columns = None,
+				 train = None,
+				 test = None,
+				 embedDimensions = 0,
+				 predictionHorizon = 0,
+				 knn = 0,
+				 step = -1,
+				 exclusionRadius = 0,
+				 embedded = False,
+				 validLib = None,
+				 noTime = False,
+				 ignoreNan = True,
+				 verbose = False,
 				 useSMap: bool = False,
 				 theta: float = 0.0,
 				 stdThreshold: float = 1e-3,
-				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
+				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5, ),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
 				 CCMSeed = None,
@@ -178,7 +177,7 @@ class MDE:
 					train = self.train, test = self.test,
 					predictionHorizon = self.predictionHorizon,
 					noTime = self.noTime
-				)
+					)
 				e = dims[numpy.argmax(corrs)]
 				if e > best_e:
 					best_e = e
@@ -192,9 +191,9 @@ class MDE:
 		final_forecasts, time_values, scores = self._final_prediction(scoring_function)
 
 		# Build padded 2D arrays for selected_variables, accuracy, ccm_values
-		selected_variables_arr = numpy.full([nTargets, self.maxD], -1, dtype = int)
-		accuracy_arr = numpy.full([nTargets, self.maxD], numpy.nan)
-		ccm_values_arr = numpy.full([nTargets, self.maxD], numpy.nan)
+		selected_variables_arr = numpy.zeros([nTargets, self.maxD], dtype = int) - 1
+		accuracy_arr = numpy.zeros([nTargets, self.maxD], numpy.nan)
+		ccm_values_arr = numpy.zeros([nTargets, self.maxD], numpy.nan)
 
 		for j in range(nTargets):
 			n = len(self._selected_variables[j])
@@ -215,7 +214,7 @@ class MDE:
 			stepwise_performance = self.stepwise_performance,
 			timeDelayResults = self.timeDelayResults,
 			score = scores
-		)
+			)
 		return self.results_
 
 	def _select_variables(self) -> None:
@@ -246,7 +245,7 @@ class MDE:
 			noTime = self.noTime,
 			ignoreNan = self.ignoreNan,
 			verbose = self.verbose
-		)
+			)
 		dummy.EmbedData()
 		trainIndices = numpy.array(dummy.trainIndices, dtype = int)
 		testIndices = numpy.array(dummy.testIndices, dtype = int)
@@ -296,15 +295,11 @@ class MDE:
 			mask_tensor = torch.tensor(exclusion_mask, device = self.device)
 			current_best_distance_matrix[:, mask_tensor] = float('inf')
 
-		train_y_tensor = torch.tensor(
-			self.data[trainIndices + self.predictionHorizon, :][:, self.targets],
-			device = self.device, dtype = self.dtype
-		).T  # shape [nTargets, nTrain]
+		train_y_tensor = torch.tensor(self.data[trainIndices + self.predictionHorizon, :][:, self.targets],
+									  device = self.device, dtype = self.dtype).T  # shape [nTargets, nTrain]
 
-		test_y_tensor = torch.tensor(
-			self.data[testIndices + self.predictionHorizon, :][:, self.targets],
-			device = self.device, dtype = self.dtype
-		).T  # shape [nTargets, nTest]
+		test_y_tensor = torch.tensor(self.data[testIndices + self.predictionHorizon, :][:, self.targets],
+									 device = self.device, dtype = self.dtype).T  # shape [nTargets, nTest]
 
 		batch_distances = torch.zeros([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
 		candidateDistances = torch.empty([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
@@ -315,11 +310,11 @@ class MDE:
 		for i in range(self.maxD):
 			current_knns = [len(self._selected_variables[j]) + 2 for j in range(nTargets)]
 
-			all_remaining = sorted(set().union(*[set(rv) for rv in remaining_variables]))
+			all_remaining = sorted(set().union(*[set(var) for var in remaining_variables]))
 			if len(all_remaining) == 0:
 				break
 
-			metric_results = [[] for _ in range(nTargets)]
+			candidate_performance = [[] for _ in range(nTargets)]
 
 			for batch_start in range(0, len(all_remaining), self.batch_size):
 				batch_end = min(batch_start + self.batch_size, len(all_remaining))
@@ -331,51 +326,53 @@ class MDE:
 
 				# Per-target evaluation
 				for j in range(nTargets):
-					remaining_j_set = set(remaining_variables[j])
-					theseIndices = [k for k, var in enumerate(batch_vars) if var in remaining_j_set]
+					theseRemainingVars = set(remaining_variables[j])
+					theseIndices = [k for k, var in enumerate(batch_vars) if var in theseRemainingVars]
 					theseCandidates = [batch_vars[k] for k in theseIndices]
 					if len(theseCandidates) == 0:
 						continue
 
 					numCandidates = len(theseCandidates)
-					current_knn_j = current_knns[j]
+					knn = current_knns[j]
 
 					torch.add(batch_distances[theseIndices],
 							  current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
-					neighborDistances_j, nearestNeighbors_j = torch.topk(candidateDistances[:numCandidates], current_knn_j, dim = 1, largest = False)
-					neighborDistances_j.sqrt_()
-					FloorArray(neighborDistances_j, 1e-6)
+					neighborDistances, nearestNeighbors = torch.topk(candidateDistances[:numCandidates], knn, dim = 1,
+																	 largest = False)
+					neighborDistances.sqrt_()
+					FloorArray(neighborDistances, 1e-6)
 
-					minDistances_j = torch.amin(neighborDistances_j, dim = 1)
-					weights_j = neighborDistances_j / minDistances_j.unsqueeze(1)
-					weights_j.neg_().exp_()
-					weightSum_j = torch.sum(weights_j, dim = 1)
-					select_j = train_y_tensor[j][nearestNeighbors_j]
-					predictions_j = torch.sum(weights_j * select_j, dim = 1) / weightSum_j
+					minDistances = torch.amin(neighborDistances, dim = 1)
+					weights = neighborDistances / minDistances.unsqueeze(1)
+					weights.neg_().exp_()
+					weightSum = torch.sum(weights, dim = 1)
+					select = train_y_tensor[j][nearestNeighbors]
+					predictions = torch.sum(weights * select, dim = 1) / weightSum
 
 					perfs[j, :numCandidates].zero_()
-					self.EvaluatePerformance(test_y_tensor[j], predictions_j, perfs[j, :numCandidates])
+					self.EvaluatePerformance(test_y_tensor[j], predictions, perfs[j, :numCandidates])
 
 					perfs_numpy = perfs[j, :numCandidates].cpu().numpy()
 					for v, var in enumerate(theseCandidates):
-						metric_results[j].append((var, float(perfs_numpy[v])))
+						candidate_performance[j].append((var, float(perfs_numpy[v])))
 
 			# Per-target selection
 			for j in range(nTargets):
-				metric_results[j].sort(
+				candidate_performance[j].sort(
 					key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf,
 					reverse = True
-				)
+					)
 
 				if self.MinPredictionThreshold > 0:
-					metric_results[j] = [
-						(var, score) for var, score in metric_results[j]
+					candidate_performance[j] = [
+						(var, score) for var, score in candidate_performance[j]
 						if not numpy.isnan(score) and score >= self.MinPredictionThreshold
-					]
+						]
 
-				r = numpy.array(metric_results[j]) if len(metric_results[j]) > 0 else numpy.array([]).reshape(0, 2)
+				r = numpy.array(candidate_performance[j]) if len(candidate_performance[j]) > 0 else numpy.array(
+					[]).reshape(0, 2)
 				if len(r) > 0:
 					self.stepwise_performance[j, i, r[:, 0].astype(int)] = r[:, 1]
 
@@ -383,7 +380,7 @@ class MDE:
 				best_score = None
 
 				if self.convergent == 'post':
-					for candidate_var, candidate_score in metric_results[j]:
+					for candidate_var, candidate_score in candidate_performance[j]:
 						if numpy.isnan(candidate_score):
 							continue
 						is_convergent, ccm_slope = self._check_convergence(int(candidate_var), self.targets[j])
@@ -391,18 +388,10 @@ class MDE:
 							best_var = candidate_var
 							best_score = candidate_score
 							self._ccm_values[j].append(ccm_slope)
-							if self.verbose:
-								print('Target {} variable {} convergent (slope={:.4f}), score={:.4f}'.format(
-									self.targets[j], int(candidate_var), ccm_slope, candidate_score))
-							break
-						else:
-							if self.verbose:
-								print('Target {} variable {} NOT convergent (slope={:.4f}), skipping'.format(
-									self.targets[j], int(candidate_var), ccm_slope))
 				else:
-					if metric_results[j] and not numpy.isnan(metric_results[j][0][1]):
-						best_var = metric_results[j][0][0]
-						best_score = metric_results[j][0][1]
+					if candidate_performance[j] and not numpy.isnan(candidate_performance[j][0][1]):
+						best_var = candidate_performance[j][0][0]
+						best_score = candidate_performance[j][0][1]
 
 				if best_var is not None:
 					self._selected_variables[j].append(best_var)
@@ -459,7 +448,7 @@ class MDE:
 				noTime = self.noTime,
 				ignoreNan = self.ignoreNan,
 				verbose = self.verbose
-			)
+				)
 			smap.knnThreads = 1
 			result = smap.Run()
 			return result
@@ -480,7 +469,7 @@ class MDE:
 				noTime = self.noTime,
 				ignoreNan = self.ignoreNan,
 				verbose = self.verbose
-			)
+				)
 			return simplex.Run()
 
 	def _final_prediction(self, scoring_function = Correlation):
@@ -548,7 +537,7 @@ class MDE:
 			batchSize = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
 			useHalfPrecision = self.use_half_precision,
 			seed = self.CCMSeed
-		)
+			)
 
 		result = batchedCCM.Run()
 
@@ -594,7 +583,7 @@ class MDE:
 				test = self.test,
 				predictionHorizon = self.predictionHorizon,
 				noTime = self.noTime
-			)
+				)
 
 			correlations = numpy.array(corrs)
 
@@ -649,7 +638,7 @@ class MDE:
 			useHalfPrecision = self.use_half_precision,
 			showProgress = False,
 			seed = self.CCMSeed
-		)
+			)
 
 		result = batchedCCM.Run()
 
