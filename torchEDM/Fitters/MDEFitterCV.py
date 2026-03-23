@@ -182,6 +182,7 @@ class MDEFitterCV(EDMFitter):
 
 		foldSelectedVariables = numpy.stack([r.selected_variables for r in self.foldResults], axis = 0)
 		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)
+		foldStepwisePerformances = foldStepwisePerformances[:, :, :, xStart:xEnd + 1]
 
 		self.Result = MDECVResults(
 			fold_selected_variables = foldSelectedVariables,
