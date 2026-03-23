@@ -192,8 +192,8 @@ class MDE:
 
 		# Build padded 2D arrays for selected_variables, accuracy, ccm_values
 		selected_variables_arr = numpy.zeros([nTargets, self.maxD], dtype = int) - 1
-		accuracy_arr = numpy.zeros([nTargets, self.maxD], numpy.nan)
-		ccm_values_arr = numpy.zeros([nTargets, self.maxD], numpy.nan)
+		accuracy_arr = numpy.zeros([nTargets, self.maxD]) * numpy.nan
+		ccm_values_arr = numpy.zeros([nTargets, self.maxD]) * numpy.nan
 
 		for j in range(nTargets):
 			n = len(self._selected_variables[j])
@@ -388,6 +388,7 @@ class MDE:
 							best_var = candidate_var
 							best_score = candidate_score
 							self._ccm_values[j].append(ccm_slope)
+							break
 				else:
 					if candidate_performance[j] and not numpy.isnan(candidate_performance[j][0][1]):
 						best_var = candidate_performance[j][0][0]
