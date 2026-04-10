@@ -6,7 +6,7 @@ dynamic = ["version"]
 dependencies = ["numpy",
                 "scipy",
                 "scikit-learn",
-                "pytorch"]
+"torch"]
 authors = [
     { name = "Joseph Park", email = "JosephPark@IEEE.org" },
 ]
