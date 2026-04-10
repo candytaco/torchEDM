@@ -364,6 +364,84 @@ class MDEFitterCV(EDMFitter):
 		return self.Result
 
 
+	def ReconstructFoldPredictions(self,
+								   results: MDECVResults,
+								   XTrain: Union[numpy.ndarray, List[numpy.ndarray]],
+								   YTrain: Union[numpy.ndarray, List[numpy.ndarray]],
+								   TrainStart: int = 0,
+								   TrainEnd: int = 0,
+								   TrainTime: Optional[numpy.ndarray] = None,
+								   scoring_function = Correlation):
+		"""
+		Reconstruct Simplex predictions for each cross-validation fold using the variable
+		selections stored in a saved MDECVResults object. Useful when fold_predictions was
+		not stored in an older results file.
+
+		:param results:				A saved MDECVResults object containing fold_selected_variables
+		:param XTrain:				Training variables (single array or list of arrays for multiple runs)
+		:param YTrain:				Training target (single array or list of arrays for multiple runs)
+		:param TrainStart:			Samples to exclude at start of each run
+		:param TrainEnd:			Samples to exclude at end of each run
+		:param TrainTime:			Time labels for train data
+		:param scoring_function:	Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
+		:return: Tuple of (foldPredictions, foldAccuracies) where foldPredictions is a list of arrays
+			shape [nTestSamples, nTargets] per fold, and foldAccuracies is shape [nFolds, nTargets]
+		"""
+		dataAdapter = DataAdapter.MakeDataAdapter(
+			XTrain, YTrain, None, None, TrainStart, TrainEnd, 0, 0, TrainTime, None
+		)
+		cvSplitter = EDMCVSplitter(
+			dataAdapter = dataAdapter,
+			nFolds = self.Folds,
+			leaveOneRunOut = self.LeaveOneRunOut,
+			edmStyleIndices = True
+		)
+
+		fullData = dataAdapter.fullData
+		yIndices = dataAdapter.YIndex
+		nTargets = len(yIndices)
+
+		foldPredictions = []
+		foldAccuracyRows = []
+
+		for foldIndex, (trainIndices, testIndices) in enumerate(cvSplitter.Split()):
+			foldPredArray = None
+			foldAccuracyRow = numpy.zeros(nTargets)
+
+			for j in range(nTargets):
+				theseVariables = results.fold_selected_variables[foldIndex, j, :]
+				theseVariables = theseVariables[theseVariables != -1].tolist()
+
+				simplex = Simplex(
+					data = fullData,
+					columns = theseVariables,
+					target = yIndices[j],
+					train = trainIndices,
+					test = testIndices,
+					embedDimensions = self.EmbedDimensions,
+					predictionHorizon = self.PredictionHorizon,
+					knn = len(theseVariables) + 1,
+					step = self.Step,
+					exclusionRadius = self.ExclusionRadius,
+					noTime = not dataAdapter.HasTime,
+					verbose = self.Verbose,
+					embedded = True
+				)
+
+				simplexResult = simplex.Run()
+
+				if foldPredArray is None:
+					foldPredArray = numpy.zeros([len(simplexResult.time), nTargets])
+
+				foldPredArray[:, j] = simplexResult.projection[:, 2]
+				foldAccuracyRow[j] = scoring_function(simplexResult.projection[:, 1], simplexResult.projection[:, 2])
+
+			foldPredictions.append(foldPredArray)
+			foldAccuracyRows.append(foldAccuracyRow)
+
+		foldAccuracies = numpy.array(foldAccuracyRows)
+		return foldPredictions, foldAccuracies
+
 	def GetMostFrequentVariables(self) -> numpy.ndarray:
 		"""
 		Get most frequent variables across folds, per target.
