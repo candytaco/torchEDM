@@ -65,7 +65,7 @@ class MDE:
 		:param maxD: 	Maximum number of variables to select per target (including target if include_target=True)
 		:param include_target: 	Whether to start with target in variable list
 		:param convergent: 	Convergence checking mode: 'pre' runs batch CCM on all variables before selection, 'post' checks convergence within each selection loop iteration, False disables convergence checking
-		:param metric: 	Metric to use: "correlation" or "MAE"
+		:param metric: 	Metric to use: "correlation" or "r2"
 		:param batch_size: 	Number of variables to process in each batch
 		:param use_half_precision: 	Use float16 instead of float32 for GPU tensors to save memory
 		:param columns: 	Column indices to use for embedding (defaults to all except time)

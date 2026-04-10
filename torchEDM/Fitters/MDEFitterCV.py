@@ -20,7 +20,7 @@ class MDEFitterCV(EDMFitter):
 	def __init__(self,
 				 MaxD: int = 5,
 				 IncludeTarget: bool = False,
-				 Convergent: Union[str, bool] = 'pre',
+				 Convergent: Union[str, bool] = 'post',
 				 Metric: str = "correlation",
 				 BatchSize: int = 10000,
 				 HalfPrecision: bool = False,
@@ -51,7 +51,7 @@ class MDEFitterCV(EDMFitter):
 		:param MaxD: 				Maximum number of variables to select
 		:param IncludeTarget: 		Whether to start with target in variable list
 		:param Convergent: 			Whether to use convergence checking
-		:param Metric: 				Metric to use: "correlation" or "MAE"
+		:param Metric: 				Metric to use: "correlation" or "r2"
 		:param BatchSize: 			Number of variables to process in each batch
 		:param HalfPrecision: 		Use float16 instead of float32 for GPU tensors
 		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
