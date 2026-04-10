@@ -187,6 +187,7 @@ class MDEFitterCV(EDMFitter):
 			fold_selected_variables = foldSelectedVariables,
 			fold_stepwise_performances = foldStepwisePerformances,
 			fold_accuracies = self.foldAccuracies,
+			fold_predictions = [res.predictions for res in self.foldResults],
 			best_fold = self.bestFold,
 			selected_variables = self.bestVariablesInFold
 		)

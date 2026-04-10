@@ -218,6 +218,7 @@ class MDECVResults:
 	:param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
 	:param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
 	:param best_fold: Index of best performing fold per target, shape [nTargets]
+	:param fold_predictions: predictions for each cross-validation fold
 	:param selected_variables: Final selected feature column indices, shape [nTargets, maxD] padded with -1
 	:param time: Time values for final prediction, shape [N] (None if no prediction computed)
 	:param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
@@ -226,6 +227,7 @@ class MDECVResults:
 	fold_selected_variables: np.ndarray
 	fold_stepwise_performances: np.ndarray
 	fold_accuracies: np.ndarray
+	fold_predictions: Optional[List[np.ndarray]]
 	best_fold: np.ndarray
 	selected_variables: np.ndarray
 	time: Optional[np.ndarray] = None
@@ -542,6 +544,10 @@ class ResultsIO:
 			arrays['predictions'] = result.predictions
 		if result.score is not None:
 			arrays['score'] = result.score
+		if result.fold_predictions is not None:
+			arrays['n_fold_predictions'] = np.array(len(result.fold_predictions))
+			for i, foldPrediction in enumerate(result.fold_predictions):
+				arrays['fold_predictions_{}'.format(i)] = foldPrediction
 		return arrays
 
 	@staticmethod
@@ -651,11 +657,16 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadMDECVResults(data) -> MDECVResults:
+		foldPredictions = None
+		if 'n_fold_predictions' in data:
+			numFolds = int(data['n_fold_predictions'])
+			foldPredictions = [data['fold_predictions_{}'.format(i)] for i in range(numFolds)]
 		return MDECVResults(
 			fold_selected_variables = data['fold_selected_variables'],
 			fold_stepwise_performances = data['fold_stepwise_performances'],
 			fold_accuracies = data['fold_accuracies'],
 			best_fold = data['best_fold'],
+			fold_predictions = foldPredictions,
 			selected_variables = data['selected_variables'],
 			time = data['time'] if 'time' in data else None,
 			predictions = data['predictions'] if 'predictions' in data else None,
