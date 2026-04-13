@@ -414,6 +414,10 @@ class MDE:
 			del perfs
 			torch.cuda.empty_cache()
 
+		# Move to CPU for reuse in _final_prediction, avoiding redundant distance computation
+		self._finalDistanceMatrix = current_best_distance_matrix.cpu()
+		self._selectionTrainIndices = trainIndices
+		self._selectionTestIndices = testIndices
 		del current_best_distance_matrix
 
 		if torch.cuda.is_available():
@@ -473,25 +477,72 @@ class MDE:
 	def _final_prediction(self, scoring_function = Correlation):
 		"""Run final prediction for each target with its selected variables.
 
+		Reuses the accumulated distance matrix from _select_variables() rather than
+		recomputing pairwise distances from scratch.
+
+		For SMap, falls back to _fit_single_EDM_instance since SMap does not use
+		the same distance-accumulation scheme.
+
 		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar.
 		:return: (predictions [N, K], time [N], scores [K])
 		"""
 		nTargets = len(self.targets)
-		results = []
-		for j, t in enumerate(self.targets):
-			result = self._fit_single_EDM_instance(self._selected_variables[j], t)
-			results.append(result)
 
-		time_values = results[0].time
-		n = len(time_values)
+		if self.useSMap:
+			results = [self._fit_single_EDM_instance(self._selected_variables[j], self.targets[j])
+					   for j in range(nTargets)]
+			timeValues = results[0].time
+			n = len(timeValues)
+			predictions = numpy.zeros([n, nTargets])
+			scores = numpy.zeros(nTargets)
+			for j, result in enumerate(results):
+				predictions[:, j] = result.projection[:, 2]
+				scores[j] = scoring_function(result.projection[:, 1], result.projection[:, 2])
+			return predictions, timeValues, scores
 
-		predictions = numpy.zeros([n, nTargets])
+		trainIndices = self._selectionTrainIndices
+		testIndices = self._selectionTestIndices
+		nTest = len(testIndices)
+
+		if self.noTime:
+			timeValues = testIndices + self.predictionHorizon + 1
+		else:
+			timeValues = self.data[testIndices + self.predictionHorizon, 0]
+
+		# Move stored squared-distance matrix back to device: shape [nTargets, nTrain, nTest]
+		distanceMatrix = self._finalDistanceMatrix.to(self.device)
+
+		predictions = numpy.zeros([nTest, nTargets])
 		scores = numpy.zeros(nTargets)
-		for j, result in enumerate(results):
-			predictions[:, j] = result.projection[:, 2]
-			scores[j] = scoring_function(result.projection[:, 1], result.projection[:, 2])
 
-		return predictions, time_values, scores
+		for j, target in enumerate(self.targets):
+			knn = len(self._selected_variables[j]) + 1
+
+			sqrtDists = distanceMatrix[j].sqrt()  # [nTrain, nTest]
+			topkDists, topkIndices = torch.topk(sqrtDists, knn, dim = 0, largest = False)
+			topkDists = topkDists.t()    # [nTest, knn]
+			topkIndices = topkIndices.t()  # [nTest, knn]
+
+			minDists = topkDists[:, 0].clamp(min = 1e-6)
+			weights = torch.exp(-topkDists / minDists.unsqueeze(1))
+			weightSum = weights.sum(dim = 1)
+
+			trainY = torch.tensor(
+				self.data[trainIndices + self.predictionHorizon, target],
+				device = self.device, dtype = self.dtype
+			)
+			neighborY = trainY[topkIndices]
+			predJ = (weights * neighborY).sum(dim = 1) / weightSum
+
+			testY = self.data[testIndices + self.predictionHorizon, target]
+			predictions[:, j] = predJ.cpu().numpy()
+			scores[j] = scoring_function(testY, predictions[:, j])
+
+		del distanceMatrix
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
+
+		return predictions, timeValues, scores
 
 	def _filter_convergent_variables(self, candidate_columns: List[int], target: int) -> List[int]:
 		"""Filter candidate variables to only include convergent ones using BatchedCCM.
