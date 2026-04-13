@@ -183,9 +183,6 @@ class MDE:
 					best_e = e
 			self.embedDimensions = best_e
 
-		if self.knn == 0:
-			self.knn = self.embedDimensions + 1
-
 		self._select_variables()
 
 		final_forecasts, time_values, scores = self._final_prediction(scoring_function)
@@ -462,7 +459,7 @@ class MDE:
 				test = self.test,
 				embedDimensions = self.embedDimensions,
 				predictionHorizon = self.predictionHorizon,
-				knn = self.knn,
+				knn = 0,
 				step = self.step,
 				exclusionRadius = self.exclusionRadius,
 				embedded = True,
