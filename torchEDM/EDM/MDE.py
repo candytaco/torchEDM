@@ -206,7 +206,7 @@ class MDE:
 			time = time_values,
 			predictions = final_forecasts if return_predictions else None,
 			selected_variables = selected_variables_arr,
-			accuracy = accuracy_arr,
+			performance = accuracy_arr,
 			ccm_values = ccm_values_arr,
 			stepwise_performance = self.stepwise_performance,
 			timeDelayResults = self.timeDelayResults,

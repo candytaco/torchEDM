@@ -957,7 +957,7 @@ class test_MDE( unittest.TestCase ):
 		selectedNames = [self.colNames[i] for i in selectedForTarget]
 		self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
 
-		accuracyForTarget = result.accuracy[0, result.accuracy[0] != numpy.nan]
+		accuracyForTarget = result.performance[0, result.performance[0] != numpy.nan]
 		accuracyForTarget = accuracyForTarget[~numpy.isnan(accuracyForTarget)]
 		for computed, expected in zip(accuracyForTarget, groundTruthData['rho']):
 			self.assertAlmostEqual(float(computed), float(expected), places = 4)
@@ -1000,7 +1000,7 @@ class test_MDE( unittest.TestCase ):
 			selectedNames = [self.colNames[i] for i in selectedForTarget]
 			self.assertEqual(selectedNames, groundTruthData['variables'].tolist())
 
-			accuracyForTarget = result.accuracy[j, ~numpy.isnan(result.accuracy[j])]
+			accuracyForTarget = result.performance[j, ~numpy.isnan(result.performance[j])]
 			for computed, expected in zip(accuracyForTarget, groundTruthData['rho']):
 				self.assertAlmostEqual(float(computed), float(expected), places = 4)
 

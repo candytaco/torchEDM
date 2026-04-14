@@ -169,7 +169,7 @@ class MDEResult:
 	:param time: Time values, shape [N]
 	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
 	:param selected_variables: Selected variable column indices, shape [K, maxD], padded with -1
-	:param accuracy: Accuracy at each variable addition step, shape [K, maxD], padded with NaN
+	:param performance: prediction performance at each variable addition step, shape [K, maxD], padded with NaN
 	:param ccm_values: CCM convergence slopes for selected variables, shape [K, maxD], padded with NaN
 	:param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
 	:param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
@@ -178,7 +178,7 @@ class MDEResult:
 	time: np.ndarray
 	predictions: Optional[np.ndarray]
 	selected_variables: np.ndarray
-	accuracy: np.ndarray
+	performance: np.ndarray
 	ccm_values: np.ndarray
 	stepwise_performance: np.ndarray
 	timeDelayResults: List[Tuple[int, int, float, float]] = None
@@ -196,7 +196,7 @@ class MDECVResult:
 	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
 	:param selected_variables: Final selected variable indices, shape [K, maxD] padded with -1
 	:param fold_results: Results from each cross-validation fold
-	:param fold_accuracies: Per-fold accuracy for the first target, shape [nFolds]
+	:param fold_performances: Per-fold accuracy for the first target, shape [nFolds]
 	:param best_fold: Index of best performing fold
 	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
 	"""
@@ -204,7 +204,7 @@ class MDECVResult:
 	predictions: Optional[np.ndarray]
 	selected_variables: np.ndarray
 	fold_results: List[MDEResult]
-	fold_accuracies: np.ndarray
+	fold_performances: np.ndarray
 	best_fold: np.ndarray
 	score: Optional[np.ndarray] = None
 
@@ -513,7 +513,7 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			selected_variables = result.selected_variables,
-			accuracy = result.accuracy,
+			accuracy = result.performance,
 			ccm_values = result.ccm_values,
 			stepwise_performance = result.stepwise_performance)
 		if result.predictions is not None:
@@ -530,7 +530,7 @@ class ResultsIO:
 		arrays = dict(
 			time = result.time,
 			selected_features = result.selected_variables,
-			fold_accuracies = result.fold_accuracies,
+			fold_accuracies = result.fold_performances,
 			best_fold = result.best_fold,
 			n_folds = np.array(n_folds))
 
@@ -645,7 +645,7 @@ class ResultsIO:
 			time = data['time'],
 			predictions = data['predictions'] if 'predictions' in data else None,
 			selected_variables = data['selected_variables'],
-			accuracy = data['accuracy'],
+			performance = data['accuracy'],
 			ccm_values = data['ccm_values'],
 			stepwise_performance = data['stepwise_performance'],
 			timeDelayResults = time_delay,
@@ -667,7 +667,7 @@ class ResultsIO:
 			predictions = data['predictions'] if 'predictions' in data else None,
 			selected_variables = data['selected_variables'],
 			fold_results = fold_results,
-			fold_accuracies = data['fold_accuracies'],
+			fold_performances = data['fold_accuracies'],
 			best_fold = data['best_fold'],
 			score = data['score'] if 'score' in data else None)
 
