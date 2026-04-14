@@ -234,6 +234,22 @@ class MDECVResults:
 	predictions: Optional[np.ndarray] = None
 	score: Optional[np.ndarray] = None
 
+	@property
+	def selected_stepwise_performances(self) -> np.ndarray:
+		"""
+		Performance of the actually selected variable at each step, for each fold and target.
+		Condenses fold_stepwise_performances from shape [nFolds, nTargets, maxD, nCandidates]
+		to [nFolds, nTargets, maxD] by indexing into the candidate axis with the selected variable index.
+		Entries are NaN where fold_selected_variables is -1 (padding, i.e. no variable was selected at that step).
+		"""
+		selected = self.fold_selected_variables  # [nFolds, nTargets, maxD]
+		mask = selected >= 0
+		performances = np.full(selected.shape, np.nan)
+		foldIndices, targetIndices, stepIndices = np.where(mask)
+		variableIndices = selected[foldIndices, targetIndices, stepIndices]
+		performances[foldIndices, targetIndices, stepIndices] = self.fold_stepwise_performances[foldIndices, targetIndices, stepIndices, variableIndices]
+		return performances
+
 
 @dataclass(frozen=True)
 class BatchedCCMResult:
