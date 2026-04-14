@@ -14,7 +14,7 @@ from .Utils import IsNonStringIterable
 
 def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   Y: numpy.ndarray,
-									   dims: numpy.arange(1, 11, dtype = int),
+									   maxDims: 10,
 									   train: Tuple[int, int] = None,
 									   test: Tuple[int, int] = None,
 									   predictionHorizon: int = 1,
@@ -36,7 +36,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 
 	:param X: 					2D numpy array of predictor columns, shape (N, numFeatures)
 	:param Y: 					1D or 2D numpy array of target values, shape (N,) or (N, 1)
-	:param dims: 				iterable, embedding dims to test
+	:param maxDims: 				iterable, embedding dims to test
 	:param train: 				Train indices [start, end]
 	:param test: 				Test indices [start, end]
 	:param predictionHorizon: 	Prediction horizon
@@ -58,19 +58,19 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 
 	if batched:
 		correlations = _FindOptimalEmbeddingDimensionalityBatched(
-			X, Y, dims, train, test,
+			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
 			validLib, ignoreNan, scoring_function)
 	else:
 		correlations = _FindOptimalEmbeddingDimensionalityIterative(
-			X, Y, dims, train, test,
+			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
 			validLib, ignoreNan, scoring_function)
 
 	return correlations
 
 
-def _FindOptimalEmbeddingDimensionalityIterative(X, Y, dimensions,
+def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 												 train, test, predictionHorizon,
 												 step, exclusionRadius, embedded,
 												 validLib, ignoreNan,
@@ -85,7 +85,7 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, dimensions,
 
 	correlations = []
 
-	for E in dimensions:
+	for E in range(1, maxDims + 1):
 		S = Simplex(data = combinedData, columns = columns, target = target,
 					train = train, test = test, embedDimensions = E,
 					predictionHorizon = predictionHorizon, knn = 0,
@@ -100,7 +100,7 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, dimensions,
 	return correlations
 
 
-def _FindOptimalEmbeddingDimensionalityBatched(X, Y, dimensions,
+def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 											   train, test, predictionHorizon,
 											   step, exclusionRadius, embedded,
 											   validLib, ignoreNan,
@@ -117,7 +117,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, dimensions,
 
 	# Create a Simplex at maxE to get proper indices, embedding, and target
 	dummy = Simplex(data = combinedData, columns = columns, target = target,
-				train = train, test = test, embedDimensions = numpy.max(dimensions),
+				train = train, test = test, embedDimensions = maxDims,
 				predictionHorizon = predictionHorizon, knn = 0,
 				step = step, exclusionRadius = exclusionRadius,
 				embedded = embedded, validLib = validLib,
@@ -144,8 +144,15 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, dimensions,
 		diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
 		distances[c, :, :] = diff * diff
 
+	# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
+	# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
+	# so that totalDistance[dim*nVars - 1] correctly sums the first dim lags of all variables.
+	if nVars > 1:
+		perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
+		distances = distances[perm]
+
 	# cumulative sum across embeddings
-	totalDistance = torch.cumsum(distances, dim=0)
+	totalDistance = torch.cumsum(distances, dim = 0)
 
 	del distances, trainTensor, testTensor
 
@@ -163,12 +170,12 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, dimensions,
 	testIndices = testIndices[testIndices < len(dummy.targetVec)]
 	y_test = Y[testIndices].squeeze()
 
-	for e, dim in enumerate(dimensions):
+	for dim in range(1, maxDims + 1):
 		knn = dim + 1
 
-		# For multi-column embeddings, E dimensions use E * len(columns) actual columns
+		# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
 		# so we index into the index where the culumative sum adds to the embedding dims
-		index = (e + 1) * nVars if not embedded else dim
+		index = dim * nVars if not embedded else dim
 		distances = totalDistance[index - 1]
 
 		if hasMask:

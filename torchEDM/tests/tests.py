@@ -687,13 +687,13 @@ class test_EDM( unittest.TestCase ):
         target_index = df_.columns.get_loc('np_sst')
 
         CCM = BatchedCCM(X = data[:, [col_index, col_index]], Y = data[:, target_index][:, None],
-                         trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
-                         sample = 100, embedDimensions = 3,
-                         predictionHorizon = 0, knn = 0, step = -1,
-                         embedded = False, validLib = [], includeData = False,
-                         batchMode = 'sample',
-                         showProgress = False
-                         )
+						 trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
+						 sample = 100, forwardEmbedDimensions = 3,
+						 predictionHorizon = 0, knn = 0, step = -1,
+						 embedded = False, validLib = [], includeData = False,
+						 batchMode = 'sample',
+						 showProgress = False
+						 )
         results = CCM.Run()
 
         dfv = self.ValidationFiles["CCM_anch_sst_valid.csv"].values
@@ -784,15 +784,37 @@ class test_EDM( unittest.TestCase ):
             data = df_.values
             col_index = df_.columns.get_loc('V1')
             target_index = df_.columns.get_loc('V1')
-            df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data = data, columns = [col_index], target = target_index,
-                                                                             maxE = 12, train = [1, 500], test=[501, 800],
+            df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
+                                                                             maxDims = numpy.arange(1, 13, dtype = int),
+                                                                             train = [1, 500], test=[501, 800],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
-                                                                             embedded = False, validLib = [], noTime = False,
+                                                                             embedded = False, validLib = [],
                                                                              ignoreNan = True)
 
-        dfv = self.ValidationFiles["EmbedDim_valid.csv"].values.transpose()
+        dfv = self.ValidationFiles["EmbedDim_valid.csv"].values[:, 1]
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 1e-6))
+
+    def test_embedDimensions_batched( self ):
+        with catch_warnings():
+            # Python-3.13 multiprocessing fork DeprecationWarning
+            filterwarnings( "ignore", category = DeprecationWarning )
+
+            if self.verbose : print ( "--- EmbedDimension ---" )
+            df_ = sampleDataFrames['Lorenz5D']
+            data = df_.values
+            col_index = df_.columns.get_loc('V1')
+            target_index = df_.columns.get_loc('V1')
+            df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
+                                                                             maxDims = numpy.arange(1, 13, dtype = int),
+                                                                             train = [1, 500], test=[501, 800],
+                                                                             predictionHorizon = 15, step = -5, exclusionRadius = 20,
+                                                                             embedded = False, validLib = [],
+                                                                             ignoreNan = True, batched = True)
+
+        dfv = self.ValidationFiles["EmbedDim_valid.csv"].values[:, 1]
+
+        self.assertTrue(numpy.allclose(df, dfv, atol = 5e-2))
 
     
     # PredictInterval
