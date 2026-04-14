@@ -380,7 +380,7 @@ class MDE:
 					for candidate_var, candidate_score in candidate_performance[j]:
 						if numpy.isnan(candidate_score):
 							continue
-						is_convergent, ccm_slope = self._check_convergence(int(candidate_var), self.targets[j])
+						is_convergent, ccm_slope = self._check_single_candidate_convergence(int(candidate_var), self.targets[j])
 						if is_convergent:
 							best_var = candidate_var
 							best_score = candidate_score
@@ -609,23 +609,23 @@ class MDE:
 
 		return convergent_vars
 
-	def _check_convergence(self, column: int, target: int) -> Tuple[bool, float]:
+	def _check_single_candidate_convergence(self, candidate: int, target: int) -> Tuple[bool, float]:
 		"""Check CCM convergence for a candidate variable predicting a given target.
 
-		:param column: Column index to check
+		:param candidate: candidate variable to check
 		:param target: Target column index
 		:return: (convergent, ccm_slope) tuple
 		"""
 		from scipy.signal import argrelextrema
 
-		cache_key = (column, target)
+		cache_key = (candidate, target)
 
 		if self._userProvidedE:
 			best_e = self.embedDimensions
 		elif cache_key not in self.optimalEmbeddingDimensions:
 			dims, corrs = FindOptimalEmbeddingDimensionality(
 				self.data,
-				[column],
+				[candidate],
 				target,
 				self.CCMMaxE,
 				train = self.train,
@@ -659,14 +659,14 @@ class MDE:
 
 		if len(lib_sizes) < 2:
 			if self.verbose:
-				print('Warning: Not enough library sizes for CCM convergence check on column {}'.format(column))
+				print('Warning: Not enough library sizes for CCM convergence check on column {}'.format(candidate))
 			return (True, 0.5)
 
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
 		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
 		batchedCCM = BatchedCCM(
-			X = self.data[:, [column]],
+			X = self.data[:, [candidate]],
 			Y = self.data[:, target],
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
