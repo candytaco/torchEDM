@@ -3,7 +3,7 @@ from typing import List, Tuple, Any
 import numpy
 import torch
 
-from .EDM._MDE import FloorArray
+from .EDM._MDE import FloorArray, RowwiseCorrelation
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -154,57 +154,61 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	# cumulative sum across embeddings
 	totalDistance = torch.cumsum(distances, dim = 0)
 
-	del distances, trainTensor, testTensor
+	indices = []
+	for dim in range(1, maxDims + 1):
+		# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
+		# so we index into the index where the culumative sum adds to the embedding dims
+		index = dim * nVars if not embedded else dim
+		indices.append(index - 1)
+	# select the indices that correspond to sums across all vars at each N dimensions
+	embeddingDistances = totalDistance[indices, :, :]
+
+	del distances, trainTensor, testTensor, totalDistance
 
 	# Build exclusion mask once (same for all E since indices are shared)
 	exclusionMask = dummy._BuildExclusionMask()
 	hasMask = exclusionMask.any()
 	if hasMask:
 		maskTensor = torch.tensor(exclusionMask, device=device, dtype=torch.bool)
-
-	correlations = []
+		embeddingDistances[:, maskTensor] = float('inf')
 
 	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device =device, dtype = dtype)
 
 	testIndices = dummy.testIndices + predictionHorizon
 	testIndices = testIndices[testIndices < len(dummy.targetVec)]
-	y_test = Y[testIndices].squeeze()
+	y_test = torch.tensor(Y[testIndices], device =device, dtype = dtype).T
 
-	for dim in range(1, maxDims + 1):
-		knn = dim + 1
+	# batched over distances
+	neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
 
-		# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
-		# so we index into the index where the culumative sum adds to the embedding dims
-		index = dim * nVars if not embedded else dim
-		distances = totalDistance[index - 1]
+	neighborDistances.sqrt_()
+	FloorArray(neighborDistances, 1e-6)
 
-		if hasMask:
-			distances[maskTensor] = float('inf')
+	# Compute weighted predictions
+	minDistances = torch.amin(neighborDistances, dim = 1)
+	weights = neighborDistances / minDistances.unsqueeze(1)
+	weights.neg_().exp_()
 
-		neighborDistances, neighborIndices = torch.topk(distances, knn, dim = 0, largest = False)
+	# because we are batch selecting knns, we use the max number of dimensions
+	# for the lower numbers of dimensions, we zero out the extra neighbors
+	dimIndices = torch.arange(maxDims, device = device).view(maxDims, 1, 1)
+	kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
+	weights.masked_fill_(kIndices > dimIndices + 1, 0)
 
-		neighborDistances.sqrt_()
-		FloorArray(neighborDistances, 1e-6)
+	weightSum = torch.sum(weights, dim = 1)
+	select = y_train[neighborIndices]
+	predictions = torch.sum(weights * select, dim = 1) / weightSum
 
-		# Compute weighted predictions
-		minDistances = torch.amin(neighborDistances, dim = 0)
-		weights = neighborDistances / minDistances
-		weights.neg_().exp_()
-		weightSum = torch.sum(weights, dim = 0)
-		select = y_train[neighborIndices]
-		predictions = torch.sum(weights * select, dim = 0) / weightSum
+	y_pred = predictions[:len(testIndices)]
+	out = torch.zeros(y_pred.shape[0], device = device)
+	RowwiseCorrelation(y_test, y_pred, out)
 
-		y_pred = predictions.cpu().numpy()[:len(testIndices)]
-		correlation = scoring_function(y_test, y_pred)
-		correlations.append(correlation)
-
-	del totalDistance
 	if hasMask:
 		del maskTensor
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()
 
-	return correlations
+	return out.cpu().numpy()
 
 
 def FindOptimalPredictionHorizon(data: numpy.ndarray,
