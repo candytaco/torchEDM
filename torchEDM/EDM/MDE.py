@@ -185,7 +185,7 @@ class MDE:
 
 		self._select_variables()
 
-		final_forecasts, time_values, scores = self._final_prediction(scoring_function)
+		predicted, time_values, scores = self._predict(scoring_function)
 
 		# Build padded 2D arrays for selected_variables, accuracy, ccm_values
 		selected_variables_arr = numpy.zeros([nTargets, self.maxD], dtype = int) - 1
@@ -204,7 +204,7 @@ class MDE:
 
 		self.results_ = MDEResult(
 			time = time_values,
-			predictions = final_forecasts if return_predictions else None,
+			predictions = predicted if return_predictions else None,
 			selected_variables = selected_variables_arr,
 			performance = accuracy_arr,
 			ccm_values = ccm_values_arr,
@@ -474,7 +474,7 @@ class MDE:
 				)
 			return simplex.Run()
 
-	def _final_prediction(self, scoring_function = Correlation):
+	def _predict(self, scoring_function = Correlation):
 		"""Run final prediction for each target with its selected variables.
 
 		Reuses the accumulated distance matrix from _select_variables() rather than
@@ -571,7 +571,7 @@ class MDE:
 			Y = Y,
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
-			embedDimensions = self.embedDimensions,
+			forwardEmbedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else self.embedDimensions + 1,
 			step = self.step,
@@ -623,16 +623,10 @@ class MDE:
 		if self._userProvidedE:
 			best_e = self.embedDimensions
 		elif cache_key not in self.optimalEmbeddingDimensions:
-			dims, corrs = FindOptimalEmbeddingDimensionality(
-				self.data,
-				[candidate],
-				target,
-				self.CCMMaxE,
-				train = self.train,
-				test = self.test,
-				predictionHorizon = self.predictionHorizon,
-				noTime = self.noTime
-				)
+			corrs = FindOptimalEmbeddingDimensionality(self.data[: candidate], self.data[: target],
+				numpy.arange(1, self.CCMMaxE + 1, dtype = int),
+				train = self.train, test = self.test,
+				predictionHorizon = self.predictionHorizon)
 
 			correlations = numpy.array(corrs)
 
@@ -645,7 +639,7 @@ class MDE:
 			else:
 				best_e_idx = numpy.argmax(correlations)
 
-			best_e = int(dims[best_e_idx])
+			best_e = best_e_idx + 1
 			best_e_correlation = correlations[best_e_idx]
 
 			if best_e_correlation < self.EmbedDimCorrelationMin:
@@ -670,7 +664,7 @@ class MDE:
 			Y = self.data[:, target],
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
-			embedDimensions = best_e,
+			forwardEmbedDimensions = best_e,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else best_e + 1,
 			step = self.step,
