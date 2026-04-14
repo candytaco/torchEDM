@@ -3,6 +3,7 @@ from typing import List, Tuple, Any
 import numpy
 import torch
 
+from .EDM._MDE import FloorArray
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -11,10 +12,9 @@ from .Utils import IsNonStringIterable
 # TODO: these should all be cross-validated
 
 
-def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
-									   columns: List[int] = None,
-									   target: int = None,
-									   maxE: int = 10,
+def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
+									   Y: numpy.ndarray,
+									   dims: numpy.arange(1, 11, dtype = int),
 									   train: Tuple[int, int] = None,
 									   test: Tuple[int, int] = None,
 									   predictionHorizon: int = 1,
@@ -22,7 +22,6 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 									   exclusionRadius: float = 0,
 									   embedded: bool = False,
 									   validLib: List = [],
-									   noTime: bool = False,
 									   ignoreNan: bool = True,
 									   batched: bool = False,
 									   scoring_function = Correlation):
@@ -35,10 +34,9 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 	shared distance precomputation but slightly penalizes lower E values
 	by excluding a few extra rows.
 
-	:param data: 				2D numpy array where column 0 is time
-	:param columns: 			Column indices to use (defaults to all except time)
-	:param target: 				Target column index (defaults to column 1)
-	:param maxE: 				Maximum embedding dimension to test
+	:param X: 					2D numpy array of predictor columns, shape (N, numFeatures)
+	:param Y: 					1D or 2D numpy array of target values, shape (N,) or (N, 1)
+	:param dims: 				iterable, embedding dims to test
 	:param train: 				Train indices [start, end]
 	:param test: 				Test indices [start, end]
 	:param predictionHorizon: 	Prediction horizon
@@ -46,47 +44,54 @@ def FindOptimalEmbeddingDimensionality(data: numpy.ndarray,
 	:param exclusionRadius: 	Exclusion radius
 	:param embedded: 			Whether data is already embedded
 	:param validLib: 			Valid library indices
-	:param noTime: 				Whether to exclude time column
 	:param ignoreNan: 			Whether to ignore NaN values
 	:param batched: 			Use shared maxE indices for all E (faster, slightly less accurate for low E)
 	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
-	:return: best embedding dimensions
+	:return: score for each embedding dimension
 	"""
 
-	dimensions = list(range(1, maxE + 1))
+	# force column vectors
+	if len(X.shape) < 2:
+		X = X[:, None]
+	if len(Y.shape) < 2:
+		Y = Y[:, None]
 
 	if batched:
 		correlations = _FindOptimalEmbeddingDimensionalityBatched(
-			data, columns, target, maxE, dimensions, train, test,
+			X, Y, dims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan, scoring_function)
+			validLib, ignoreNan, scoring_function)
 	else:
 		correlations = _FindOptimalEmbeddingDimensionalityIterative(
-			data, columns, target, dimensions, train, test,
+			X, Y, dims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan, scoring_function)
+			validLib, ignoreNan, scoring_function)
 
-	return dimensions, correlations
+	return correlations
 
 
-def _FindOptimalEmbeddingDimensionalityIterative(data, columns, target, Evals,
-												  train, test, predictionHorizon,
-												  step, exclusionRadius, embedded,
-												  validLib, noTime, ignoreNan,
-												  scoring_function):
+def _FindOptimalEmbeddingDimensionalityIterative(X, Y, dimensions,
+												 train, test, predictionHorizon,
+												 step, exclusionRadius, embedded,
+												 validLib, ignoreNan,
+												 scoring_function):
 	"""
 	Evaluate each E with its own proper train/test indices.
 	Each E creates a Simplex and runs GPU-accelerated FindNeighbors/Project.
 	"""
+	combinedData = numpy.column_stack([X, Y.reshape(-1, 1)])
+	columns = list(range(X.shape[1]))
+	target = X.shape[1]
+
 	correlations = []
 
-	for E in Evals:
-		S = Simplex(data=data, columns=columns, target=target,
-					train=train, test=test, embedDimensions=E,
-					predictionHorizon=predictionHorizon, knn=0,
-					step=step, exclusionRadius=exclusionRadius,
-					embedded=embedded, validLib=validLib,
-					noTime=noTime, ignoreNan=ignoreNan)
+	for E in dimensions:
+		S = Simplex(data = combinedData, columns = columns, target = target,
+					train = train, test = test, embedDimensions = E,
+					predictionHorizon = predictionHorizon, knn = 0,
+					step = step, exclusionRadius = exclusionRadius,
+					embedded = embedded, validLib = validLib,
+					noTime = True, ignoreNan = ignoreNan)
 
 		result = S.Run()
 		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
@@ -95,102 +100,98 @@ def _FindOptimalEmbeddingDimensionalityIterative(data, columns, target, Evals,
 	return correlations
 
 
-def _FindOptimalEmbeddingDimensionalityBatched(data, columns, target, maxE, Evals,
-												train, test, predictionHorizon,
-												step, exclusionRadius, embedded,
-												validLib, noTime, ignoreNan,
-												scoring_function):
+def _FindOptimalEmbeddingDimensionalityBatched(X, Y, dimensions,
+											   train, test, predictionHorizon,
+											   step, exclusionRadius, embedded,
+											   validLib, ignoreNan,
+											   scoring_function):
 	"""
-	Evaluate all E values using shared maxE indices and precomputed
+	Evaluate all embedding dimensions using shared maxE indices and precomputed
 	cumulative per-column distances on GPU. Uses the most restrictive
 	NaN filtering (from maxE) for all E values.
 	"""
+	combinedData = numpy.column_stack([X, Y.reshape(-1, 1)])
+	columns = list(range(X.shape[1]))
+	nVars = X.shape[1]
+	target = X.shape[1]
+
 	# Create a Simplex at maxE to get proper indices, embedding, and target
-	S = Simplex(data=data, columns=columns, target=target,
-				train=train, test=test, embedDimensions=maxE,
-				predictionHorizon=predictionHorizon, knn=0,
-				step=step, exclusionRadius=exclusionRadius,
-				embedded=embedded, validLib=validLib,
-				noTime=noTime, ignoreNan=ignoreNan)
+	dummy = Simplex(data = combinedData, columns = columns, target = target,
+				train = train, test = test, embedDimensions = numpy.max(dimensions),
+				predictionHorizon = predictionHorizon, knn = 0,
+				step = step, exclusionRadius = exclusionRadius,
+				embedded = embedded, validLib = validLib,
+				noTime = True, ignoreNan = ignoreNan)
 
-	S.EmbedData()
-	S.RemoveNan()
+	dummy.EmbedData()
+	dummy.RemoveNan()
 
-	device = S.device
-	dtype = S.dtype
+	device = dummy.device
+	dtype = dummy.dtype
 
-	trainEmbedding = S.Embedding[S.trainIndices, :]
-	testEmbedding = S.Embedding[S.testIndices, :]
-	nTrain = len(S.trainIndices)
-	nTest = len(S.testIndices)
-	numEmbeddingColumns = trainEmbedding.shape[1]
+	trainEmbedding = dummy.Embedding[dummy.trainIndices, :]
+	testEmbedding = dummy.Embedding[dummy.testIndices, :]
+	nTrain = len(dummy.trainIndices)
+	nTest = len(dummy.testIndices)
 
-	trainTensor = torch.tensor(trainEmbedding, device=device, dtype=dtype)
-	testTensor = torch.tensor(testEmbedding, device=device, dtype=dtype)
-	targetVector = torch.tensor(S.targetVec.squeeze(), device=device, dtype=dtype)
+	trainTensor = torch.tensor(trainEmbedding, device = device, dtype = dtype)
+	testTensor = torch.tensor(testEmbedding, device = device, dtype = dtype)
+	nEmbedded = trainTensor.shape[1]
 
-	# Compute per-column squared pairwise distances: [numCols, nTrain, nTest]
-	perColumnDistancesSq = torch.zeros(numEmbeddingColumns, nTrain, nTest, device=device, dtype=dtype)
-	for c in range(numEmbeddingColumns):
+	# Compute per-variable squared pairwise distances: [numCols, nTrain, nTest]
+	distances = torch.zeros(nEmbedded, nTrain, nTest, device = device, dtype = dtype)
+	for c in range(nEmbedded):
 		diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
-		perColumnDistancesSq[c] = diff * diff
+		distances[c, :, :] = diff * diff
 
-	# Cumulative sum gives squared distances for each E
-	cumulativeDistancesSq = torch.cumsum(perColumnDistancesSq, dim=0)
+	# cumulative sum across embeddings
+	totalDistance = torch.cumsum(distances, dim=0)
 
-	del perColumnDistancesSq, trainTensor, testTensor
+	del distances, trainTensor, testTensor
 
 	# Build exclusion mask once (same for all E since indices are shared)
-	exclusionMask = S._BuildExclusionMask()
+	exclusionMask = dummy._BuildExclusionMask()
 	hasMask = exclusionMask.any()
 	if hasMask:
 		maskTensor = torch.tensor(exclusionMask, device=device, dtype=torch.bool)
 
 	correlations = []
 
-	for E in Evals:
-		knn = E + 1
+	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device =device, dtype = dtype)
+
+	testIndices = dummy.testIndices + predictionHorizon
+	testIndices = testIndices[testIndices < len(dummy.targetVec)]
+	y_test = Y[testIndices].squeeze()
+
+	for e, dim in enumerate(dimensions):
+		knn = dim + 1
 
 		# For multi-column embeddings, E dimensions use E * len(columns) actual columns
-		embeddingColumnsForE = E * len(S.columns) if not embedded else E
-		if embeddingColumnsForE > numEmbeddingColumns:
-			embeddingColumnsForE = numEmbeddingColumns
-		distancesSq = cumulativeDistancesSq[embeddingColumnsForE - 1]
-
-		distances = torch.sqrt(distancesSq)
+		# so we index into the index where the culumative sum adds to the embedding dims
+		index = (e + 1) * nVars if not embedded else dim
+		distances = totalDistance[index - 1]
 
 		if hasMask:
 			distances[maskTensor] = float('inf')
 
-		topkDistances, topkIndices = torch.topk(distances, knn, dim=0, largest=False)
+		neighborDistances, neighborIndices = torch.topk(distances, knn, dim = 0, largest = False)
 
-		neighborDistances = topkDistances.t()
-		neighborIndices = topkIndices.t()
+		neighborDistances.sqrt_()
+		FloorArray(neighborDistances, 1e-6)
 
 		# Compute weighted predictions
-		minDist = neighborDistances[:, 0].clone()
-		torch.clamp_min(minDist, 1e-6, out=minDist)
-		scaledDistances = neighborDistances / minDist.unsqueeze(1)
-		weights = torch.exp(-scaledDistances)
-		weightRowSum = torch.sum(weights, dim=1)
+		minDistances = torch.amin(neighborDistances, dim = 0)
+		weights = neighborDistances / minDistances
+		weights.neg_().exp_()
+		weightSum = torch.sum(weights, dim = 0)
+		select = y_train[neighborIndices]
+		predictions = torch.sum(weights * select, dim = 0) / weightSum
 
-		neighborIndicesData = neighborIndices.cpu().numpy()
-		neighborIndicesData = S._MapKNNIndicesToLibraryIndices(neighborIndicesData)
-		neighborIndicesDataTp = torch.tensor(neighborIndicesData + predictionHorizon, device=device, dtype=torch.long)
-
-		libTargetValues = targetVector[neighborIndicesDataTp]
-		predictions = torch.sum(weights * libTargetValues, dim=1) / weightRowSum
-
-		observationIndices = S.testIndices + predictionHorizon
-		validObsIndices = observationIndices[observationIndices < len(S.targetVec)]
-		observations = S.targetVec[validObsIndices, 0]
-
-		predictionsNumpy = predictions.cpu().numpy()
-		nValid = len(validObsIndices)
-		correlation = scoring_function(observations[:nValid], predictionsNumpy[:nValid])
+		y_pred = predictions.cpu().numpy()[:len(testIndices)]
+		correlation = scoring_function(y_test, y_pred)
 		correlations.append(correlation)
 
-	del cumulativeDistancesSq
+	del totalDistance
 	if hasMask:
 		del maskTensor
 	if torch.cuda.is_available():
