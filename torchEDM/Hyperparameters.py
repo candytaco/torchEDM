@@ -1,4 +1,4 @@
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Optional
 
 import numpy
 import torch
@@ -13,8 +13,8 @@ from .Utils import IsNonStringIterable
 
 
 def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
-									   Y: numpy.ndarray,
-									   maxDims: 10,
+									   Y: Optional[numpy.ndarray] = None,
+									   maxDims: int = 10,
 									   train: Tuple[int, int] = None,
 									   test: Tuple[int, int] = None,
 									   predictionHorizon: int = 1,
@@ -23,20 +23,23 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   embedded: bool = False,
 									   validLib: List = [],
 									   ignoreNan: bool = True,
-									   batched: bool = False,
-									   scoring_function = Correlation):
+									   batched: bool = True,
+									   scoring_function = Correlation,
+									   joint: bool = True):
 	"""
-	Estimate optimal embedding dimension for simplex
+	Estimate optimal embedding dimension for simplex. When Y is not provided, each X is used to predict itself and find
+	the optimal number of dimensions for it self. When Y is provided and joint is True, all Xs are used to jointly
+	predict Y. When joint is False, each X is used to separately predict Y and we have a deparate dimensionality for
+	each X when paird to Y.
 
-	When batched=False, each E gets its own proper train/test indices derived
-	from that E's embedding. When batched=True, the maxE indices (most
-	restrictive NaN filtering) are used for all E values, which enables
-	shared distance precomputation but slightly penalizes lower E values
+	When batched = False, each train and test indices are computed per embedding dimensionality. When batched = True,
+	the indices are computed from the maximum, which is the most restrictive, which enables
+	shared distance precomputation but slightly penalizes lower dimensions values
 	by excluding a few extra rows.
 
 	:param X: 					2D numpy array of predictor columns, shape (N, numFeatures)
 	:param Y: 					1D or 2D numpy array of target values, shape (N,) or (N, 1)
-	:param maxDims: 				iterable, embedding dims to test
+	:param maxDims: 			maximum number of embedding dimensions to test
 	:param train: 				Train indices [start, end]
 	:param test: 				Test indices [start, end]
 	:param predictionHorizon: 	Prediction horizon
@@ -47,43 +50,48 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	:param ignoreNan: 			Whether to ignore NaN values
 	:param batched: 			Use shared maxE indices for all E (faster, slightly less accurate for low E)
 	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
+	:param joint:				when X is 2D, use all vars together to predict Y? If False, each X is used separately to predict Y
 	:return: score for each embedding dimension
 	"""
 
 	# force column vectors
 	if len(X.shape) < 2:
 		X = X[:, None]
-	if len(Y.shape) < 2:
+	if Y is not None and len(Y.shape) < 2:
 		Y = Y[:, None]
 
 	if batched:
-		correlations = _FindOptimalEmbeddingDimensionalityBatched(
+		scores = _FindOptimalEmbeddingDimensionalityBatched(
 			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, ignoreNan, scoring_function)
+			validLib, ignoreNan, scoring_function, joint)
 	else:
-		correlations = _FindOptimalEmbeddingDimensionalityIterative(
+		scores = _FindOptimalEmbeddingDimensionalityIterative(
 			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, ignoreNan, scoring_function)
+			validLib, ignoreNan, scoring_function, joint)
 
-	return correlations
+	return scores
 
 
 def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 												 train, test, predictionHorizon,
 												 step, exclusionRadius, embedded,
 												 validLib, ignoreNan,
-												 scoring_function):
+												 scoring_function,
+												 joint):
 	"""
 	Evaluate each E with its own proper train/test indices.
 	Each E creates a Simplex and runs GPU-accelerated FindNeighbors/Project.
 	"""
-	combinedData = numpy.column_stack([X, Y.reshape(-1, 1)])
+	if Y is not None:
+		combinedData = numpy.column_stack([X, Y])
+	else:
+		combinedData = X
 	columns = list(range(X.shape[1]))
 	target = X.shape[1]
 
-	correlations = []
+	scores = []
 
 	for E in range(1, maxDims + 1):
 		S = Simplex(data = combinedData, columns = columns, target = target,
@@ -95,20 +103,28 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 
 		result = S.Run()
 		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
-		correlations.append(correlation)
+		scores.append(correlation)
 
-	return correlations
+	return scores
 
 
 def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 											   train, test, predictionHorizon,
 											   step, exclusionRadius, embedded,
 											   validLib, ignoreNan,
-											   scoring_function):
+											   scoring_function,
+											   joint):
 	"""
 	Evaluate all embedding dimensions using shared maxE indices and precomputed
 	cumulative per-column distances on GPU. Uses the most restrictive
 	NaN filtering (from maxE) for all E values.
+
+	When joint is True, all variables in X are used together to predict Y,
+	returning a [maxDims] array of scores.
+
+	When joint is False, each variable in X is used separately to predict Y.
+	Per-variable distances are concatenated along the first dimension of the
+	stacked distance matrices, and scores are returned as a [nVars x maxDims] array.
 	"""
 	combinedData = numpy.column_stack([X, Y.reshape(-1, 1)])
 	columns = list(range(X.shape[1]))
@@ -138,45 +154,59 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	testTensor = torch.tensor(testEmbedding, device = device, dtype = dtype)
 	nEmbedded = trainTensor.shape[1]
 
-	# Compute per-variable squared pairwise distances: [numCols, nTrain, nTest]
+	# Compute per-column squared pairwise distances: [nEmbedded, nTrain, nTest]
 	distances = torch.zeros(nEmbedded, nTrain, nTest, device = device, dtype = dtype)
 	for c in range(nEmbedded):
 		diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
 		distances[c, :, :] = diff * diff
 
-	# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
-	# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
-	# so that totalDistance[dim*nVars - 1] correctly sums the first dim lags of all variables.
-	if nVars > 1:
-		perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
-		distances = distances[perm]
+	del trainTensor, testTensor
 
-	# cumulative sum across embeddings
-	totalDistance = torch.cumsum(distances, dim = 0)
+	if joint:
+		# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
+		# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
+		# so that totalDistance[dim*nVars - 1] correctly sums the first dim lags of all variables.
+		if nVars > 1:
+			perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
+			distances = distances[perm]
 
-	indices = []
-	for dim in range(1, maxDims + 1):
-		# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
-		# so we index into the index where the culumative sum adds to the embedding dims
-		index = dim * nVars if not embedded else dim
-		indices.append(index - 1)
-	# select the indices that correspond to sums across all vars at each N dimensions
-	embeddingDistances = totalDistance[indices, :, :]
+		# cumulative sum across all embeddings
+		totalDistance = torch.cumsum(distances, dim = 0)
 
-	del distances, trainTensor, testTensor, totalDistance
+		indices = []
+		for dim in range(1, maxDims + 1):
+			# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
+			# so we index into the cumulative sum at the position that sums to the embedding dims
+			index = dim * nVars if not embedded else dim
+			indices.append(index - 1)
+		# select the indices that correspond to sums across all vars at each N dimensions
+		embeddingDistances = totalDistance[indices, :, :]
+		numBatch = maxDims
+
+	else:
+		# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
+		# Reshape to [nVars, maxDims, nTrain, nTest] so cumsum runs along the lag dimension
+		# independently for each variable. Index v*maxDims + E holds the cumulative distance
+		# for variable v over its first E+1 lags. Per-variable distances are thus concatenated
+		# along the first dimension of the stacked distance matrices.
+		totalDistance = torch.cumsum(distances.view(nVars, maxDims, nTrain, nTest), dim = 1)
+		embeddingDistances = totalDistance.view(nVars * maxDims, nTrain, nTest)
+		numBatch = nVars * maxDims
+
+	del distances, totalDistance
 
 	# Build exclusion mask once (same for all E since indices are shared)
 	exclusionMask = dummy._BuildExclusionMask()
 	hasMask = exclusionMask.any()
 	if hasMask:
-		maskTensor = torch.tensor(exclusionMask, device=device, dtype=torch.bool)
+		maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool)
 		embeddingDistances[:, maskTensor] = float('inf')
 
-	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device =device, dtype = dtype)
+	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device = device, dtype = dtype)
 
 	testIndices = dummy.testIndices + predictionHorizon
 	testIndices = testIndices[testIndices < len(dummy.targetVec)]
-	y_test = torch.tensor(Y[testIndices], device =device, dtype = dtype).T
+	y_test = torch.tensor(Y[testIndices], device = device, dtype = dtype).T
 
 	# batched over distances
 	neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
@@ -189,9 +219,9 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	weights = neighborDistances / minDistances.unsqueeze(1)
 	weights.neg_().exp_()
 
-	# because we are batch selecting knns, we use the max number of dimensions
-	# for the lower numbers of dimensions, we zero out the extra neighbors
-	dimIndices = torch.arange(maxDims, device = device).view(maxDims, 1, 1)
+	# Zero out extra neighbors: for embedding dimension E (0-indexed), keep E+2 neighbors.
+	# For non-joint, the [0, maxDims-1] pattern repeats once per variable.
+	dimIndices = torch.arange(maxDims, device = device).repeat(numBatch // maxDims).view(numBatch, 1, 1)
 	kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
 	weights.masked_fill_(kIndices > dimIndices + 1, 0)
 
@@ -208,7 +238,10 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()
 
-	return out.cpu().numpy()
+	scores = out.cpu().numpy()
+	if not joint:
+		scores = scores.reshape(nVars, maxDims)
+	return scores
 
 
 def FindOptimalPredictionHorizon(data: numpy.ndarray,

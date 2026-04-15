@@ -15,7 +15,7 @@ def main():
     target_index = df_.columns.get_loc('TentMap')
     df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data = data,
                                                                      columns = [col_index], target = target_index,
-                                                                     train = [1, 100], test = [201, 500], maxE = 10,
+                                                                     train = [1, 100], test = [201, 500], maxDims = 10,
                                                                      predictionHorizon = 1, step = -1, exclusionRadius = 0,
                                                                      embedded = False, validLib = [], noTime = False,
                                                                      ignoreNan = True)

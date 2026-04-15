@@ -785,7 +785,7 @@ class test_EDM( unittest.TestCase ):
             col_index = df_.columns.get_loc('V1')
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
-                                                                             maxDims = numpy.arange(1, 13, dtype = int),
+                                                                             maxDims = 12,
                                                                              train = [1, 500], test=[501, 800],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
@@ -806,7 +806,7 @@ class test_EDM( unittest.TestCase ):
             col_index = df_.columns.get_loc('V1')
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
-                                                                             maxDims = numpy.arange(1, 13, dtype = int),
+                                                                             maxDims = 12,
                                                                              train = [1, 500], test=[501, 800],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
@@ -816,7 +816,33 @@ class test_EDM( unittest.TestCase ):
 
         self.assertTrue(numpy.allclose(df, dfv, atol = 5e-2))
 
-    
+    def test_embedDimensions_batched_separate( self ):
+        if self.verbose : print ( "--- EmbedDimension X vars separate predict Y ---" )
+        df_ = sampleDataFrames['Lorenz5D']
+        data = df_.values
+        col_index = df_.columns.get_loc('V1')
+        target_index = df_.columns.get_loc('V1')
+
+        # Duplicate V1 into a 2-column predictor matrix; each column is identical,
+        # so with joint=False each row of the output should match the single-variable result.
+        X = numpy.column_stack([data[:, col_index], data[:, col_index]])
+        Y = data[:, target_index]
+
+        scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
+            X, Y,
+            maxDims = 12,
+            train = [1, 500], test = [501, 800],
+            predictionHorizon = 15, step = -5, exclusionRadius = 20,
+            embedded = False, validLib = [],
+            ignoreNan = True, batched = True, joint = False)
+
+        dfv = self.ValidationFiles["EmbedDim_valid.csv"].values[:, 1]
+
+        self.assertEqual(scores.shape, (2, 12))
+        self.assertTrue(numpy.allclose(scores[0], dfv, atol = 5e-2))
+        self.assertTrue(numpy.allclose(scores[1], dfv, atol = 5e-2))
+
+
     # PredictInterval
     
     def test_PredictInterval( self ):
