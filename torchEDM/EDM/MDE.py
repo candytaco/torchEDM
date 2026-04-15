@@ -420,6 +420,8 @@ class MDE:
 		self._selectionTestIndices = testIndices
 		del current_best_distance_matrix
 
+		# TODO: the thing where we go through all possible delays of all selected variables and pick from those
+
 		if torch.cuda.is_available():
 			torch.cuda.empty_cache()
 
