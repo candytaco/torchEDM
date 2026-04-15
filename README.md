@@ -12,6 +12,11 @@ For example usage see:
 - `FitterExamples` for OOP objects
 - `FunctionalExamples` for the functional API
 
+Argument name differences:
+- `Tp` -> prediction horizon
+- `tau` -> step
+- `E` -> embed dimensions
+
 #### 1. Object-Oriented API (sklearn-like)
 The OOP API provides sklearn-like wrappers with explicit train/test separation.
 
