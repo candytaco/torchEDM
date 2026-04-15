@@ -84,6 +84,7 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 	Evaluate each E with its own proper train/test indices.
 	Each E creates a Simplex and runs GPU-accelerated FindNeighbors/Project.
 	"""
+	print('Iterative search will be deprecated soon and this is not updated')
 	if Y is not None:
 		combinedData = numpy.column_stack([X, Y])
 	else:
@@ -125,11 +126,20 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	When joint is False, each variable in X is used separately to predict Y.
 	Per-variable distances are concatenated along the first dimension of the
 	stacked distance matrices, and scores are returned as a [nVars x maxDims] array.
+
+	When Y is None, each column of X is used to predict itself (self-prediction),
+	returning a [nVars x maxDims] array of scores.
 	"""
-	combinedData = numpy.column_stack([X, Y.reshape(-1, 1)])
-	columns = list(range(X.shape[1]))
 	nVars = X.shape[1]
-	target = X.shape[1]
+	selfPrediction = Y is None
+
+	if selfPrediction:
+		combinedData = X
+		target = 0  # dummy target; actual targets come from X columns below
+	else:
+		combinedData = numpy.column_stack([X, Y])
+		target = nVars
+	columns = list(range(nVars))
 
 	# Create a Simplex at maxE to get proper indices, embedding, and target
 	dummy = Simplex(data = combinedData, columns = columns, target = target,
@@ -162,7 +172,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 	del trainTensor, testTensor
 
-	if joint:
+	if joint and not selfPrediction:
 		# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
 		# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
 		# so that totalDistance[dim*nVars - 1] correctly sums the first dim lags of all variables.
@@ -184,6 +194,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		numBatch = maxDims
 
 	else:
+		# For non-joint and self-prediction, compute cumulative sums per variable.
 		# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
 		# Reshape to [nVars, maxDims, nTrain, nTest] so cumsum runs along the lag dimension
 		# independently for each variable. Index v*maxDims + E holds the cumulative distance
@@ -202,12 +213,6 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool)
 		embeddingDistances[:, maskTensor] = float('inf')
 
-	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device = device, dtype = dtype)
-
-	testIndices = dummy.testIndices + predictionHorizon
-	testIndices = testIndices[testIndices < len(dummy.targetVec)]
-	y_test = torch.tensor(Y[testIndices], device = device, dtype = dtype).T
-
 	# batched over distances
 	neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
 
@@ -220,27 +225,71 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	weights.neg_().exp_()
 
 	# Zero out extra neighbors: for embedding dimension E (0-indexed), keep E+2 neighbors.
-	# For non-joint, the [0, maxDims-1] pattern repeats once per variable.
+	# For non-joint and self-prediction, the [0..maxDims-1] pattern repeats once per variable.
 	dimIndices = torch.arange(maxDims, device = device).repeat(numBatch // maxDims).view(numBatch, 1, 1)
 	kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
 	weights.masked_fill_(kIndices > dimIndices + 1, 0)
 
 	weightSum = torch.sum(weights, dim = 1)
-	select = y_train[neighborIndices]
-	predictions = torch.sum(weights * select, dim = 1) / weightSum
 
-	y_pred = predictions[:len(testIndices)]
-	out = torch.zeros(y_pred.shape[0], device = device)
-	RowwiseCorrelation(y_test, y_pred, out)
+	if selfPrediction:
+		# Each variable predicts itself: for row i = v*maxDims + E_0, look up y_train for variable v.
+		# y_train[v] = X[trainIndices + predictionHorizon, v], shape [nVars, nTrain]
+		y_train = torch.tensor(
+			X[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype
+		).T
+
+		# Reshape neighborIndices to [nVars, maxDims, maxDims+1, nTest] so variable axis is explicit,
+		# then index into y_train per-variable using the variable index as the first dimension.
+		neighborIndices4d = neighborIndices.view(nVars, maxDims, maxDims + 1, nTest)
+		variableIndex = torch.arange(nVars, device = device).view(nVars, 1, 1, 1).expand_as(neighborIndices4d)
+		select = y_train[variableIndex, neighborIndices4d].view(nVars * maxDims, maxDims + 1, nTest)
+
+		predictions = torch.sum(weights * select, dim = 1) / weightSum
+
+		testIndices = dummy.testIndices + predictionHorizon
+		testIndices = testIndices[testIndices < X.shape[0]]
+		nTestValid = len(testIndices)
+
+		# y_test[v] = X[testIndices, v], shape [nVars, nTestValid]
+		# Expand to [nVars * maxDims, nTestValid] by repeating each variable's test values maxDims times.
+		y_test = torch.tensor(X[testIndices, :], device = device, dtype = dtype).T
+		y_test_expanded = y_test.unsqueeze(1).expand(nVars, maxDims, nTestValid).reshape(nVars * maxDims, nTestValid)
+
+		y_pred = predictions[:, :nTestValid]
+
+		# Vectorized per-row Pearson correlation between each (variable, dim) pair and its self-target.
+		y_test_centered = y_test_expanded - y_test_expanded.mean(dim = 1, keepdim = True)
+		y_pred_centered = y_pred - y_pred.mean(dim = 1, keepdim = True)
+		numerator = (y_test_centered * y_pred_centered).sum(dim = 1)
+		denominator = y_test_centered.pow(2).sum(dim = 1).sqrt() * y_pred_centered.pow(2).sum(dim = 1).sqrt()
+		out = numerator / denominator
+
+		scores = out.cpu().numpy().reshape(nVars, maxDims)
+
+	else:
+		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device = device, dtype = dtype)
+
+		testIndices = dummy.testIndices + predictionHorizon
+		testIndices = testIndices[testIndices < len(dummy.targetVec)]
+		y_test = torch.tensor(Y[testIndices], device = device, dtype = dtype).T
+
+		select = y_train[neighborIndices]
+		predictions = torch.sum(weights * select, dim = 1) / weightSum
+
+		y_pred = predictions[:len(testIndices)]
+		out = torch.zeros(y_pred.shape[0], device = device)
+		RowwiseCorrelation(y_test, y_pred, out)
+
+		scores = out.cpu().numpy()
+		if not joint:
+			scores = scores.reshape(nVars, maxDims)
 
 	if hasMask:
 		del maskTensor
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()
 
-	scores = out.cpu().numpy()
-	if not joint:
-		scores = scores.reshape(nVars, maxDims)
 	return scores
 
 

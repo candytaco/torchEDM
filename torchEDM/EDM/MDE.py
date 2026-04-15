@@ -170,18 +170,18 @@ class MDE:
 		nTargets = len(self.targets)
 
 		if self.embedDimensions == 0:
-			best_e = 0
-			for t in self.targets:
-				dims, corrs = FindOptimalEmbeddingDimensionality(
-					self.data, [t], t, self.maxD,
-					train = self.train, test = self.test,
-					predictionHorizon = self.predictionHorizon,
-					noTime = self.noTime
-					)
-				e = dims[numpy.argmax(corrs)]
-				if e > best_e:
-					best_e = e
-			self.embedDimensions = best_e
+			scores = FindOptimalEmbeddingDimensionality(
+				self.data[:, self.targets],
+				maxDims = self.CCMMaxE,
+				train = self.train, test = self.test,
+				predictionHorizon = self.predictionHorizon,
+				step = self.step,
+				exclusionRadius = self.exclusionRadius,
+				ignoreNan = self.ignoreNan,
+				batched = True
+				)
+			# scores shape: [nTargets, maxDims]; best E per target is argmax + 1
+			self.embedDimensions = int(numpy.argmax(scores, axis = 1).max()) + 1
 
 		self._select_variables()
 
@@ -626,7 +626,7 @@ class MDE:
 			best_e = self.embedDimensions
 		elif cache_key not in self.optimalEmbeddingDimensions:
 			corrs = FindOptimalEmbeddingDimensionality(self.data[: candidate], self.data[: target],
-				numpy.arange(1, self.CCMMaxE + 1, dtype = int),
+				self.CCMMaxE + 1,
 				train = self.train, test = self.test,
 				predictionHorizon = self.predictionHorizon)
 
