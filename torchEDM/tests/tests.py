@@ -867,6 +867,31 @@ class test_EDM( unittest.TestCase ):
         self.assertEqual(scores.shape, (1, 12))
         self.assertTrue(numpy.allclose(scores[0], dfv, atol = 5e-2))
 
+    def test_embedDimensions_multiY( self ):
+        if self.verbose : print ( "--- EmbedDimension multi-Y ---" )
+        df_ = sampleDataFrames['Lorenz5D']
+        data = df_.values
+        col_index = df_.columns.get_loc('V1')
+
+        # Use V1 as X and pass two identical copies of V1 as Y. Both rows of the
+        # output should match the single-Y result since the targets are identical.
+        X = data[:, col_index:col_index + 1]
+        Y = numpy.column_stack([data[:, col_index], data[:, col_index]])
+
+        scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
+            X, Y,
+            maxDims = 12,
+            train = [1, 500], test = [501, 800],
+            predictionHorizon = 15, step = -5, exclusionRadius = 20,
+            embedded = False, validLib = [],
+            ignoreNan = True, batched = True)
+
+        dfv = self.ValidationFiles["EmbedDim_valid.csv"].values[:, 1]
+
+        self.assertEqual(scores.shape, (2, 12))
+        self.assertTrue(numpy.allclose(scores[0], dfv, atol = 5e-2))
+        self.assertTrue(numpy.allclose(scores[1], dfv, atol = 5e-2))
+
 
     # PredictInterval
     

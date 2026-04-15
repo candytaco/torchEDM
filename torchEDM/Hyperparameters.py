@@ -29,8 +29,8 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	"""
 	Estimate optimal embedding dimension for simplex. When Y is not provided, each X is used to predict itself and find
 	the optimal number of dimensions for it self. When Y is provided and joint is True, all Xs are used to jointly
-	predict Y. When joint is False, each X is used to separately predict Y and we have a deparate dimensionality for
-	each X when paird to Y.
+	predict Y. When joint is False, each X is used to separately predict Y and we have a separate dimensionality for
+	each X when paired to Y.
 
 	When batched = False, each train and test indices are computed per embedding dimensionality. When batched = True,
 	the indices are computed from the maximum, which is the most restrictive, which enables
@@ -71,7 +71,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 			predictionHorizon, step, exclusionRadius, embedded,
 			validLib, ignoreNan, scoring_function, joint)
 
-	return scores
+	return scores.squeeze()
 
 
 def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
@@ -268,22 +268,32 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		scores = out.cpu().numpy().reshape(nVars, maxDims)
 
 	else:
-		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon].squeeze(), device = device, dtype = dtype)
+		nTargets = Y.shape[1]
+		# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
+		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
 
 		testIndices = dummy.testIndices + predictionHorizon
 		testIndices = testIndices[testIndices < len(dummy.targetVec)]
-		y_test = torch.tensor(Y[testIndices], device = device, dtype = dtype).T
+		nTestValid = len(testIndices)
+		# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
+		y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
 
-		select = y_train[neighborIndices]
-		predictions = torch.sum(weights * select, dim = 1) / weightSum
+		# y_train[:, neighborIndices] gathers training target values for every
+		# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
+		# so the result is [nTargets, numBatch, maxDims+1, nTest].
+		select = y_train[:, neighborIndices]
+		predictions = (weights.unsqueeze(0) * select).sum(dim = 2) / weightSum.unsqueeze(0)
+		# predictions: [nTargets, numBatch, nTest]
 
-		y_pred = predictions[:len(testIndices)]
-		out = torch.zeros(y_pred.shape[0], device = device)
-		RowwiseCorrelation(y_test, y_pred, out)
+		y_pred = predictions[:, :, :nTestValid]  # [nTargets, numBatch, nTestValid]
 
-		scores = out.cpu().numpy()
+		out = torch.zeros(nTargets, numBatch, device = device)
+		for targetIndex in range(nTargets):
+			RowwiseCorrelation(y_test_all[targetIndex], y_pred[targetIndex], out[targetIndex])
+
+		scores = out.cpu().numpy()  # [nTargets, numBatch]
 		if not joint:
-			scores = scores.reshape(nVars, maxDims)
+			scores = scores.reshape(nTargets, nVars, maxDims)
 
 	if hasMask:
 		del maskTensor
