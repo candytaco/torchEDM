@@ -2,6 +2,6 @@ build
 dist
 etc
 __pycache__
-src/pyEDM.egg-info
-src/pyEDM/__pycache__
-src/pyEDM/tests/__pycache__
+torchEDM/__pycache__
+torchEDM/tests/__pycache__
+.idea
