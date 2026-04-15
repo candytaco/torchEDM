@@ -71,7 +71,12 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 			predictionHorizon, step, exclusionRadius, embedded,
 			validLib, ignoreNan, scoring_function, joint)
 
-	return scores.squeeze()
+	# Squeeze the target axis only for single-target non-self-prediction calls
+	# so the original 1D return shape is preserved. Self-prediction returns
+	# [nVars, maxDims] regardless of nVars, so no squeezing is applied there.
+	if Y is not None and Y.shape[1] == 1:
+		return scores.squeeze(0)
+	return scores
 
 
 def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
@@ -225,7 +230,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	weights.neg_().exp_()
 
 	# Zero out extra neighbors: for embedding dimension E (0-indexed), keep E+2 neighbors.
-	# For non-joint and self-prediction, the [0..maxDims-1] pattern repeats once per variable.
+	# For non-joint and self-prediction, the [0, maxDims-1] pattern repeats once per variable.
 	dimIndices = torch.arange(maxDims, device = device).repeat(numBatch // maxDims).view(numBatch, 1, 1)
 	kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
 	weights.masked_fill_(kIndices > dimIndices + 1, 0)
@@ -235,9 +240,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	if selfPrediction:
 		# Each variable predicts itself: for row i = v*maxDims + E_0, look up y_train for variable v.
 		# y_train[v] = X[trainIndices + predictionHorizon, v], shape [nVars, nTrain]
-		y_train = torch.tensor(
-			X[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype
-		).T
+		y_train = torch.tensor(X[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
 
 		# Reshape neighborIndices to [nVars, maxDims, maxDims+1, nTest] so variable axis is explicit,
 		# then index into y_train per-variable using the variable index as the first dimension.
