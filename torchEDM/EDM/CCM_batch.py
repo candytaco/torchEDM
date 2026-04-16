@@ -47,10 +47,10 @@ class BatchedCCM:
 		:param Y: 					1D or 2D numpy array of target variable (N_timepoints,) or (N_timepoints, 1)
 		:param trainSizes: 			Library sizes to evaluate [start, stop, increment]
 		:param sample: 				Number of random samples at each library size
-		:param forwardEmbedDimensions: 	Embedding dimension (E)
-		:param predictionHorizon: 	Prediction time horizon (Tp)
+		:param forwardEmbedDimensions: 	Embedding dimension
+		:param predictionHorizon: 	Prediction time horizon
 		:param knn: 				Number of nearest neighbors
-		:param step: 				Time delay step size (tau)
+		:param step: 				Time delay step size
 		:param exclusionRadius: 	Temporal exclusion radius for neighbors
 		:param seed: 				Random seed for reproducible sampling
 		:param embedded: 			Whether data is already embedded
@@ -75,7 +75,7 @@ class BatchedCCM:
 		self.forwardEmbedDimensions = forwardEmbedDimensions
 		self.reverseEmbedDimensions = reverseEmbedDimensions if reverseEmbedDimensions is not None else forwardEmbedDimensions
 		self.maxForwardDims = maxForwardDimensions
-		self.maxReverseDims = maxReverseDimensions if maxReverseDimensions is not None else maxReverseDimensions
+		self.maxReverseDims = maxReverseDimensions if maxReverseDimensions is not None else maxForwardDimensions
 		self.predictionHorizon = predictionHorizon
 		self.knn = knn
 		self.knnUserSpecified = knn > 0
@@ -295,7 +295,7 @@ class BatchedCCM:
 
 					for t in range(numTargets):
 						subsampledDistances = fullDistances[:batchNumSources, t, tensorIndices, :]
-						distances, neighbors = torch.topk(subsampledDistances, max_knn, dim = 1,
+						theseDistances, theseNeighbors = torch.topk(subsampledDistances, max_knn, dim = 1,
 																	   largest = False)
 						# Mask out neighbors beyond dims[s,t]+1 for each source->target in the batch.
 						# Masked distances become inf so their weights become zero.
@@ -305,10 +305,10 @@ class BatchedCCM:
 								 for i in range(batchNumSources)],
 								dtype = torch.long, device = self.device
 							).view(batchNumSources, 1, 1)
-							distances.masked_fill_(kIndices[:batchNumSources] >= knnPerSource, float('inf'))
+							theseDistances.masked_fill_(kIndices[:batchNumSources] >= knnPerSource, float('inf'))
 
-						distances[:batchNumSources] = distances
-						neighbors[:batchNumSources] = tensorIndices[neighbors]
+						distances[:batchNumSources] = theseDistances
+						neighbors[:batchNumSources] = tensorIndices[theseNeighbors]
 						FloorArray(distances[:batchNumSources], 1e-6)
 
 						minDistances[:batchNumSources] = MinAxis1(distances[:batchNumSources])
