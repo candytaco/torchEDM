@@ -110,7 +110,7 @@ class BatchedCCM:
 		else:
 			numTrainSamples = 0
 			for i in range(0, len(self.train), 2):
-				numTrainSamples += (self.train[i * 2 + 1] - self.train[i* 2])
+				numTrainSamples += (self.train[i + 1] - self.train[i])
 			self.trainSizes = [int(p * numTrainSamples) for p in [0.1, 0.25, 0.5, 0.75, 0.9]]
 
 		if testIndices is not None:
