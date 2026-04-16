@@ -262,14 +262,17 @@ class BatchedCCMResult:
 	:param reverse_performance: Reverse direction correlations. Shape (n_lib_sizes, 1+M) or None:
 		Column 0: Library size
 		Columns 1-M: Mean correlation for each predictor variable
-	:param embedDimensions: Embedding dimension used
 	:param predictionHorizon: Prediction horizon used
+	:param forward_embed_dimensions: Embedding dimensions used for the forward direction.
+		Shape [nSources] or [nSources, nTargets] if auto-selected, otherwise the scalar input value.
+	:param reverse_embed_dimensions: Embedding dimensions used for the reverse direction, or None.
 	"""
 	forward_performance: np.ndarray
 	reverse_performance: Optional[np.ndarray]
-	embedDimensions: int
 	predictionHorizon: int
 	library_sizes: Union[np.ndarray, List]
+	forward_embed_dimensions: Optional[Union[int, np.ndarray]] = None
+	reverse_embed_dimensions: Optional[Union[int, np.ndarray]] = None
 
 	def GetVariableCorrelations(self, variableIndex: int) -> Tuple[np.ndarray, Optional[np.ndarray]]:
 		"""
@@ -281,6 +284,38 @@ class BatchedCCMResult:
 		forwardCorr = self.forward_performance[:, 1 + variableIndex]
 		reverseCorr = self.reverse_performance[:, 1 + variableIndex] if self.reverse_performance is not None else None
 		return forwardCorr, reverseCorr
+
+
+@dataclass(frozen=True)
+class CCMCVResult:
+	"""
+	Results from cross-validated CCM.
+
+	:param fold_results: BatchedCCMResult for each cross-validation fold
+	:param fold_forward_correlations: Per-fold forward correlation at the fold's max library size.
+		Shape [nFolds, nSources] (single target) or [nFolds, nSources, nTargets]
+	:param fold_reverse_correlations: Per-fold reverse correlation at the fold's max library size, or None
+	:param mean_forward_correlation: Mean forward correlation across folds.
+		Shape [nSources] or [nSources, nTargets]
+	:param std_forward_correlation: Standard deviation of forward correlation across folds.
+		Same shape as mean_forward_correlation
+	:param mean_reverse_correlation: Mean reverse correlation across folds, or None
+	:param std_reverse_correlation: Standard deviation of reverse correlation across folds, or None
+	:param fold_forward_embed_dimensions: Per-fold forward embedding dimensions. Each entry is a scalar
+		int or array of shape [nSources] or [nSources, nTargets] depending on auto-selection.
+	:param fold_reverse_embed_dimensions: Per-fold reverse embedding dimensions, or None
+	:param predictionHorizon: Prediction horizon used
+	"""
+	fold_results: List['BatchedCCMResult']
+	fold_forward_correlations: Optional[np.ndarray]
+	fold_reverse_correlations: Optional[np.ndarray]
+	mean_forward_correlation: Optional[np.ndarray]
+	std_forward_correlation: Optional[np.ndarray]
+	mean_reverse_correlation: Optional[np.ndarray]
+	std_reverse_correlation: Optional[np.ndarray]
+	predictionHorizon: int
+	fold_forward_embed_dimensions: Optional[List] = None
+	fold_reverse_embed_dimensions: Optional[List] = None
 
 
 class ResultsIO:
@@ -568,13 +603,17 @@ class ResultsIO:
 
 	@staticmethod
 	def _BatchedCCMArrays(result: BatchedCCMResult) -> dict:
-		arrays = dict(
-			forward_performance = result.forward_performance,
-			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon),
-			library_sizes = np.array(result.library_sizes))
+		arrays = {
+			'forward_performance': result.forward_performance,
+			'predictionHorizon': np.array(result.predictionHorizon),
+			'library_sizes': np.array(result.library_sizes)
+		}
 		if result.reverse_performance is not None:
 			arrays['reverse_performance'] = result.reverse_performance
+		if result.forward_embed_dimensions is not None:
+			arrays['forward_embed_dimensions'] = np.array(result.forward_embed_dimensions)
+		if result.reverse_embed_dimensions is not None:
+			arrays['reverse_embed_dimensions'] = np.array(result.reverse_embed_dimensions)
 		return arrays
 
 	# --- internal helpers: result from loaded data ---
@@ -693,6 +732,8 @@ class ResultsIO:
 		return BatchedCCMResult(
 			forward_performance = data['forward_performance'],
 			reverse_performance = data['reverse_performance'] if 'reverse_performance' in data else None,
-			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			library_sizes = data['library_sizes'])
+			library_sizes = data['library_sizes'],
+			forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None,
+			reverse_embed_dimensions = data['reverse_embed_dimensions'] if 'reverse_embed_dimensions' in data else None
+		)

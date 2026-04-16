@@ -31,7 +31,7 @@ class CCMFitter(EDMFitter):
 		"""
 		Init.
 
-		:param TrainSizes: 			train sizes to explore
+		:param TrainSizes: 			train sizes to explore, when none, it defaults to the 10th, 25th, 50th, 75th, and 90th percentiles of the data size
 		:param numRepeats: 			Number of repeats at each training size
 		:param EmbedDimensions: 	Embedding dimension (E)
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
@@ -66,7 +66,7 @@ class CCMFitter(EDMFitter):
 
 		self.CCM = None
 
-	def Fit(self, XTrain: numpy.ndarray, YTrain: numpy.ndarray, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
+	def Fit(self, XTrain: numpy.ndarray, YTrain: Optional[numpy.ndarray] = None, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
 			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
 			TestTime: Optional[numpy.ndarray] = None):
 		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
@@ -85,7 +85,7 @@ class CCMFitter(EDMFitter):
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,
 			directions = self.directions,
-			trainBlockIndices = list(TrainIndices),
+			trainIndices = list(TrainIndices),
 			device = self.device,
 			batchSize = self.batchSize,
 			useHalfPrecision = self.useHalfPrecision,

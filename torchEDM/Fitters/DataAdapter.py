@@ -182,12 +182,14 @@ class DataAdapterSingleRun(DataAdapter):
 		super().__init__(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, trainTime, testTime)
 
 	def StackData(self):
-		if self.YTrain.ndim == 1:
-			self.YTrain = self.YTrain[:, None]
-		if self.YTest is not None and self.YTest.ndim == 1:
-			self.YTest = self.YTest[:, None]
-
-		train = numpy.hstack([self.XTrain, self.YTrain])
+		if self.YTrain is not None:
+			if self.YTrain.ndim == 1:
+				self.YTrain = self.YTrain[:, None]
+			if self.YTest is not None and self.YTest.ndim == 1:
+				self.YTest = self.YTest[:, None]
+			train = numpy.hstack([self.XTrain, self.YTrain])
+		else:
+			train = self.XTrain
 		self.trainOffset = self.TrainStart
 		self.testOffset = self.TestStart + train.shape[0]
 
@@ -230,6 +232,8 @@ class DataAdapterSingleRun(DataAdapter):
 
 	@property
 	def YIndex(self) -> List[int]:
+		if self.YTrain is None:
+			return []
 		total = self.fullData.shape[1]
 		nY = self.YTrain.shape[1]
 		return list(range(total - nY, total))
@@ -258,10 +262,14 @@ class DataAdapterMultipleRuns(DataAdapter):
 			self.TrainEnd = [self.TrainEnd] * self.numRuns
 
 		trainRuns = []
-		for X, Y in zip(self.XTrain, self.YTrain):
-			if Y.ndim == 1:
-				Y = Y[:, None]
-			trainRuns.append(numpy.hstack([X, Y]))
+		if self.YTrain is not None:
+			for X, Y in zip(self.XTrain, self.YTrain):
+				if Y.ndim == 1:
+					Y = Y[:, None]
+				trainRuns.append(numpy.hstack([X, Y]))
+		else:
+			for X in self.XTrain:
+				trainRuns.append(X)
 
 		# calculate indices for each run in the stacked data
 		n = 0
@@ -312,6 +320,8 @@ class DataAdapterMultipleRuns(DataAdapter):
 
 	@property
 	def YIndex(self) -> List[int]:
+		if self.YTrain is None:
+			return []
 		total = self.fullData.shape[1]
 		first_Y = self.YTrain[0]
 		nY = first_Y.shape[1] if first_Y.ndim == 2 else 1

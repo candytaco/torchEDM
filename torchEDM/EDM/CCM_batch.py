@@ -10,12 +10,12 @@ from torchEDM.EDM._MDE import ElementwisePairwiseDistance, FloorArray, MinAxis1,
 class BatchedCCM:
 	"""
 	BatchedCCM class: Vectorized CCM where M predictor variables predict the same target simultaneously.
-	Only supports pairwise distance mode (no KDTree).
+	If Y is none, all X are used to cross-map each other
 	"""
 
 	def __init__(self,
 				 X,
-				 Y,
+				 Y = None,
 				 trainSizes = None,
 				 sample = 0,
 				 forwardEmbedDimensions = 0,
@@ -32,8 +32,8 @@ class BatchedCCM:
 				 includeData = False,
 				 ignoreNan = True,
 				 directions: str = 'both',
-				 trainBlockIndices = None,
-				 testBlockIndices = None,
+				 trainIndices = None,
+				 testIndices = None,
 				 device = 'cuda',
 				 batchSize = 10000,
 				 useHalfPrecision = False,
@@ -58,8 +58,8 @@ class BatchedCCM:
 		:param includeData: 		Whether to include detailed prediction statistics
 		:param ignoreNan: 			Remove NaN values from embedding
 		:param directions: 			Which directions to compute: forward|reverse|both
-		:param trainBlockIndices: 	Train block index range [start, end]. If None, uses all data.
-		:param testBlockIndices: 	Test block index range [start, end]. If None, uses all data.
+		:param trainIndices: 	Train block index range [start, end]. If None, uses all data.
+		:param testIndices: 	Test block index range [start, end]. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
 		:param useHalfPrecision: 	Use float16 instead of float32 to save VRAM
@@ -69,9 +69,12 @@ class BatchedCCM:
 
 		self.name = 'BatchedCCM'
 		self.X = X[:, None] if X.ndim == 1 else X
-		self.Y = Y[:, None] if Y.ndim == 1 else Y
+		if Y is not None:
+			self.Y = Y[:, None] if Y.ndim == 1 else Y
+		else:
+			self.Y = None
 		self.numSources = self.X.shape[1]
-		self.numTargets = self.Y.shape[1]
+		self.numTargets = self.X.shape[1] if self.Y is None else self.Y.shape[1]
 		self.forwardEmbedDimensions = forwardEmbedDimensions
 		self.reverseEmbedDimensions = reverseEmbedDimensions if reverseEmbedDimensions is not None else forwardEmbedDimensions
 		self.maxForwardDims = maxForwardDimensions
@@ -84,12 +87,11 @@ class BatchedCCM:
 		self.embedded = embedded
 		self.validLib = validLib if validLib is not None else []
 		self.ignoreNan = ignoreNan
-		self.directions = directions
+		self.directions = directions if Y is not None else 'forward' # note that if only X, the forward dir icnlude the reverse maps
 		self.batchSize = batchSize
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 
-		self.trainSizes = trainSizes if trainSizes is not None else []
 		self.sample = sample
 		self.seed = seed
 		self.includeData = includeData
@@ -98,18 +100,28 @@ class BatchedCCM:
 		self.dtype = torch.float16 if useHalfPrecision else torch.float32
 		self.showProgress = showProgress
 
-		if trainBlockIndices is not None:
-			self.train = trainBlockIndices
+		if trainIndices is not None:
+			self.train = trainIndices
 		else:
 			self.train = [1, self.X.shape[0]]
 
-		if testBlockIndices is not None:
-			self.test = testBlockIndices
+		if trainSizes is not None:
+			self.trainSizes = trainSizes
+		else:
+			numTrainSamples = 0
+			for i in range(0, len(self.train), 2):
+				numTrainSamples += (self.train[i * 2 + 1] - self.train[i* 2])
+			self.trainSizes = [int(p * numTrainSamples) for p in [0.1, 0.25, 0.5, 0.75, 0.9]]
+
+		if testIndices is not None:
+			self.test = testIndices
 		else:
 			self.test = [1, self.X.shape[0]]
 
 		self.forward_performance_ = None
 		self.reverse_performance_ = None
+		self.selectedForwardEmbedDimensions = None
+		self.selectedReverseEmbedDimensions = None
 		self.PredictStatsFwd = None
 		self.PredictStatsRev = None
 
@@ -123,9 +135,10 @@ class BatchedCCM:
 		return BatchedCCMResult(
 			forward_performance = self.forward_performance_,
 			reverse_performance = self.reverse_performance_,
-			embedDimensions = self.forwardEmbedDimensions,
 			predictionHorizon = self.predictionHorizon,
-			library_sizes = self.trainSizes
+			library_sizes = self.trainSizes,
+			forward_embed_dimensions = self.selectedForwardEmbedDimensions,
+			reverse_embed_dimensions = self.selectedReverseEmbedDimensions
 		)
 
 	def Project(self):
@@ -133,10 +146,10 @@ class BatchedCCM:
 		Execute batched cross-mapping for all predictor variables.
 		"""
 		if self.directions in ['forward', 'both']:
-			self.forward_performance_ = self.CrossMap(self.X, self.Y, self.forwardEmbedDimensions, self.maxForwardDims)
+			self.forward_performance_, self.selectedForwardEmbedDimensions = self.CrossMap(self.X, self.Y, self.forwardEmbedDimensions, self.maxForwardDims)
 
 		if self.directions in ['reverse', 'both']:
-			self.reverse_performance_ = self.CrossMap(self.Y, self.X, self.reverseEmbedDimensions, self.maxReverseDims)
+			self.reverse_performance_, self.selectedReverseEmbedDimensions = self.CrossMap(self.Y, self.X, self.reverseEmbedDimensions, self.maxReverseDims)
 
 	def CrossMap(self, X, Y, embedDims, maxDims):
 		from .Embed import Embed
@@ -213,7 +226,7 @@ class BatchedCCM:
 			self.CrossMapVariableBatched(embeddings, N_libraryIndices,
 										 target, numSources, numTargets, performance, RNG, embedDims)
 
-		return numpy.mean(performance, axis = 1).squeeze()
+		return numpy.mean(performance, axis = 1).squeeze(), embedDims
 
 	def _get_embedding_dimension(self, embedDims, sourceIndex, targetIndex):
 		"""Return the optimal embedding dimension for source sourceIndex predicting target targetIndex."""
@@ -320,8 +333,7 @@ class BatchedCCM:
 
 						targetT = target[:, t]
 						targetCentered = targetT - targetT.mean()
-						predCentered = predictions[:batchNumSources] - predictions[:batchNumSources].mean(dim = 1,
-																										  keepdim = True)
+						predCentered = predictions[:batchNumSources] - predictions[:batchNumSources].mean(dim = 1, keepdim = True)
 						targetStd = torch.sqrt((targetCentered ** 2).sum())
 						predStd = torch.sqrt((predCentered ** 2).sum(dim = 1))
 						perfs_[:batchNumSources] = (targetCentered * predCentered).sum(dim = 1) / (targetStd * predStd)
