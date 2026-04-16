@@ -23,7 +23,7 @@ class CCMFitter(EDMFitter):
 				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
-				 useHalfPrecision: bool = False,
+				 HalfPrecision: bool = False,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None):
@@ -40,7 +40,7 @@ class CCMFitter(EDMFitter):
 		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
-		:param useHalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param HalfPrecision: 	Use float16 instead of float32 to save VRAM
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
 		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
@@ -58,7 +58,7 @@ class CCMFitter(EDMFitter):
 		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
-		self.useHalfPrecision = useHalfPrecision
+		self.useHalfPrecision = HalfPrecision
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 		self.seed = seed

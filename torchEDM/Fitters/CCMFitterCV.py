@@ -30,7 +30,7 @@ class CCMFitterCV(EDMFitter):
 				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
-				 useHalfPrecision: bool = False,
+				 HalfPrecision: bool = False,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None,
@@ -50,7 +50,7 @@ class CCMFitterCV(EDMFitter):
 		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
-		:param useHalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param HalfPrecision: 	Use float16 instead of float32 to save VRAM
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples)
 		:param sampleBatchSize: 	Number of subsamples per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
@@ -69,7 +69,7 @@ class CCMFitterCV(EDMFitter):
 		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
-		self.useHalfPrecision = useHalfPrecision
+		self.useHalfPrecision = HalfPrecision
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 		self.seed = seed
@@ -133,27 +133,25 @@ class CCMFitterCV(EDMFitter):
 		progressBarIterator = ProgressBar(total = numSplits, desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
 
 		for foldTrainIndices, foldTestIndices in self.cvSplitter.Split():
-			ccm = BatchedCCM(
-				X = XArray,
-				Y = YArray,
-				trainSizes = self.TrainSizes,
-				sample = self.Sample,
-				forwardEmbedDimensions = self.EmbedDimensions,
-				predictionHorizon = self.PredictionHorizon,
-				knn = self.KNN,
-				step = self.Step,
-				exclusionRadius = self.ExclusionRadius,
-				seed = self.seed,
-				directions = self.directions,
-				trainIndices = foldTrainIndices,
-				testIndices = foldTestIndices,
-				device = self.device,
-				batchSize = self.batchSize,
-				useHalfPrecision = self.useHalfPrecision,
-				showProgress = False,
-				batchMode = self.batchMode,
-				sampleBatchSize = self.sampleBatchSize
-			)
+			ccm = BatchedCCM(X = XArray,
+							 Y = YArray,
+							 trainSizes = self.TrainSizes,
+							 sample = self.Sample,
+							 forwardEmbedDimensions = self.EmbedDimensions,
+							 predictionHorizon = self.PredictionHorizon,
+							 knn = self.KNN,
+							 step = self.Step,
+							 exclusionRadius = self.ExclusionRadius,
+							 seed = self.seed,
+							 directions = self.directions,
+							 trainIndices = foldTrainIndices,
+							 testIndices = foldTestIndices,
+							 device = self.device,
+							 batchSize = self.batchSize,
+							 useHalfPrecision = self.useHalfPrecision,
+							 showProgress = False,
+							 batchMode = self.batchMode,
+							 sampleBatchSize = self.sampleBatchSize)
 
 			foldResult = ccm.Run()
 			self.foldResults.append(foldResult)
