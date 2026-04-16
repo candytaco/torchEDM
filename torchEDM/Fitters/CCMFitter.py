@@ -13,7 +13,7 @@ class CCMFitter(EDMFitter):
 
 	def __init__(self,
 				 TrainSizes: Optional[List[int]] = None,
-				 numRepeats: int = 0,
+				 numRepeats: int = 10,
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
 				 KNN: int = 0,
@@ -26,8 +26,7 @@ class CCMFitter(EDMFitter):
 				 useHalfPrecision: bool = False,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
-				 seed: Optional[int] = None
-				 ):
+				 seed: Optional[int] = None):
 		"""
 		Init.
 

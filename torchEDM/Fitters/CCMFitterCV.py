@@ -21,7 +21,7 @@ class CCMFitterCV(EDMFitter):
 
 	def __init__(self,
 				 TrainSizes: Optional[List[int]] = None,
-				 numRepeats: int = 0,
+				 numRepeats: int = 10,
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
 				 KNN: int = 0,
