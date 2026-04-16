@@ -231,7 +231,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
 
 		# Per-batch effective knn: batch item i corresponds to embedding dim (i % maxDims),
-		# which uses (i % maxDims) + 2 neighbours.
+		# which uses E+2 neighbours (Simplex requires E+1 neighbours; E is 1-indexed so +2 here).
 		knn_per_batch = (torch.arange(numBatch, device = device) % maxDims + 2).view(numBatch, 1, 1)
 		# predictions: [nTargets, numBatch, nTest]
 		predictions = batched_simplex_predict(embeddingDistances, y_train, maxDims + 1, knn_per_batch)

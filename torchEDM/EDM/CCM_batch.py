@@ -395,10 +395,12 @@ class BatchedCCM:
 					# Flatten to [nBatch, libSizeActual, N] for batched_simplex_predict
 					sq_dist_flat = subsampledDistances.reshape(nBatch, libSizeActual, N_libraryIndices)
 
-					# Per-batch target: target_sub[s*numSamplesInThisBatch + j, :] = target[subsampleTorch[j, :], t]
+					# Per-batch target: each source reuses the same per-sample subsampled targets.
+					# target_sub.repeat(numSources, 1) tiles [numSamplesInThisBatch, libSizeActual]
+					# numSources times, matching sq_dist_flat's row order source_i*numSamplesInThisBatch + j.
 					targetT = target[:, t]                                   # [N]
 					target_sub = targetT[subsampleTorch]                     # [numSamplesInThisBatch, libSizeActual]
-					target_sub_flat = target_sub.unsqueeze(0).expand(numSources, -1, -1).reshape(nBatch, libSizeActual)
+					target_sub_flat = target_sub.repeat(numSources, 1)       # [nBatch, libSizeActual]
 
 					knn_per_batch = None
 					if not self.knnUserSpecified:
@@ -406,7 +408,8 @@ class BatchedCCM:
 							[self._get_embedding_dimension(embedDims, i, t) + 1 for i in range(numSources)],
 							dtype = torch.long, device = self.device
 						)  # [numSources]
-						knn_per_batch = knnPerSource.view(numSources, 1).expand(numSources, numSamplesInThisBatch).reshape(nBatch, 1, 1)
+						# repeat_interleave broadcasts each source's knn across its numSamplesInThisBatch rows
+						knn_per_batch = knnPerSource.repeat_interleave(numSamplesInThisBatch).view(nBatch, 1, 1)
 
 					predictions_flat = batched_simplex_predict(
 						sq_dist_flat, target_sub_flat, max_knn, knn_per_batch, target_per_batch = True)
