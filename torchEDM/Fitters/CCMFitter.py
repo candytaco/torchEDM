@@ -87,7 +87,7 @@ class CCMFitter(EDMFitter):
 			trainIndices = list(TrainIndices),
 			device = self.device,
 			batchSize = self.batchSize,
-			useHalfPrecision = self.useHalfPrecision,
+			HalfPrecision = self.useHalfPrecision,
 			showProgress = not self.hideProgress,
 			batchMode = self.batchMode,
 			sampleBatchSize = self.sampleBatchSize

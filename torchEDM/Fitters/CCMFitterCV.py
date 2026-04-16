@@ -148,7 +148,7 @@ class CCMFitterCV(EDMFitter):
 							 testIndices = foldTestIndices,
 							 device = self.device,
 							 batchSize = self.batchSize,
-							 useHalfPrecision = self.useHalfPrecision,
+							 HalfPrecision = self.useHalfPrecision,
 							 showProgress = False,
 							 batchMode = self.batchMode,
 							 sampleBatchSize = self.sampleBatchSize)

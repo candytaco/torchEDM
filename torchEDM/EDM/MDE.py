@@ -586,7 +586,7 @@ class MDE:
 			testBlockIndices = self.test,
 			device = self.device,
 			batchSize = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
-			useHalfPrecision = self.use_half_precision,
+			HalfPrecision = self.use_half_precision,
 			seed = self.CCMSeed
 			)
 
@@ -680,7 +680,7 @@ class MDE:
 			device = self.device,
 			batchSize = 1,
 			batchMode = 'samples',
-			useHalfPrecision = self.use_half_precision,
+			HalfPrecision = self.use_half_precision,
 			showProgress = False,
 			seed = self.CCMSeed
 			)

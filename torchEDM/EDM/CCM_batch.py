@@ -36,7 +36,7 @@ class BatchedCCM:
 				 testIndices = None,
 				 device = 'cuda',
 				 batchSize = 10000,
-				 useHalfPrecision = False,
+				 HalfPrecision = False,
 				 showProgress = True,
 				 batchMode = 'variable',
 				 sampleBatchSize = None):
@@ -62,7 +62,7 @@ class BatchedCCM:
 		:param testIndices: 	Test block index range [start, end]. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
-		:param useHalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param HalfPrecision: 	Use float16 instead of float32 to save VRAM
 		:param batchMode:			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
 		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
 		"""
@@ -97,7 +97,7 @@ class BatchedCCM:
 		self.includeData = includeData
 
 		self.device = torch.device(device) if isinstance(device, str) else device
-		self.dtype = torch.float16 if useHalfPrecision else torch.float32
+		self.dtype = torch.float16 if HalfPrecision else torch.float32
 		self.showProgress = showProgress
 
 		if trainIndices is not None:
@@ -167,7 +167,8 @@ class BatchedCCM:
 		if embedDims == 0:
 			scores = FindOptimalEmbeddingDimensionality(X, Y, maxDims = maxDims, train = self.train, test = self.test,
 				predictionHorizon = self.predictionHorizon, step = self.step, ignoreNan = self.ignoreNan,
-				batched = True, joint = False)
+				batched = True, joint = False,
+				HalfPrecision = (self.dtype == torch.float16), BatchSize = self.batchSize)
 			# scores: [nVars, maxDims] (single target, squeezed) or [nTargets, nVars, maxDims].
 			# Per-variable best E = argmax over the dims axis + 1 (1-indexed).
 			# For multi-target, keep per-target E separately so distance computation can
