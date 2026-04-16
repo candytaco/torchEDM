@@ -4,7 +4,7 @@ from tqdm import tqdm as ProgressBar
 
 from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
 from torchEDM.EDM.Simplex import Simplex
-from torchEDM.EDM._MDE import ElementwisePairwiseDistance, FloorArray, MinAxis1, ComputeWeights, SumAxis1
+from torchEDM.EDM._MDE import ElementwisePairwiseDistance, batched_simplex_predict
 
 
 class BatchedCCM:
@@ -259,25 +259,13 @@ class BatchedCCM:
 		# If knn is auto, each pair uses E[s,t]+1; allocate for the maximum and mask the rest.
 		max_knn = self.knn if self.knnUserSpecified else int(numpy.max(embedDims)) + 1
 
-		# Reusable buffers for per-lag distances of a single source variable: [dims, N, N]
+		# Reusable buffer for per-lag squared distances of a single source variable: [dims, N, N]
 		d = torch.zeros([dims, N_libraryIndices, N_libraryIndices],
 						dtype = self.dtype, device = self.device)
 
-		# Per-(source, target) sqrt cumulative distances for the current batch: [batchSize, numTargets, N, N]
+		# Per-(source, target) SQUARED cumulative distances for the current batch: [batchSize, numTargets, N, N]
 		fullDistances = torch.zeros([self.batchSize, numTargets, N_libraryIndices, N_libraryIndices],
 									dtype = self.dtype, device = self.device)
-
-		distances = torch.zeros([self.batchSize, max_knn, N_libraryIndices], dtype = self.dtype, device = self.device)
-		neighbors = torch.zeros([self.batchSize, max_knn, N_libraryIndices], dtype = torch.long, device = self.device)
-		minDistances = torch.zeros([self.batchSize, N_libraryIndices], dtype = self.dtype, device = self.device)
-		weights = torch.zeros([self.batchSize, max_knn, N_libraryIndices], dtype = self.dtype, device = self.device)
-		weightSum = torch.zeros([self.batchSize, N_libraryIndices], dtype = self.dtype, device = self.device)
-		select = torch.zeros([self.batchSize, max_knn, N_libraryIndices], dtype = self.dtype, device = self.device)
-		predictions = torch.zeros([self.batchSize, N_libraryIndices], dtype = self.dtype, device = self.device)
-		perfs_ = torch.zeros([self.batchSize], dtype = self.dtype, device = self.device)
-
-		# kIndices is reused across targets for the per-pair masking: [1, max_knn, 1]
-		kIndices = torch.arange(max_knn, device = self.device).view(1, max_knn, 1)
 
 		for batchStart in ProgressBar(range(0, numSources, self.batchSize), desc = 'Variable batch', leave = False, disable = not self.showProgress):
 			batchEnd = min(batchStart + self.batchSize, numSources)
@@ -294,7 +282,7 @@ class BatchedCCM:
 				cumulativeDistances = torch.cumsum(d, dim = 0)  # [dims, N, N]
 				for t in range(numTargets):
 					thisDim = self._get_embedding_dimension(embedDims, batchStart + i, t)
-					fullDistances[i, t] = torch.sqrt(cumulativeDistances[thisDim - 1])
+					fullDistances[i, t] = cumulativeDistances[thisDim - 1]  # squared, no sqrt
 
 			if self.exclusionRadius == 0:
 				diagIndices = torch.arange(N_libraryIndices, device = self.device)
@@ -308,38 +296,30 @@ class BatchedCCM:
 					tensorIndices = torch.as_tensor(subsampleIndices, dtype = torch.long, device = self.device)
 
 					for t in range(numTargets):
+						# subsampledDistances: [batchNumSources, libSizeActual, N] - squared distances
 						subsampledDistances = fullDistances[:batchNumSources, t, tensorIndices, :]
-						theseDistances, theseNeighbors = torch.topk(subsampledDistances, max_knn, dim = 1,
-																	   largest = False)
-						# Mask out neighbors beyond dims[s,t]+1 for each source->target in the batch.
-						# Masked distances become inf so their weights become zero.
+
+						knn_per_batch = None
 						if not self.knnUserSpecified:
-							knnPerSource = torch.tensor(
+							knn_per_batch = torch.tensor(
 								[self._get_embedding_dimension(embedDims, batchStart + i, t) + 1
 								 for i in range(batchNumSources)],
 								dtype = torch.long, device = self.device
 							).view(batchNumSources, 1, 1)
-							theseDistances.masked_fill_(kIndices[:batchNumSources] >= knnPerSource, float('inf'))
 
-						distances[:batchNumSources] = theseDistances
-						neighbors[:batchNumSources] = tensorIndices[theseNeighbors]
-						FloorArray(distances[:batchNumSources], 1e-6)
-
-						minDistances[:batchNumSources] = MinAxis1(distances[:batchNumSources])
-						weights[:batchNumSources] = ComputeWeights(distances[:batchNumSources],
-																   minDistances[:batchNumSources])
-						weightSum[:batchNumSources] = SumAxis1(weights[:batchNumSources])
-						select[:batchNumSources] = target[:, t][neighbors[:batchNumSources]]
-						predictions[:batchNumSources] = (weights[:batchNumSources] * select[:batchNumSources]).sum(dim = 1) / weightSum[:batchNumSources]
+						# target values indexed to the subsampled training set
+						target_sub = target[tensorIndices, t]  # [libSizeActual]
+						pred = batched_simplex_predict(subsampledDistances, target_sub, max_knn, knn_per_batch)
+						# pred: [batchNumSources, N_libraryIndices]
 
 						targetT = target[:, t]
 						targetCentered = targetT - targetT.mean()
-						predCentered = predictions[:batchNumSources] - predictions[:batchNumSources].mean(dim = 1, keepdim = True)
+						predCentered = pred - pred.mean(dim = 1, keepdim = True)
 						targetStd = torch.sqrt((targetCentered ** 2).sum())
 						predStd = torch.sqrt((predCentered ** 2).sum(dim = 1))
-						perfs_[:batchNumSources] = (targetCentered * predCentered).sum(dim = 1) / (targetStd * predStd)
-
-						performance[size_i, sample_i, batchStart:batchEnd, t] = perfs_[:batchNumSources].cpu().numpy()
+						performance[size_i, sample_i, batchStart:batchEnd, t] = (
+							(targetCentered * predCentered).sum(dim = 1) / (targetStd * predStd)
+						).cpu().numpy()
 
 			del trainEmbeddings
 			if torch.cuda.is_available():
@@ -364,7 +344,7 @@ class BatchedCCM:
 
 		max_knn = self.knn if self.knnUserSpecified else int(numpy.max(embedDims)) + 1
 
-		# Build per-lag cumulative distance matrices for all source variables: [numSources, dims, N, N]
+		# Build per-lag cumulative squared distance matrices for all source variables: [numSources, dims, N, N]
 		trainEmbeddings = torch.tensor(numpy.array(embeddings), dtype = self.dtype, device = self.device)
 		d = torch.zeros([dims, N_libraryIndices, N_libraryIndices],
 						dtype = self.dtype, device = self.device)
@@ -377,22 +357,19 @@ class BatchedCCM:
 		del trainEmbeddings
 		del d
 
-		# Select per-(source, target) sqrt distances: [numSources, numTargets, N, N]
+		# Select per-(source, target) SQUARED distances: [numSources, numTargets, N, N]
 		fullDistances = torch.zeros([numSources, numTargets, N_libraryIndices, N_libraryIndices],
 									dtype = self.dtype, device = self.device)
 		for i in range(numSources):
 			for t in range(numTargets):
 				e = self._get_embedding_dimension(embedDims, i, t)
-				fullDistances[i, t] = torch.sqrt(cumulativeSqDist[i, e - 1])
+				fullDistances[i, t] = cumulativeSqDist[i, e - 1]  # squared, no sqrt
 
 		del cumulativeSqDist
 
 		if self.exclusionRadius == 0:
 			diagIndices = torch.arange(N_libraryIndices, device = self.device)
 			fullDistances[:, :, diagIndices, diagIndices] = float('inf')
-
-		# kIndices reused per target loop: [1, 1, max_knn, 1]
-		kIndices = torch.arange(max_knn, device = self.device).view(1, 1, max_knn, 1)
 
 		for size_i, libSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False, disable = not self.showProgress)):
 			libSizeActual = min(libSize, N_libraryIndices)
@@ -408,35 +385,34 @@ class BatchedCCM:
 				])
 				subsampleTorch = torch.as_tensor(subsampleIndices, dtype = torch.long, device = self.device)
 
+				nBatch = numSources * numSamplesInThisBatch
+
 				for t in range(numTargets):
 					# fullDistances[:, t]: [numSources, N, N]
-					# Gather subsampled distances: [numSources, numSamplesInThisBatch, libSizeActual, N]
+					# subsampledDistances: [numSources, numSamplesInThisBatch, libSizeActual, N] - squared
 					subsampledDistances = fullDistances[:, t][:, subsampleTorch, :]
 
-					distances, neighbors = torch.topk(subsampledDistances, max_knn, dim = 2, largest = False)
-					# distances: [numSources, numSamplesInThisBatch, max_knn, N]
+					# Flatten to [nBatch, libSizeActual, N] for batched_simplex_predict
+					sq_dist_flat = subsampledDistances.reshape(nBatch, libSizeActual, N_libraryIndices)
 
-					# Mask out neighbors beyond dims+1 for each source->target pair.
+					# Per-batch target: target_sub[s*numSamplesInThisBatch + j, :] = target[subsampleTorch[j, :], t]
+					targetT = target[:, t]                                   # [N]
+					target_sub = targetT[subsampleTorch]                     # [numSamplesInThisBatch, libSizeActual]
+					target_sub_flat = target_sub.unsqueeze(0).expand(numSources, -1, -1).reshape(nBatch, libSizeActual)
+
+					knn_per_batch = None
 					if not self.knnUserSpecified:
 						knnPerSource = torch.tensor(
 							[self._get_embedding_dimension(embedDims, i, t) + 1 for i in range(numSources)],
 							dtype = torch.long, device = self.device
-						).view(numSources, 1, 1, 1)
-						distances.masked_fill_(kIndices >= knnPerSource, float('inf'))
+						)  # [numSources]
+						knn_per_batch = knnPerSource.view(numSources, 1).expand(numSources, numSamplesInThisBatch).reshape(nBatch, 1, 1)
 
-					subsampleExpanded = subsampleTorch.unsqueeze(0).unsqueeze(-1)
-					globalNeighbors = subsampleExpanded.expand(numSources, -1, libSizeActual, N_libraryIndices).gather(
-						dim = 2, index = neighbors
-					)
-
-					FloorArray(distances, 1e-6)
-					minDistances = distances.min(dim = 2)[0]
-					weights = torch.exp(-distances / minDistances.unsqueeze(2))
-					weightSum = weights.sum(dim = 2)
-
-					targetT = target[:, t]                                                          # [N]
-					selectedTargets = targetT[globalNeighbors]                                      # [numSources, numSamplesInThisBatch, max_knn, N]
-					predictions = (weights * selectedTargets).sum(dim = 2) / weightSum              # [numSources, numSamplesInThisBatch, N]
+					predictions_flat = batched_simplex_predict(
+						sq_dist_flat, target_sub_flat, max_knn, knn_per_batch, target_per_batch = True)
+					# [nBatch, N_libraryIndices]
+					predictions = predictions_flat.reshape(numSources, numSamplesInThisBatch, N_libraryIndices)
+					# [numSources, numSamplesInThisBatch, N_libraryIndices]
 
 					targetCentered = targetT - targetT.mean()                                       # [N]
 					targetStd = torch.sqrt((targetCentered ** 2).sum())

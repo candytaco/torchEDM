@@ -17,18 +17,6 @@ def ElementwisePairwiseDistance(a, b, out):
 	out.square_()
 
 
-def IncrementPairwiseDistance(distances, increments, out):
-	"""
-	For a set of pairwise distances, increment each slice by the same amount
-	i.e. a 2D array broadcast
-	:param distances: 	[dims, n1 x n2] set of pairwise distances
-	:param increments: 	[n1 x n2] increments
-	:param out: 		[dims, n1 x n2] tensor to write into
-	:return:
-	"""
-	out[:, :, :] = distances + increments.unsqueeze(0)
-
-
 def FloorArray(arr, floor_value):
 	"""
 	In-place minimum clamping
@@ -38,43 +26,83 @@ def FloorArray(arr, floor_value):
 	torch.clamp_min(arr, floor_value, out = arr)
 
 
-def MinAxis1(arr):
+def batched_simplex_predict(sq_distances, y_train, knn, knn_per_batch = None, target_per_batch = False):
 	"""
-	Compute minimum along axis 1 of 3D tensor
-	:param arr: [k x neighbors x dims] tensor
-	:return: [k x dims] minimum values
-	"""
-	return torch.min(arr, dim = 1)[0]
+	Core batched simplex projection on stacked squared-distance matrices.
 
+	For each batch item the knn nearest training neighbours are found, exponential
+	weights are computed from their Euclidean distances, and the weighted-average
+	target value is returned as the prediction.
 
-def SumAxis1(arr):
-	"""
-	Sum along axis 1 of 3D tensor
-	:param arr: [k x neighbors x dims] tensor
-	:return: [k x dims] sum values
-	"""
-	return torch.sum(arr, dim = 1)
+	Parameters
+	----------
+	sq_distances : Tensor [nBatch, nTrain, nTest]
+		Squared pairwise Euclidean distances between training and test points,
+		one matrix per batch item.
+	y_train : Tensor
+		Target values at training-set positions.  Three shapes are accepted:
 
+		* [nTrain]           – a single target shared by all batch items;
+		                       output shape is [nBatch, nTest].
+		* [nTargets, nTrain] – multiple shared targets (requires target_per_batch=False);
+		                       output shape is [nTargets, nBatch, nTest].
+		* [nBatch, nTrain]   – a distinct target row for each batch item, e.g. for
+		                       self-prediction or batched sampling (requires
+		                       target_per_batch=True);
+		                       output shape is [nBatch, nTest].
 
-def ComputeWeights(neighborDistances, minDistances):
-	"""
-	Compute exponential weights
-	:param neighborDistances: [k x neighbors x dims] distances
-	:param minDistances: [k x dims] minimum distances
-	:return: [k x neighbors x dims] weights
-	"""
-	return torch.exp(-neighborDistances / minDistances.unsqueeze(1))
+	knn : int
+		Maximum number of nearest neighbours to fetch with topk.
+	knn_per_batch : LongTensor [nBatch, 1, 1], optional
+		Effective knn per batch item.  Neighbours at position >= knn_per_batch[i]
+		receive zero weight, implementing variable-knn predictions (e.g. when each
+		batch item corresponds to a different embedding dimension).  When None, all
+		knn neighbours are used for every batch item.
+	target_per_batch : bool, optional
+		When True, treat y_train as [nBatch, nTrain] (per-batch targets) even if
+		y_train.shape[0] could otherwise be mistaken for nTargets.  Ignored when
+		y_train is 1-D.  Default False.
 
+	Returns
+	-------
+	Tensor [nBatch, nTest] or [nTargets, nBatch, nTest]
+	"""
+	nBatch, nTrain, nTest = sq_distances.shape
+	device = sq_distances.device
 
-def ComputePredictions(weights, select, weightSum):
-	"""
-	Compute weighted average predictions
-	:param weights: [k x neighbors x dims] weights
-	:param select: [k x neighbors x dims] selected values
-	:param weightSum: [k x dims] sum of weights
-	:return: [k x dims] predictions
-	"""
-	return (weights * select).sum(dim = 1) / weightSum
+	# ── 1. kNN search ───────────────────────────────────────────────────────
+	neighbor_distances, neighbor_indices = torch.topk(sq_distances, knn, dim = 1, largest = False)
+	# neighbor_distances, neighbor_indices: [nBatch, knn, nTest]
+
+	# ── 2. Convert to Euclidean distances and apply floor ───────────────────
+	neighbor_distances.sqrt_()
+	FloorArray(neighbor_distances, 1e-6)
+
+	# ── 3. Optionally mask out extra neighbours (variable-knn) ──────────────
+	if knn_per_batch is not None:
+		k_indices = torch.arange(knn, device = device).view(1, knn, 1)
+		neighbor_distances.masked_fill_(k_indices >= knn_per_batch, float('inf'))
+
+	# ── 4. Exponential weights w_i = exp(-d_i / d_min) ──────────────────────
+	min_distances = neighbor_distances.amin(dim = 1, keepdim = True)  # [nBatch, 1, nTest]
+	weights = torch.exp(-neighbor_distances / min_distances)           # [nBatch, knn, nTest]
+	weight_sum = weights.sum(dim = 1)                                  # [nBatch, nTest]
+
+	# ── 5. Gather targets and compute predictions ────────────────────────────
+	if y_train.dim() == 1:
+		# Single shared target [nTrain] → output [nBatch, nTest]
+		selected = y_train[neighbor_indices]                           # [nBatch, knn, nTest]
+		return (weights * selected).sum(dim = 1) / weight_sum
+
+	if target_per_batch:
+		# Per-batch target [nBatch, nTrain] → output [nBatch, nTest]
+		flat_indices = neighbor_indices.reshape(nBatch, -1)            # [nBatch, knn*nTest]
+		selected = y_train.gather(1, flat_indices).view(nBatch, knn, nTest)
+		return (weights * selected).sum(dim = 1) / weight_sum
+
+	# Multiple shared targets [nTargets, nTrain] → output [nTargets, nBatch, nTest]
+	selected = y_train[:, neighbor_indices]                            # [nTargets, nBatch, knn, nTest]
+	return (weights.unsqueeze(0) * selected).sum(dim = 2) / weight_sum.unsqueeze(0)
 
 
 def RowwiseCorrelation(vector, array, out):

@@ -8,7 +8,7 @@ from .CCM_batch import BatchedCCM
 from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
-from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray
+from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray, batched_simplex_predict
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
 
@@ -336,17 +336,9 @@ class MDE:
 							  current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
-					neighborDistances, nearestNeighbors = torch.topk(candidateDistances[:numCandidates], knn, dim = 1,
-																	 largest = False)
-					neighborDistances.sqrt_()
-					FloorArray(neighborDistances, 1e-6)
-
-					minDistances = torch.amin(neighborDistances, dim = 1)
-					weights = neighborDistances / minDistances.unsqueeze(1)
-					weights.neg_().exp_()
-					weightSum = torch.sum(weights, dim = 1)
-					select = train_y_tensor[j][nearestNeighbors]
-					predictions = torch.sum(weights * select, dim = 1) / weightSum
+					# candidateDistances[:numCandidates]: [numCandidates, nTrain, nTest] squared distances
+					predictions = batched_simplex_predict(candidateDistances[:numCandidates], train_y_tensor[j], knn)
+					# predictions: [numCandidates, nTest]
 
 					perfs[j, :numCandidates].zero_()
 					self.EvaluatePerformance(test_y_tensor[j], predictions, perfs[j, :numCandidates])
@@ -520,21 +512,13 @@ class MDE:
 		for j, target in enumerate(self.targets):
 			knn = len(self._selected_variables[j]) + 1
 
-			sqrtDists = distanceMatrix[j].sqrt()  # [nTrain, nTest]
-			topkDists, topkIndices = torch.topk(sqrtDists, knn, dim = 0, largest = False)
-			topkDists = topkDists.t()    # [nTest, knn]
-			topkIndices = topkIndices.t()  # [nTest, knn]
-
-			minDists = topkDists[:, 0].clamp(min = 1e-6)
-			weights = torch.exp(-topkDists / minDists.unsqueeze(1))
-			weightSum = weights.sum(dim = 1)
-
+			# distanceMatrix[j]: [nTrain, nTest] squared distances – wrap in a batch dim
+			sq_dist = distanceMatrix[j].unsqueeze(0)  # [1, nTrain, nTest]
 			trainY = torch.tensor(
 				self.data[trainIndices + self.predictionHorizon, target],
 				device = self.device, dtype = self.dtype
-			)
-			neighborY = trainY[topkIndices]
-			predJ = (weights * neighborY).sum(dim = 1) / weightSum
+			)  # [nTrain]
+			predJ = batched_simplex_predict(sq_dist, trainY, knn).squeeze(0)  # [nTest]
 
 			testY = self.data[testIndices + self.predictionHorizon, target]
 			predictions[:, j] = predJ.cpu().numpy()

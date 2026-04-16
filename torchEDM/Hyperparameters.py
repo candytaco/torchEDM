@@ -3,7 +3,7 @@ from typing import List, Tuple, Any, Optional
 import numpy
 import torch
 
-from .EDM._MDE import FloorArray, RowwiseCorrelation
+from .EDM._MDE import batched_simplex_predict, RowwiseCorrelation
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -220,24 +220,6 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		if hasMask:
 			embeddingDistances[:, maskTensor] = float('inf')
 
-		# batched over distances
-		neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
-		del embeddingDistances
-
-		neighborDistances.sqrt_()
-		FloorArray(neighborDistances, 1e-6)
-
-		# Compute weighted predictions
-		minDistances = torch.amin(neighborDistances, dim = 1)
-		weights = neighborDistances / minDistances.unsqueeze(1)
-		weights.neg_().exp_()
-
-		dimIndices = torch.arange(maxDims, device = device).repeat(numBatch // maxDims).view(numBatch, 1, 1)
-		kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
-		weights.masked_fill_(kIndices > dimIndices + 1, 0)
-
-		weightSum = torch.sum(weights, dim = 1)
-
 		nTargets = Y.shape[1]
 		# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
 		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
@@ -248,12 +230,12 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
 		y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
 
-		# y_train[:, neighborIndices] gathers training target values for every
-		# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
-		# so the result is [nTargets, numBatch, maxDims+1, nTest].
-		select = y_train[:, neighborIndices]
-		predictions = (weights.unsqueeze(0) * select).sum(dim = 2) / weightSum.unsqueeze(0)
+		# Per-batch effective knn: batch item i corresponds to embedding dim (i % maxDims),
+		# which uses (i % maxDims) + 2 neighbours.
+		knn_per_batch = (torch.arange(numBatch, device = device) % maxDims + 2).view(numBatch, 1, 1)
 		# predictions: [nTargets, numBatch, nTest]
+		predictions = batched_simplex_predict(embeddingDistances, y_train, maxDims + 1, knn_per_batch)
+		del embeddingDistances
 
 		y_pred = predictions[:, :, :nTestValid]  # [nTargets, numBatch, nTestValid]
 
@@ -284,9 +266,6 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 			# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
 			y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
 
-		# kIndices is identical for every batch iteration
-		kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
-
 		for varBatchStart in range(0, nVars, actualBatchSize):
 			varBatchEnd = min(varBatchStart + actualBatchSize, nVars)
 			batchNumVars = varBatchEnd - varBatchStart
@@ -315,37 +294,20 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 			if hasMask:
 				embeddingDistances[:, maskTensor] = float('inf')
 
-			# batched over distances
-			neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
-			del embeddingDistances
-
-			neighborDistances.sqrt_()
-			FloorArray(neighborDistances, 1e-6)
-
-			# Compute weighted predictions
-			minDistances = torch.amin(neighborDistances, dim = 1)
-			weights = neighborDistances / minDistances.unsqueeze(1)
-			weights.neg_().exp_()
-
-			# Zero out extra neighbors: for embedding dimension E (0-indexed), keep E+2 neighbors.
-			# The [0, maxDims-1] pattern repeats once per variable in the batch.
-			dimIndices = torch.arange(maxDims, device = device).repeat(batchNumVars).view(numBatch, 1, 1)
-			weights.masked_fill_(kIndices > dimIndices + 1, 0)
-
-			weightSum = torch.sum(weights, dim = 1)
+			# Per-batch effective knn: batch item v*maxDims + e uses e+2 neighbours.
+			knn_per_batch = (torch.arange(maxDims, device = device).repeat(batchNumVars).view(numBatch, 1, 1) + 2)
 
 			if selfPrediction:
-				# Each variable predicts itself: for row i = v*maxDims + E_0, look up y_train for variable v.
-				# y_train[v] = X[trainIndices + predictionHorizon, v], shape [batchNumVars, nTrain]
-				y_train = torch.tensor(X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
-
-				# Reshape neighborIndices to [batchNumVars, maxDims, maxDims+1, nTest] so variable axis is explicit,
-				# then index into y_train per-variable using the variable index as the first dimension.
-				neighborIndices4d = neighborIndices.view(batchNumVars, maxDims, maxDims + 1, nTest)
-				variableIndex = torch.arange(batchNumVars, device = device).view(batchNumVars, 1, 1, 1).expand_as(neighborIndices4d)
-				select = y_train[variableIndex, neighborIndices4d].view(numBatch, maxDims + 1, nTest)
-
-				predictions = torch.sum(weights * select, dim = 1) / weightSum
+				# Each variable predicts itself: expand y_train so each of the maxDims batch
+				# items for variable v uses y_train[v, :].
+				y_train_var = torch.tensor(
+					X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd],
+					device = device, dtype = dtype).T  # [batchNumVars, nTrain]
+				y_train_batch = y_train_var.unsqueeze(1).expand(batchNumVars, maxDims, nTrain).reshape(numBatch, nTrain)
+				predictions = batched_simplex_predict(
+					embeddingDistances, y_train_batch, maxDims + 1, knn_per_batch, target_per_batch = True)
+				del embeddingDistances
+				# predictions: [numBatch, nTest]
 
 				# y_test[v] = X[testIndices, v], shape [batchNumVars, nTestValid]
 				# Expand to [numBatch, nTestValid] by repeating each variable's test values maxDims times.
@@ -364,12 +326,9 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 				scores[varBatchStart:varBatchEnd] = out.cpu().numpy().reshape(batchNumVars, maxDims)
 
 			else:
-				# y_train[:, neighborIndices] gathers training target values for every
-				# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
-				# so the result is [nTargets, numBatch, maxDims+1, nTest].
-				select = y_train[:, neighborIndices]
-				predictions = (weights.unsqueeze(0) * select).sum(dim = 2) / weightSum.unsqueeze(0)
 				# predictions: [nTargets, numBatch, nTest]
+				predictions = batched_simplex_predict(embeddingDistances, y_train, maxDims + 1, knn_per_batch)
+				del embeddingDistances
 
 				y_pred = predictions[:, :, :nTestValid]  # [nTargets, numBatch, nTestValid]
 
@@ -379,7 +338,6 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 				scores[:, varBatchStart * maxDims:varBatchEnd * maxDims] = out.cpu().numpy()
 
-			del neighborDistances, neighborIndices, weights, weightSum, minDistances, dimIndices
 			if torch.cuda.is_available():
 				torch.cuda.empty_cache()
 
