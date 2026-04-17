@@ -102,12 +102,12 @@ class CCM:
 		if trainBlockIndices is not None:
 			self.train = trainBlockIndices
 		else:
-			self.train = [1, self.Data.shape[0]]
+			self.train = [(1, self.Data.shape[0])]
 
 		if testBlockIndices is not None:
 			self.test = testBlockIndices
 		else:
-			self.test = [1, self.Data.shape[0]]
+			self.test = [(1, self.Data.shape[0])]
 
 		self.CrossMapList = None  # List of CrossMap results
 		self.libMeans = None  # DataFrame of CrossMap results

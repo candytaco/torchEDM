@@ -55,20 +55,20 @@ class EDMFitter:
 
 		return self.DataAdapter.fullData
 
-	def GetTrainIndices(self) -> Tuple[int, int]:
+	def GetTrainIndices(self) -> List[Tuple[int, int]]:
 		"""
 		Get the train indices for EDM.
 
-		:return: Train indices [start, end]
+		:return: Train indices as list of (start, end) pairs
 		"""
 
 		return self.DataAdapter.TrainIndices
 
-	def GetTestIndices(self) -> Tuple[int, int]:
+	def GetTestIndices(self) -> List[Tuple[int, int]]:
 		"""
 		Get the test indices for EDM.
 
-		:return: Test indices [start, end]
+		:return: Test indices as list of (start, end) pairs
 		"""
 
 		return self.DataAdapter.TestIndices

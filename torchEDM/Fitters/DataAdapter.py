@@ -123,20 +123,20 @@ class DataAdapter:
 		return self.hasTime
 
 	@property
-	def TrainIndices(self) -> Tuple[int, int]:
+	def TrainIndices(self) -> List[Tuple[int, int]]:
 		"""
 		Get train indices for EDM.
 
-		:return: Train indices [start, end]
+		:return: Train indices as list of (start, end) pairs
 		"""
 		raise NotImplementedError
 
 	@property
-	def TestIndices(self) -> Tuple[int, int]:
+	def TestIndices(self) -> List[Tuple[int, int]]:
 		"""
 		Get test indices for EDM.
 
-		:return: Test indices [start, end]
+		:return: Test indices as list of (start, end) pairs
 		:raises ValueError: if no test data
 		"""
 		raise NotImplementedError
@@ -215,14 +215,13 @@ class DataAdapterSingleRun(DataAdapter):
 		self.fullData = data
 
 	@property
-	def TrainIndices(self) -> Tuple[int, int]:
-		# returning with 1 subtracted because EDM functions are stop-inclusive
-		return (self.trainOffset, self.XTrain.shape[0] - 1 + self.trainOffset - self.TrainEnd)
+	def TrainIndices(self) -> List[Tuple[int, int]]:
+		return [(self.trainOffset, self.XTrain.shape[0] - 1 + self.trainOffset - self.TrainEnd)]
 
 	@property
-	def TestIndices(self) -> Tuple[int, int]:
+	def TestIndices(self) -> List[Tuple[int, int]]:
 		if self.YTest is not None:
-			return (self.testOffset, self.fullData.shape[0] - 1 - self.TestEnd)
+			return [(self.testOffset, self.fullData.shape[0] - 1 - self.TestEnd)]
 		else:
 			raise ValueError('No test data')
 
@@ -280,7 +279,7 @@ class DataAdapterMultipleRuns(DataAdapter):
 			n += run.shape[0]
 
 		data = numpy.vstack(trainRuns)
-		self.trainIndices = data.shape[0]
+		self.trainTestSplitIndex = data.shape[0]
 
 		# add test data if we have it
 		if self.YTest is not None:
@@ -308,9 +307,9 @@ class DataAdapterMultipleRuns(DataAdapter):
 		return self.trainIndices
 
 	@property
-	def TestIndices(self) -> Tuple[int, int]:
+	def TestIndices(self) -> List[Tuple[int, int]]:
 		if self.YTest is not None:
-			return self.testIndices
+			return [self.testIndices]
 		else:
 			raise ValueError('No test data')
 

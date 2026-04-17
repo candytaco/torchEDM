@@ -728,20 +728,10 @@ class EDM:
 	def CreateIndices(self):
 		"""
 		Populate array index vectors lib_i, pred_i
-		Indices specified in list of pairs [ 1,10, 31,40... ]
-		where each pair is start:stop span of data rows.
+		Indices specified as List[Tuple[int, int]] where each tuple is a (start, stop) span of data rows.
 		"""
 
-		# Convert self.train from flat list to list of (start, stop) pairs
-		if len(self.train) % 2:
-			# Odd number of train elements
-			msg = f'{self.name}: CreateIndices() train must be an even ' + \
-			      'number of elements. train start : stop pairs'
-			raise RuntimeError(msg)
-
-		libPairs = []  # List of 2-tuples of train indices
-		for i in range(0, len(self.train), 2):
-			libPairs.append((self.train[i], self.train[i+1]))
+		libPairs = self.train  # List[Tuple[int, int]] of (start, stop) pairs
 
 		# Validate end > start
 		for libPair in libPairs:
@@ -806,16 +796,7 @@ class EDM:
 		# ------------------------------------------------
 		# pred_i from test
 		# ------------------------------------------------
-		# Convert self.test from flat list to list of (start, stop) pairs
-		if len(self.test) % 2:
-			# Odd number of test elements
-			msg = f'{self.name}: CreateIndices() test must be an even ' + \
-			      'number of elements. test start : stop pairs'
-			raise RuntimeError(msg)
-
-		predPairs = []  # List of 2-tuples of test indices
-		for i in range(0, len(self.test), 2):
-			predPairs.append((self.test[i], self.test[i+1]))
+		predPairs = self.test  # List[Tuple[int, int]] of (start, stop) pairs
 
 		if len(predPairs) > 1: self.disjointPred = True
 
@@ -982,12 +963,14 @@ class EDM:
 			if not len(self.train):
 				raise RuntimeError(f'Validate() {self.name}: train required.')
 			if not IsNonStringIterable(self.train):
-				self.train = [int(i) for i in self.train.split()]
+				trainInts = [int(i) for i in self.train.split()]
+				self.train = [(trainInts[i], trainInts[i + 1]) for i in range(0, len(trainInts), 2)]
 
 			if not len(self.test):
 				raise RuntimeError(f'Validate() {self.name}: test required.')
 			if not IsNonStringIterable(self.test):
-				self.test = [int(i) for i in self.test.split()]
+				testInts = [int(i) for i in self.test.split()]
+				self.test = [(testInts[i], testInts[i + 1]) for i in range(0, len(testInts), 2)]
 
 		# Set knn default based on E and train size, E embedded on num columns
 		if self.name in ['Simplex', 'CCM', 'Multiview']:

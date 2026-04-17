@@ -94,20 +94,20 @@ class ConvergentCrossMap:
 		if trainIndices is not None:
 			self.train = trainIndices
 		else:
-			self.train = [1, self.X.shape[0]]
+			self.train = [(1, self.X.shape[0])]
 
 		if trainSizes is not None:
 			self.trainSizes = trainSizes
 		else:
 			numTrainSamples = 0
-			for i in range(0, len(self.train), 2):
-				numTrainSamples += (self.train[i + 1] - self.train[i])
+			for start, stop in self.train:
+				numTrainSamples += (stop - start)
 			self.trainSizes = [int(p * numTrainSamples) for p in [0.1, 0.25, 0.5, 0.75, 0.9]]
 
 		if testIndices is not None:
 			self.test = testIndices
 		else:
-			self.test = [1, self.X.shape[0]]
+			self.test = [(1, self.X.shape[0])]
 
 		self.forward_performance_ = None
 		self.selectedForwardEmbedDimensions = None
@@ -161,7 +161,7 @@ class ConvergentCrossMap:
 		dims = int(numpy.max(embedDims))
 
 		train_indices, _ = BuildEmbeddingIndices(X.shape[0], X.shape[1],
-												 self.trainIndices, self.testIndices,
+												 self.train, self.test,
 												 maxDims, self.predictionHorizon, self.step,
 												 self.embedded, self.validLib)
 

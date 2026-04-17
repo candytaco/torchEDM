@@ -4,6 +4,7 @@ import numpy
 import torch
 
 from .EDM._core import RowwiseCorrelation, batch_simplex_predict
+from .EDM.utils import BuildEmbeddingIndices, build_exclusion_mask
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -15,8 +16,8 @@ from .Utils import IsNonStringIterable
 def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   Y: Optional[numpy.ndarray] = None,
 									   maxDims: int = 10,
-									   train: Tuple[int, int] = None,
-									   test: Tuple[int, int] = None,
+									   train: List[Tuple[int, int]] = None,
+									   test: List[Tuple[int, int]] = None,
 									   predictionHorizon: int = 1,
 									   step: int = -1,
 									   exclusionRadius: float = 0,
@@ -42,8 +43,8 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	:param X: 					2D numpy array of predictor columns, shape (N, numFeatures)
 	:param Y: 					1D or 2D numpy array of target values, shape (N,) or (N, 1)
 	:param maxDims: 			maximum number of embedding dimensions to test
-	:param train: 				Train indices [start, end]
-	:param test: 				Test indices [start, end]
+	:param train: 				Train indices as list of (start, end) pairs
+	:param test: 				Test indices as list of (start, end) pairs
 	:param predictionHorizon: 	Prediction horizon
 	:param step: 				Step size for embedding
 	:param exclusionRadius: 	Exclusion radius
@@ -160,6 +161,11 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	combinedData = X if selfPrediction else numpy.column_stack([X, Y])
 	target = 0 if selfPrediction else nVars
 	columns = list(range(nVars))
+
+	train_indices, _ = BuildEmbeddingIndices(combinedData.shape[0], combinedData.shape[1],
+											 train, test,
+											 maxDims, predictionHorizon, step,
+											 0, embedded, validLib)
 
 	dummy = Simplex(data = combinedData, columns = columns, target = target,
 				train = train, test = test, embedDimensions = maxDims,
@@ -341,8 +347,8 @@ def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
 def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 columns: List[int] = None,
 								 target: int = None,
-								 train: Tuple[int, int] = None,
-								 test: Tuple[int, int] = None,
+								 train: List[Tuple[int, int]] = None,
+								 test: List[Tuple[int, int]] = None,
 								 maxTp: int = 10,
 								 embedDimensions: int = 1,
 								 step: int = -1,
@@ -365,8 +371,8 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 	:param columns: 		Column indices to use (defaults to all except time)
 	:param target: 			Target column index (defaults to column 1)
 	:param maxTp: 			Maximum prediction horizon to test
-	:param train: 			Train indices [start, end]
-	:param test: 			Test indices [start, end]
+	:param train: 			Train indices as list of (start, end) pairs
+	:param test: 			Test indices as list of (start, end) pairs
 	:param embedDimensions: Embedding dimension
 	:param step: 			Step size for embedding
 	:param exclusionRadius: Exclusion radius
@@ -492,8 +498,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 						 columns: List[int] = None,
 						 target: int = None,
 						 theta: Any = None,
-						 train: Tuple[int, int] = None,
-						 test: Tuple[int, int] = None,
+						 train: List[Tuple[int, int]] = None,
+						 test: List[Tuple[int, int]] = None,
 						 embedDimensions: int = 1,
 						 predictionHorizon: int = 1,
 						 knn: int = 0,
@@ -516,8 +522,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 	:param columns: 			Column indices to use (defaults to all except time)
 	:param target: 				Target column index (defaults to column 1)
 	:param theta: 				Theta values to test
-	:param train: 				Train indices [start, end]
-	:param test: 				Test indices [start, end]
+	:param train: 				Train indices as list of (start, end) pairs
+	:param test: 				Test indices as list of (start, end) pairs
 	:param embedDimensions: 	Embedding dimension
 	:param predictionHorizon: 	Prediction horizon
 	:param knn: 				Number of nearest neighbors
