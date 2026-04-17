@@ -4,7 +4,7 @@ from tqdm import tqdm as ProgressBar
 
 from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
 from torchEDM.EDM.Simplex import Simplex
-from torchEDM.EDM._MDE import ElementwisePairwiseDistance, FloorArray, MinAxis1, ComputeWeights, SumAxis1
+from torchEDM.EDM._core import ElementwisePairwiseDistance, MinAxis1, ComputeWeights, SumAxis1
 
 
 class BatchedCCM:
@@ -323,7 +323,8 @@ class BatchedCCM:
 
 						distances[:batchNumSources] = theseDistances
 						neighbors[:batchNumSources] = tensorIndices[theseNeighbors]
-						FloorArray(distances[:batchNumSources], 1e-6)
+						arr = distances[:batchNumSources]
+						torch.clamp_min(arr, 1e-6, out = arr)
 
 						minDistances[:batchNumSources] = MinAxis1(distances[:batchNumSources])
 						weights[:batchNumSources] = ComputeWeights(distances[:batchNumSources],
@@ -429,7 +430,7 @@ class BatchedCCM:
 						dim = 2, index = neighbors
 					)
 
-					FloorArray(distances, 1e-6)
+					torch.clamp_min(distances, 1e-6, out = distances)
 					minDistances = distances.min(dim = 2)[0]
 					weights = torch.exp(-distances / minDistances.unsqueeze(2))
 					weightSum = weights.sum(dim = 2)

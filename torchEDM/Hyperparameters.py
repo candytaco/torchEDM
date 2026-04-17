@@ -3,7 +3,7 @@ from typing import List, Tuple, Any, Optional
 import numpy
 import torch
 
-from .EDM._MDE import FloorArray, RowwiseCorrelation
+from .EDM._core import RowwiseCorrelation
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -225,7 +225,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		del embeddingDistances
 
 		neighborDistances.sqrt_()
-		FloorArray(neighborDistances, 1e-6)
+		torch.clamp_min(neighborDistances, 1e-6, out = neighborDistances)
 
 		# Compute weighted predictions
 		minDistances = torch.amin(neighborDistances, dim = 1)
@@ -320,7 +320,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 			del embeddingDistances
 
 			neighborDistances.sqrt_()
-			FloorArray(neighborDistances, 1e-6)
+			torch.clamp_min(neighborDistances, 1e-6, out = neighborDistances)
 
 			# Compute weighted predictions
 			minDistances = torch.amin(neighborDistances, dim = 1)

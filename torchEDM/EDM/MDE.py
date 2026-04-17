@@ -8,7 +8,7 @@ from .CCM_batch import BatchedCCM
 from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
-from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray
+from ._core import RowwiseCorrelation, RowwiseR2, batch_simplex_predict_and_score
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
 
@@ -148,9 +148,9 @@ class MDE:
 		self.timeDelayResults = None
 
 		if metric == 'correlation':
-			self.EvaluatePerformance = RowwiseCorrelation
+			self.ScoreFunction = RowwiseCorrelation
 		elif metric in ['R2', 'r2', 'rsquared']:
-			self.EvaluatePerformance = RowwiseR2
+			self.ScoreFunction = RowwiseR2
 		else:
 			raise ValueError('Metric {} not supported'.format(metric))
 
@@ -357,19 +357,14 @@ class MDE:
 
 			# Per-target selection
 			for j in range(nTargets):
-				candidate_performance[j].sort(
-					key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf,
-					reverse = True
-					)
+				candidate_performance[j].sort(key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf,
+											  reverse = True)
 
 				if self.MinPredictionThreshold > 0:
-					candidate_performance[j] = [
-						(var, score) for var, score in candidate_performance[j]
-						if not numpy.isnan(score) and score >= self.MinPredictionThreshold
-						]
+					candidate_performance[j] = [(var, score) for var, score in candidate_performance[j]
+												if not numpy.isnan(score) and score >= self.MinPredictionThreshold]
 
-				r = numpy.array(candidate_performance[j]) if len(candidate_performance[j]) > 0 else numpy.array(
-					[]).reshape(0, 2)
+				r = numpy.array(candidate_performance[j]) if len(candidate_performance[j]) > 0 else numpy.array([]).reshape(0, 2)
 				if len(r) > 0:
 					self.stepwise_performance[j, i, r[:, 0].astype(int)] = r[:, 1]
 

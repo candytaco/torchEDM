@@ -1,3 +1,6 @@
+## core functions for torchEDM
+from typing import Optional
+
 import torch
 
 
@@ -27,15 +30,6 @@ def IncrementPairwiseDistance(distances, increments, out):
 	:return:
 	"""
 	out[:, :, :] = distances + increments.unsqueeze(0)
-
-
-def FloorArray(arr, floor_value):
-	"""
-	In-place minimum clamping
-	:param arr: tensor to clamp
-	:param floor_value: minimum value
-	"""
-	torch.clamp_min(arr, floor_value, out = arr)
 
 
 def MinAxis1(arr):
@@ -77,7 +71,7 @@ def ComputePredictions(weights, select, weightSum):
 	return (weights * select).sum(dim = 1) / weightSum
 
 
-def RowwiseCorrelation(vector, array, out):
+def RowwiseCorrelation(vector: torch.tensor, array: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
 	Correlation between a vector and columns of an array
 
@@ -88,6 +82,9 @@ def RowwiseCorrelation(vector, array, out):
 	:param out: [m] output tensor
 	:return: out tensor with correlations
 	"""
+	if out is None:
+		out = torch.zeros(array.shape[0], device = vector.device)
+
 	vectorCentered = vector - torch.mean(vector)
 	vectorStd = torch.sqrt(torch.sum(vectorCentered ** 2))
 
@@ -100,7 +97,7 @@ def RowwiseCorrelation(vector, array, out):
 	return out
 
 
-def RowwiseR2(vector, array, out):
+def RowwiseR2(vector: torch.tensor, array: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
 	R2 (coefficient of determination) between a vector (Y_true) and rows of an array (Y_pred)
 	:param vector: [n] tensor of true values
@@ -108,6 +105,8 @@ def RowwiseR2(vector, array, out):
 	:param out: [m] output tensor
 	:return: out tensor with R2 values
 	"""
+	if out is None:
+		out = torch.zeros(array.shape[0], device = vector.device)
 	vectorMean = torch.mean(vector)
 	totalSumOfSquares = torch.sum((vector - vectorMean) ** 2)
 
@@ -115,3 +114,48 @@ def RowwiseR2(vector, array, out):
 	out[:] = 1 - residualSumOfSquares / totalSumOfSquares
 
 	return out
+
+def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors, test_y, train_y, score_function,
+									predictions: Optional[torch.tensor] = None, perf_out: Optional[torch.tensor] = None):
+	"""
+	Batched multiple predictions and score via simplex. Each distance matrix is used to make a separate prediction on Y.
+	These predictions are then scored
+	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
+	:param numNeighbors:		number of nearest neighbors to use
+	:param test_y:				test_y to compare against
+	:param train_y:				train_y to predict from
+	:param score_function:		score function to evaluate performance
+	:param perf_out:			array to write the performance into
+	:return:
+	"""
+	if predictions is None:
+		predictions = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]], device = distanceMatrices.device)
+	predictions[:] = batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions)
+	return score_function(test_y, predictions, perf_out)
+
+
+def batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions_out):
+	"""
+	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
+	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
+	:param numNeighbors:		number of nearest neighbors to use
+	:param perf_out:			array to write the performance into
+	:param test_y:				test_y to compare against
+	:param train_y:				train_y to predict from
+	:param score_function:		score function to evaluate performance
+	:return:
+	"""
+	if predictions_out is None:
+		predictions_out = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]], device = distanceMatrices.device)
+
+	neighbor_dist, neighbor_indices = torch.topk(distanceMatrices, numNeighbors, dim = 1,
+												 largest = False)
+	neighbor_dist.sqrt_()
+	torch.clamp_min(neighbor_dist, 1e-6, out = neighbor_dist)
+	minDistances = torch.amin(neighbor_dist, dim = 1)
+	weights = neighbor_dist / minDistances.unsqueeze(1)
+	weights.neg_().exp_()
+	weightSum = torch.sum(weights, dim = 1)
+	select = train_y[neighbor_indices]
+	predictions_out[:] = torch.sum(weights * select, dim = 1) / weightSum
+	return predictions_out
