@@ -336,20 +336,9 @@ class MDE:
 							  current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
-					neighborDistances, nearestNeighbors = torch.topk(candidateDistances[:numCandidates], knn, dim = 1,
-																	 largest = False)
-					neighborDistances.sqrt_()
-					FloorArray(neighborDistances, 1e-6)
-
-					minDistances = torch.amin(neighborDistances, dim = 1)
-					weights = neighborDistances / minDistances.unsqueeze(1)
-					weights.neg_().exp_()
-					weightSum = torch.sum(weights, dim = 1)
-					select = train_y_tensor[j][nearestNeighbors]
-					predictions = torch.sum(weights * select, dim = 1) / weightSum
-
-					perfs[j, :numCandidates].zero_()
-					self.EvaluatePerformance(test_y_tensor[j], predictions, perfs[j, :numCandidates])
+					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn, perfs[j, :numCandidates],
+													test_y_tensor, train_y_tensor,
+													self.ScoreFunction)
 
 					perfs_numpy = perfs[j, :numCandidates].cpu().numpy()
 					for v, var in enumerate(theseCandidates):
