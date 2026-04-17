@@ -3,8 +3,8 @@ import torch
 from tqdm import tqdm as ProgressBar
 
 from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
-from torchEDM.EDM.Simplex import Simplex
 from torchEDM.EDM._MDE import ElementwisePairwiseDistance, FloorArray, MinAxis1, ComputeWeights, SumAxis1
+from torchEDM.EDM._core import BuildEmbeddingIndices
 
 
 class BatchedCCM:
@@ -180,27 +180,10 @@ class BatchedCCM:
 
 		dims = int(numpy.max(embedDims))
 
-		dummy = Simplex(
-			data = X,
-			columns = numpy.arange(numSources).tolist(),
-			target = 0,
-			train = self.train,
-			test = self.test,
-			embedDimensions = dims,
-			predictionHorizon = self.predictionHorizon,
-			knn = self.knn,
-			step = self.step,
-			exclusionRadius = self.exclusionRadius,
-			embedded = self.embedded,
-			validLib = self.validLib,
-			noTime = True,
-			ignoreNan = self.ignoreNan,
-			verbose = False
-		)
-		dummy.EmbedData()
-		dummy.RemoveNan()
-
-		libraryIndices = numpy.array(dummy.trainIndices)
+		_, libraryIndices, _, _ = BuildEmbeddingIndices(data = X, columns = numpy.arange(numSources).tolist(), train = self.train, test = self.test, embedDimensions = dims,
+														predictionHorizon = self.predictionHorizon, step = self.step, exclusionRadius = self.exclusionRadius,
+														embedded = self.embedded, validLib = self.validLib, ignoreNan = self.ignoreNan, removeNan = True)
+		libraryIndices = numpy.array(libraryIndices)
 		N_libraryIndices = len(libraryIndices)
 
 		# Always embed with the maximum number of lags. The CrossMap functions select

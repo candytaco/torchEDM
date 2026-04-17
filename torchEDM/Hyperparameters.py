@@ -4,6 +4,7 @@ import numpy
 import torch
 
 from .EDM._MDE import FloorArray, RowwiseCorrelation
+from .EDM._core import BuildEmbeddingIndices
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -157,27 +158,19 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		target = nVars
 	columns = list(range(nVars))
 
-	# Create a Simplex at maxE to get proper indices, embedding, and target
-	dummy = Simplex(data = combinedData, columns = columns, target = target,
-				train = train, test = test, embedDimensions = maxDims,
-				predictionHorizon = predictionHorizon, knn = 0,
-				step = step, exclusionRadius = exclusionRadius,
-				embedded = embedded, validLib = validLib,
-				noTime = True, ignoreNan = ignoreNan)
+	embedding, trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = combinedData, columns = columns, train = train, test = test, embedDimensions = maxDims,
+																				 predictionHorizon = predictionHorizon, step = step, exclusionRadius = exclusionRadius,
+																				 embedded = embedded, validLib = validLib, ignoreNan = ignoreNan, removeNan = True)
 
-	dummy.EmbedData()
-	dummy.RemoveNan()
+	device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+	dtype = torch.float16 if halfPrecision else torch.float64
 
-	device = dummy.device
-	dtype = torch.float16 if halfPrecision else dummy.dtype
-
-	trainEmbedding = dummy.Embedding[dummy.trainIndices, :]
-	testEmbedding = dummy.Embedding[dummy.testIndices, :]
-	nTrain = len(dummy.trainIndices)
-	nTest = len(dummy.testIndices)
+	trainEmbedding = embedding[trainIndices, :]
+	testEmbedding = embedding[testIndices, :]
+	nTrain = len(trainIndices)
+	nTest = len(testIndices)
 
 	# Build exclusion mask once (same for all E since indices are shared)
-	exclusionMask = dummy._BuildExclusionMask()
 	hasMask = exclusionMask.any()
 	if hasMask:
 		maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool)
@@ -240,13 +233,13 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 		nTargets = Y.shape[1]
 		# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
-		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
+		y_train = torch.tensor(Y[trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
 
-		testIndices = dummy.testIndices + predictionHorizon
-		testIndices = testIndices[testIndices < len(dummy.targetVec)]
-		nTestValid = len(testIndices)
+		testTargetIndices = testIndices + predictionHorizon
+		testTargetIndices = testTargetIndices[testTargetIndices < len(combinedData)]
+		nTestValid = len(testTargetIndices)
 		# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
-		y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
+		y_test_all = torch.tensor(Y[testTargetIndices, :], device = device, dtype = dtype).T
 
 		# y_train[:, neighborIndices] gathers training target values for every
 		# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
@@ -270,19 +263,19 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 		if selfPrediction:
 			scores = numpy.zeros((nVars, maxDims), dtype = numpy.float32)
-			testIndices = dummy.testIndices + predictionHorizon
-			testIndices = testIndices[testIndices < X.shape[0]]
-			nTestValid = len(testIndices)
+			testTargetIndices = testIndices + predictionHorizon
+			testTargetIndices = testTargetIndices[testTargetIndices < X.shape[0]]
+			nTestValid = len(testTargetIndices)
 		else:
 			nTargets = Y.shape[1]
 			scores = numpy.zeros((nTargets, nVars * maxDims), dtype = numpy.float32)
-			testIndices = dummy.testIndices + predictionHorizon
-			testIndices = testIndices[testIndices < len(dummy.targetVec)]
-			nTestValid = len(testIndices)
+			testTargetIndices = testIndices + predictionHorizon
+			testTargetIndices = testTargetIndices[testTargetIndices < len(combinedData)]
+			nTestValid = len(testTargetIndices)
 			# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
-			y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
+			y_train = torch.tensor(Y[trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
 			# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
-			y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
+			y_test_all = torch.tensor(Y[testTargetIndices, :], device = device, dtype = dtype).T
 
 		# kIndices is identical for every batch iteration
 		kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
@@ -337,7 +330,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 			if selfPrediction:
 				# Each variable predicts itself: for row i = v*maxDims + E_0, look up y_train for variable v.
 				# y_train[v] = X[trainIndices + predictionHorizon, v], shape [batchNumVars, nTrain]
-				y_train = torch.tensor(X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
+				y_train = torch.tensor(X[trainIndices + predictionHorizon, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
 
 				# Reshape neighborIndices to [batchNumVars, maxDims, maxDims+1, nTest] so variable axis is explicit,
 				# then index into y_train per-variable using the variable index as the first dimension.
@@ -349,7 +342,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 				# y_test[v] = X[testIndices, v], shape [batchNumVars, nTestValid]
 				# Expand to [numBatch, nTestValid] by repeating each variable's test values maxDims times.
-				y_test = torch.tensor(X[testIndices, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
+				y_test = torch.tensor(X[testTargetIndices, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
 				y_test_expanded = y_test.unsqueeze(1).expand(batchNumVars, maxDims, nTestValid).reshape(numBatch, nTestValid)
 
 				y_pred = predictions[:, :nTestValid]

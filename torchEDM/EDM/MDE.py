@@ -9,6 +9,7 @@ from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
 from ._MDE import RowwiseCorrelation, RowwiseR2, FloorArray
+from ._core import BuildEmbeddingIndices
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
 
@@ -226,29 +227,16 @@ class MDE:
 			for j, t in enumerate(self.targets):
 				self._selected_variables[j].append(t)
 
-		dummy = Simplex(
-			data = self.data,
-			columns = numpy.arange(self.data.shape[1]).tolist(),
-			target = self.targets[0],
-			train = self.train,
-			test = self.test,
-			embedDimensions = self.embedDimensions,
-			predictionHorizon = self.predictionHorizon,
-			knn = self.knn,
-			step = self.step,
-			exclusionRadius = self.exclusionRadius,
-			embedded = True,
-			validLib = self.validLib,
-			noTime = self.noTime,
-			ignoreNan = self.ignoreNan,
-			verbose = self.verbose
-			)
-		dummy.EmbedData()
-		trainIndices = numpy.array(dummy.trainIndices, dtype = int)
-		testIndices = numpy.array(dummy.testIndices, dtype = int)
+		embedding, trainIndices, testIndices, exclusion_mask = BuildEmbeddingIndices(data = self.data, columns = numpy.arange(self.data.shape[1]).tolist(), train = self.train,
+																					   test = self.test, embedDimensions = self.embedDimensions,
+																					   predictionHorizon = self.predictionHorizon, step = self.step,
+																					   exclusionRadius = self.exclusionRadius, embedded = True, validLib = self.validLib,
+																					   ignoreNan = self.ignoreNan, removeNan = False)
+		trainIndices = numpy.array(trainIndices, dtype = int)
+		testIndices = numpy.array(testIndices, dtype = int)
 
-		trainData = dummy.Embedding[trainIndices, :]
-		testData = dummy.Embedding[testIndices, :]
+		trainData = embedding[trainIndices, :]
+		testData = embedding[testIndices, :]
 		self.trainData = trainData
 		self.testData = testData
 
@@ -283,8 +271,6 @@ class MDE:
 
 		trainData_tensor = torch.tensor(trainData, device = self.device, dtype = self.dtype)
 		testData_tensor = torch.tensor(testData, device = self.device, dtype = self.dtype)
-
-		exclusion_mask = dummy._BuildExclusionMask()
 
 		# 3D distance matrix: [nTargets, nTrain, nTest]
 		current_best_distance_matrix = torch.zeros([nTargets, nTrain, nTest], device = self.device, dtype = self.dtype)
