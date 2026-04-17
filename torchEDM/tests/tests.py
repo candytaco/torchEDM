@@ -3,6 +3,8 @@ import unittest
 from datetime import datetime
 from warnings import filterwarnings, catch_warnings
 
+import torchEDM.EDM.utils
+
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from numpy import nan, array, array_equal, ndarray
@@ -180,7 +182,7 @@ class test_EDM( unittest.TestCase ):
         if self.verbose : print ( "--- Embed ---" )
         df_ = sampleDataFrames['circle']
         x = df_.columns.get_loc('x')
-        df  = torchEDM.EDM.Embed.Embed(df_.values, [x], 3, -1, False)
+        df  = torchEDM.EDM.utils.MakeDelays(df_.values, [x], 3, -1, False)
 
     def test_embed2( self ):
         """Embed multivariate"""
@@ -188,7 +190,7 @@ class test_EDM( unittest.TestCase ):
         df_ = sampleDataFrames['circle']
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
-        df  = torchEDM.EDM.Embed.Embed(df_.values, [x, y], 3, -1, False)
+        df  = torchEDM.EDM.utils.MakeDelays(df_.values, [x, y], 3, -1, False)
 
     def test_embed3( self ):
         """Embed multivariate"""
@@ -196,7 +198,7 @@ class test_EDM( unittest.TestCase ):
         df_ = sampleDataFrames['circle']
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
-        df  = torchEDM.EDM.Embed.Embed(df_.values, [x, y], 3, -1, True)
+        df  = torchEDM.EDM.utils.MakeDelays(df_.values, [x, y], 3, -1, True)
 
     
     # Simplex
