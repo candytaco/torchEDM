@@ -2,7 +2,7 @@ from typing import Optional, List
 
 import numpy
 
-from torchEDM.EDM.CCM_batch import BatchedCCM
+from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
 from .EDMFitter import EDMFitter
 
 
@@ -72,12 +72,12 @@ class CCMFitter(EDMFitter):
 
 		TrainIndices = self.GetTrainIndices()
 
-		self.CCM = BatchedCCM(
+		self.CCM = ConvergentCrossMap(
 			X = self.DataAdapter.XTrain,
 			Y = self.DataAdapter.YTrain,
 			trainSizes = self.TrainSizes,
 			sample = self.Sample,
-			forwardEmbedDimensions = self.EmbedDimensions,
+			embedDimensions = self.EmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
 			knn = self.KNN,
 			step = self.Step,

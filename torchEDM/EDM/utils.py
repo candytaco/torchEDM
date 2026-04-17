@@ -1,13 +1,14 @@
 import numpy
 from typing import List, Tuple
-def BuildEmbeddingIndices(data: numpy.ndarray,
+def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 						  train_start_stops: List[Tuple[int, int]], test_start_stops: List[Tuple[int, int]],
 						  embedDimensions, predictionHorizon, step,
 						  is_embedded = False, valid_train_samples = None):
 	"""
 	Compute train/test indices given data parameters.
 
-	:param data: 2D numpy array containing the source data.
+	:param nSamples: number of total samples
+	:param nVariables: number of variables
 	:param train_start_stops: Training blocks start/stop index pairs
 	:param test_start_stops: Test block start/stop indes pairs
 	:param embedDimensions: Embedding dimension E used when computing index offsets; ignore with is_embedded == True
@@ -17,11 +18,8 @@ def BuildEmbeddingIndices(data: numpy.ndarray,
 	:param valid_train_samples : Optional boolean mask selecting valid library rows.
 	:returns: Tuple (trainIndices, testIndices, exclusionMask).
 	"""
-	nVars = data.shape[1]
-	nSamples = data.shape[0]
-
 	if is_embedded:
-		embedDimensions = nVars
+		embedDimensions = nVariables
 
 	embedding_offset = abs(step) * (embedDimensions - 1)
 
@@ -53,20 +51,19 @@ def BuildEmbeddingIndices(data: numpy.ndarray,
 	if len(train_indices) == 0 or len(test_indices) == 0:
 		raise ValueError('no valid train or test indices.')
 
-	if train_indices[-1] >= data.shape[0] or test_indices[-1] >= data.shape[0]:
+	if train_indices[-1] >= nSamples or test_indices[-1] >= nSamples:
 		raise RuntimeError('train or test indices exceed data bounds.')
 
 	if valid_train_samples is None:
 		valid_train_samples  = []
 	if len(valid_train_samples):
-		data_i = numpy.array([i for i in range(data.shape[0])], dtype = int)
+		data_i = numpy.array([i for i in range(nSamples)], dtype = int)
 		validLib_i = data_i[valid_train_samples]
 		lib_i_valid = numpy.array([i for i in train_indices if i in validLib_i], dtype = int)
 		if len(lib_i_valid) == 0:
 			raise ValueError('no valid library points found after validLib filtering.')
-		knn_default = embedDimensions + 1
-		if len(lib_i_valid) < knn_default:
-			raise ValueError('Fewer valid train data points than desired nearest neighbors')
+		if len(lib_i_valid) < embedDimensions + 1:
+			raise ValueError('Not enough training data for minimum nearest neighbors')
 		train_indices = lib_i_valid
 
 	return train_indices, test_indices

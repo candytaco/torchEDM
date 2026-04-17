@@ -4,7 +4,7 @@ import numpy
 import torch
 from tqdm import tqdm as ProgressBar
 
-from .CCM_batch import BatchedCCM
+from .ConvergentCrossMap import ConvergentCrossMap
 from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
@@ -538,12 +538,12 @@ class MDE:
 		X = self.data[:, candidate_columns]
 		Y = self.data[:, target]
 
-		batchedCCM = BatchedCCM(
+		batchedCCM = ConvergentCrossMap(
 			X = X,
 			Y = Y,
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
-			forwardEmbedDimensions = self.embedDimensions,
+			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else self.embedDimensions + 1,
 			step = self.step,
@@ -631,12 +631,12 @@ class MDE:
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
 		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
-		batchedCCM = BatchedCCM(
+		batchedCCM = ConvergentCrossMap(
 			X = self.data[:, [candidate]],
 			Y = self.data[:, target],
 			trainSizes = lib_sizes,
 			sample = self.CCMNumSamples,
-			forwardEmbedDimensions = best_e,
+			embedDimensions = best_e,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else best_e + 1,
 			step = self.step,

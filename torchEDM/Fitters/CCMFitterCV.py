@@ -6,7 +6,7 @@ from tqdm import tqdm as ProgressBar
 from .DataAdapter import DataAdapter
 from .EDMFitter import EDMFitter
 from .CVSplitter import EDMCVSplitter
-from torchEDM.EDM.CCM_batch import BatchedCCM
+from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
 from torchEDM.EDM.Results import CCMCVResult
 
 
@@ -133,25 +133,25 @@ class CCMFitterCV(EDMFitter):
 		progressBarIterator = ProgressBar(total = numSplits, desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
 
 		for foldTrainIndices, foldTestIndices in self.cvSplitter.Split():
-			ccm = BatchedCCM(X = XArray,
-							 Y = YArray,
-							 trainSizes = self.TrainSizes,
-							 sample = self.Sample,
-							 forwardEmbedDimensions = self.EmbedDimensions,
-							 predictionHorizon = self.PredictionHorizon,
-							 knn = self.KNN,
-							 step = self.Step,
-							 exclusionRadius = self.ExclusionRadius,
-							 seed = self.seed,
-							 directions = self.directions,
-							 trainIndices = foldTrainIndices,
-							 testIndices = foldTestIndices,
-							 device = self.device,
-							 batchSize = self.batchSize,
-							 HalfPrecision = self.useHalfPrecision,
-							 showProgress = False,
-							 batchMode = self.batchMode,
-							 sampleBatchSize = self.sampleBatchSize)
+			ccm = ConvergentCrossMap(X = XArray,
+									 Y = YArray,
+									 trainSizes = self.TrainSizes,
+									 sample = self.Sample,
+									 embedDimensions = self.EmbedDimensions,
+									 predictionHorizon = self.PredictionHorizon,
+									 knn = self.KNN,
+									 step = self.Step,
+									 exclusionRadius = self.ExclusionRadius,
+									 seed = self.seed,
+									 directions = self.directions,
+									 trainIndices = foldTrainIndices,
+									 testIndices = foldTestIndices,
+									 device = self.device,
+									 batchSize = self.batchSize,
+									 HalfPrecision = self.useHalfPrecision,
+									 showProgress = False,
+									 batchMode = self.batchMode,
+									 sampleBatchSize = self.sampleBatchSize)
 
 			foldResult = ccm.Run()
 			self.foldResults.append(foldResult)
@@ -160,33 +160,20 @@ class CCMFitterCV(EDMFitter):
 		progressBarIterator.close()
 
 		foldForwardCorrelations = None
-		foldReverseCorrelations = None
 		foldForwardEmbedDimensions = None
-		foldReverseEmbedDimensions = None
 
-		if self.directions in ['forward', 'both']:
-			foldForwardCorrelations = numpy.stack([r.forward_performance for r in self.foldResults], axis = 0)
-			foldForwardEmbedDimensions = [r.forward_embed_dimensions for r in self.foldResults]
-
-		if self.directions in ['reverse', 'both']:
-			foldReverseCorrelations = numpy.stack([r.reverse_performance for r in self.foldResults], axis = 0)
-			foldReverseEmbedDimensions = [r.reverse_embed_dimensions for r in self.foldResults]
+		foldForwardCorrelations = numpy.stack([r.forward_performance for r in self.foldResults], axis = 0)
+		foldForwardEmbedDimensions = [r.forward_embed_dimensions for r in self.foldResults]
 
 		meanForwardCorrelation = numpy.mean(foldForwardCorrelations, axis = 0) if foldForwardCorrelations is not None else None
 		stdForwardCorrelation = numpy.std(foldForwardCorrelations, axis = 0) if foldForwardCorrelations is not None else None
-		meanReverseCorrelation = numpy.mean(foldReverseCorrelations, axis = 0) if foldReverseCorrelations is not None else None
-		stdReverseCorrelation = numpy.std(foldReverseCorrelations, axis = 0) if foldReverseCorrelations is not None else None
 
 		self.Result = CCMCVResult(
 			fold_results = self.foldResults,
 			fold_forward_correlations = foldForwardCorrelations,
-			fold_reverse_correlations = foldReverseCorrelations,
 			mean_forward_correlation = meanForwardCorrelation,
 			std_forward_correlation = stdForwardCorrelation,
-			mean_reverse_correlation = meanReverseCorrelation,
-			std_reverse_correlation = stdReverseCorrelation,
 			predictionHorizon = self.PredictionHorizon,
 			fold_forward_embed_dimensions = foldForwardEmbedDimensions,
-			fold_reverse_embed_dimensions = foldReverseEmbedDimensions
 		)
 		return self.Result

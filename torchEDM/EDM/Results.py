@@ -268,11 +268,9 @@ class BatchedCCMResult:
 	:param reverse_embed_dimensions: Embedding dimensions used for the reverse direction, or None.
 	"""
 	forward_performance: np.ndarray
-	reverse_performance: Optional[np.ndarray]
 	predictionHorizon: int
 	library_sizes: Union[np.ndarray, List]
 	forward_embed_dimensions: Optional[Union[int, np.ndarray]] = None
-	reverse_embed_dimensions: Optional[Union[int, np.ndarray]] = None
 
 	def GetVariableCorrelations(self, variableIndex: int) -> Tuple[np.ndarray, Optional[np.ndarray]]:
 		"""
@@ -281,9 +279,7 @@ class BatchedCCMResult:
 		:param variableIndex: Index of the variable (0-based)
 		:return: Tuple of (forward_correlations, reverse_correlations) as 1D arrays
 		"""
-		forwardCorr = self.forward_performance[:, 1 + variableIndex]
-		reverseCorr = self.reverse_performance[:, 1 + variableIndex] if self.reverse_performance is not None else None
-		return forwardCorr, reverseCorr
+		return self.forward_performance[:, 1 + variableIndex]
 
 
 @dataclass(frozen=True)
@@ -308,14 +304,10 @@ class CCMCVResult:
 	"""
 	fold_results: List['BatchedCCMResult']
 	fold_forward_correlations: Optional[np.ndarray]
-	fold_reverse_correlations: Optional[np.ndarray]
 	mean_forward_correlation: Optional[np.ndarray]
 	std_forward_correlation: Optional[np.ndarray]
-	mean_reverse_correlation: Optional[np.ndarray]
-	std_reverse_correlation: Optional[np.ndarray]
 	predictionHorizon: int
 	fold_forward_embed_dimensions: Optional[List] = None
-	fold_reverse_embed_dimensions: Optional[List] = None
 
 
 class ResultsIO:

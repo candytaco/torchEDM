@@ -13,7 +13,7 @@ from pandas import DataFrame, read_csv
 import torchEDM.Hyperparameters
 import torchEDM.Utils
 from torchEDM import Functions as EDM
-from torchEDM.EDM.CCM_batch import BatchedCCM
+from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
 from torchEDM.Fitters.SimplexFitter import SimplexFitter
 from torchEDM.Fitters.SMapFitter import SMapFitter
 from torchEDM.Fitters.CCMFitter import CCMFitter
@@ -686,14 +686,14 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('anchovy')
         target_index = df_.columns.get_loc('np_sst')
 
-        CCM = BatchedCCM(X = data[:, [col_index, col_index]], Y = data[:, target_index][:, None],
-						 trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
-						 sample = 100, forwardEmbedDimensions = 3,
-						 predictionHorizon = 0, knn = 0, step = -1,
-						 embedded = False, validLib = [], includeData = False,
-						 batchMode = 'sample',
-						 showProgress = False
-						 )
+        CCM = ConvergentCrossMap(X = data[:, [col_index, col_index]], Y = data[:, target_index][:, None],
+								 trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
+								 sample = 100, embedDimensions = 3,
+								 predictionHorizon = 0, knn = 0, step = -1,
+								 embedded = False, validLib = [], includeData = False,
+								 batchMode = 'sample',
+								 showProgress = False
+								 )
         results = CCM.Run()
 
         dfv = self.ValidationFiles["CCM_anch_sst_valid.csv"].values
