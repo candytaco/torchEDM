@@ -227,11 +227,11 @@ class MDE:
 			for j, t in enumerate(self.targets):
 				self._selected_variables[j].append(t)
 
-		embedding, trainIndices, testIndices, exclusion_mask = BuildEmbeddingIndices(data = self.data, columns = numpy.arange(self.data.shape[1]).tolist(), train = self.train,
-																					   test = self.test, embedDimensions = self.embedDimensions,
-																					   predictionHorizon = self.predictionHorizon, step = self.step,
-																					   exclusionRadius = self.exclusionRadius, embedded = True, validLib = self.validLib,
-																					   ignoreNan = self.ignoreNan, removeNan = False)
+		embedding, trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = self.data, columns = numpy.arange(self.data.shape[1]).tolist(), train = self.train,
+		                                                                             test = self.test, embedDimensions = self.embedDimensions,
+		                                                                             predictionHorizon = self.predictionHorizon, step = self.step,
+		                                                                             exclusionRadius = self.exclusionRadius, embedded = True, validLib = self.validLib,
+		                                                                             ignoreNan = self.ignoreNan, removeNan = False)
 		trainIndices = numpy.array(trainIndices, dtype = int)
 		testIndices = numpy.array(testIndices, dtype = int)
 
@@ -274,8 +274,8 @@ class MDE:
 
 		# 3D distance matrix: [nTargets, nTrain, nTest]
 		current_best_distance_matrix = torch.zeros([nTargets, nTrain, nTest], device = self.device, dtype = self.dtype)
-		if exclusion_mask.any():
-			mask_tensor = torch.tensor(exclusion_mask, device = self.device)
+		if exclusionMask.any():
+			mask_tensor = torch.tensor(exclusionMask, device = self.device)
 			current_best_distance_matrix[:, mask_tensor] = float('inf')
 
 		train_y_tensor = torch.tensor(self.data[trainIndices + self.predictionHorizon, :][:, self.targets],

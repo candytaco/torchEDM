@@ -110,7 +110,7 @@ def BuildEmbeddingIndices(data, columns, train, test, embedDimensions, predictio
 		if na_pred.any():
 			testIndices = testIndices[~na_pred]
 		if len(testIndices) == 0:
-			raise ValueError('No valid predictions')
+			raise ValueError('BuildEmbeddingIndices(): No valid test indices after NaN removal.')
 
 	libOverlap = len(set(trainIndices).intersection(set(testIndices))) > 0
 	checkExclusion = False

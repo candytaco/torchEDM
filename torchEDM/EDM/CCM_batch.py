@@ -181,8 +181,8 @@ class BatchedCCM:
 		dims = int(numpy.max(embedDims))
 
 		_, libraryIndices, _, _ = BuildEmbeddingIndices(data = X, columns = numpy.arange(numSources).tolist(), train = self.train, test = self.test, embedDimensions = dims,
-														predictionHorizon = self.predictionHorizon, step = self.step, exclusionRadius = self.exclusionRadius,
-														embedded = self.embedded, validLib = self.validLib, ignoreNan = self.ignoreNan, removeNan = True)
+		                                                predictionHorizon = self.predictionHorizon, step = self.step, exclusionRadius = self.exclusionRadius,
+		                                                embedded = self.embedded, validLib = self.validLib, ignoreNan = self.ignoreNan, removeNan = True)
 		libraryIndices = numpy.array(libraryIndices)
 		N_libraryIndices = len(libraryIndices)
 
