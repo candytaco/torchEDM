@@ -29,10 +29,10 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   HalfPrecision: bool = False,
 									   BatchSize: Optional[int] = None):
 	"""
-	Estimate optimal embedding dimension for simplex. When Y is not provided, each X is used to predict itself and find
-	the optimal number of dimensions for it self. When Y is provided and joint is True, all Xs are used to jointly
-	predict Y. When joint is False, each X is used to separately predict Y and we have a separate dimensionality for
-	each X when paired to Y.
+	Estimate optimal embedding dimension for simplex. When Y is not provided, each X variable
+	separately predicts every X variable, returning a [nVars, nVars, maxDims] score array.
+	When Y is provided and joint is True, all X variables are used jointly to predict each Y variable.
+	When joint is False, each X variable separately predicts each Y variable.
 
 	When batched = False, each train and test indices are computed per embedding dimensionality. When batched = True,
 	the indices are computed from the maximum, which is the most restrictive, which enables
@@ -145,14 +145,14 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	cumulative per-column distances on GPU. Uses the most restrictive NaN filtering
 	(from maxDims) for all embedding dimension values.
 
-	When joint is True, all variables in X are used together to predict Y,
+	When joint is True, all X variables are used together to predict each Y variable,
 	returning a [nTargets, maxDims] array of scores.
 
-	When joint is False, each variable in X is used separately to predict Y,
+	When joint is False, each X variable is used separately to predict each Y variable,
 	returning a [nTargets, nVars, maxDims] array of scores.
 
-	When Y is None, each column of X is used to predict itself (self-prediction),
-	returning a [nVars, maxDims] array of scores.
+	When Y is None, each X variable separately predicts every X variable as target,
+	returning a [nVars, nVars, maxDims] array of scores.
 	"""
 	nVars = X.shape[1]
 	selfPrediction = Y is None
@@ -184,10 +184,10 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool) if hasMask else None
 
 	if selfPrediction:
-		scores = _BatchedSelfPrediction(
+		scores = _BatchedSeparatePrediction(
 			X, dummy, trainEmbedding, testEmbedding,
 			nTrain, nTest, maxDims, nVars, device, dtype,
-			hasMask, maskTensor, predictionHorizon, batchSize)
+			hasMask, maskTensor, predictionHorizon, embedded, batchSize)
 	elif joint:
 		scores = _BatchedJointPrediction(
 			Y, dummy, trainEmbedding, testEmbedding,
@@ -337,51 +337,6 @@ def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
 
 	return scores
 
-
-def _BatchedSelfPrediction(X, dummy, trainEmbedding, testEmbedding,
-							nTrain, nTest, maxDims, nVars, device, dtype,
-							hasMask, maskTensor, predictionHorizon, batchSize):
-	"""
-	Each X variable predicts itself. Variables are processed in batches.
-	Returns [nVars, maxDims].
-	"""
-	scores = numpy.zeros((nVars, maxDims), dtype = numpy.float32)
-
-	testIndices = dummy.testIndices + predictionHorizon
-	testIndices = testIndices[testIndices < X.shape[0]]
-	nTestValid = len(testIndices)
-
-	actualBatchSize = batchSize if batchSize is not None else nVars
-
-	for varBatchStart in range(0, nVars, actualBatchSize):
-		varBatchEnd = min(varBatchStart + actualBatchSize, nVars)
-		batchNumVars = varBatchEnd - varBatchStart
-		colStart = varBatchStart * maxDims
-		colEnd = varBatchEnd * maxDims
-
-		embeddingDistances = _ComputePerVariableEmbeddingDistances(
-			trainEmbedding, testEmbedding, nTrain, nTest, maxDims, batchNumVars, colStart, colEnd, device, dtype)
-
-		if hasMask:
-			embeddingDistances[:, maskTensor] = float('inf')
-
-		y_train_batch = torch.tensor(
-			X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd],
-			device = device, dtype = dtype).T
-		y_test_batch = torch.tensor(X[testIndices, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
-
-		out = torch.zeros(batchNumVars, maxDims, device = device, dtype = dtype)
-		for v in range(batchNumVars):
-			varDistances = embeddingDistances[v * maxDims:(v + 1) * maxDims]
-			predictions = batch_simplex_predict(varDistances, maxDims + 1, y_train_batch[v])
-			RowwiseCorrelation(y_test_batch[v, :nTestValid], predictions[:, :nTestValid], out[v])
-		scores[varBatchStart:varBatchEnd] = out.cpu().numpy()
-
-		del embeddingDistances, y_train_batch, y_test_batch, out
-		if torch.cuda.is_available():
-			torch.cuda.empty_cache()
-
-	return scores
 
 def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 columns: List[int] = None,
