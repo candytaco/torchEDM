@@ -54,10 +54,11 @@ def batched_simplex_predict(sq_distances, y_train, knn, knn_per_batch = None, ta
 	knn : int
 		Maximum number of nearest neighbours to fetch with topk.
 	knn_per_batch : LongTensor [nBatch, 1, 1], optional
-		Effective knn per batch item.  Neighbours at position >= knn_per_batch[i]
-		receive zero weight, implementing variable-knn predictions (e.g. when each
-		batch item corresponds to a different embedding dimension).  When None, all
-		knn neighbours are used for every batch item.
+		Effective knn per batch item.  Weights for neighbours at position >= knn_per_batch[i]
+		are set to zero, implementing variable-knn predictions (e.g. when each batch item
+		corresponds to a different embedding dimension).  If all weights are zeroed for any
+		(batch item, test point) pair, a RuntimeError is raised.  When None, all knn
+		neighbours contribute to every batch item.
 	target_per_batch : bool, optional
 		When True, treat y_train as [nBatch, nTrain] (per-batch targets) even if
 		y_train.shape[0] could otherwise be mistaken for nTargets.  Ignored when
@@ -78,15 +79,22 @@ def batched_simplex_predict(sq_distances, y_train, knn, knn_per_batch = None, ta
 	neighbor_distances.sqrt_()
 	FloorArray(neighbor_distances, 1e-6)
 
-	# ── 3. Optionally mask out extra neighbours (variable-knn) ──────────────
-	if knn_per_batch is not None:
-		k_indices = torch.arange(knn, device = device).view(1, knn, 1)
-		neighbor_distances.masked_fill_(k_indices >= knn_per_batch, float('inf'))
-
-	# ── 4. Exponential weights w_i = exp(-d_i / d_min) ──────────────────────
+	# ── 3. Exponential weights w_i = exp(-d_i / d_min) ──────────────────────
 	min_distances = neighbor_distances.amin(dim = 1, keepdim = True)  # [nBatch, 1, nTest]
 	weights = torch.exp(-neighbor_distances / min_distances)           # [nBatch, knn, nTest]
+
+	# ── 4. Optionally zero out extra neighbours (variable-knn) ──────────────
+	if knn_per_batch is not None:
+		k_indices = torch.arange(knn, device = device).view(1, knn, 1)
+		weights.masked_fill_(k_indices >= knn_per_batch, 0.0)
+
 	weight_sum = weights.sum(dim = 1)                                  # [nBatch, nTest]
+
+	if (weight_sum == 0).any():
+		raise RuntimeError(
+			'batched_simplex_predict: all neighbours were excluded for at least one '
+			'(batch item, test point) pair. Check knn_per_batch values.'
+		)
 
 	# ── 5. Gather targets and compute predictions ────────────────────────────
 	if y_train.dim() == 1:
