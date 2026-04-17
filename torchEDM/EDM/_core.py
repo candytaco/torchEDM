@@ -115,8 +115,9 @@ def RowwiseR2(vector: torch.tensor, array: torch.tensor, out: Optional[torch.ten
 
 	return out
 
-def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors, test_y, train_y, score_function,
-									predictions: Optional[torch.tensor] = None, perf_out: Optional[torch.tensor] = None):
+def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors, train_y, test_y, score_function,
+									predictions: Optional[torch.tensor] = None,
+									perf_out: Optional[torch.tensor] = None):
 	"""
 	Batched multiple predictions and score via simplex. Each distance matrix is used to make a separate prediction on Y.
 	These predictions are then scored
@@ -134,7 +135,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	return score_function(test_y, predictions, perf_out)
 
 
-def batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions_out):
+def batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions_out = None):
 	"""
 	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
