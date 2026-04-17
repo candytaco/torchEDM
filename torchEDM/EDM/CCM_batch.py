@@ -300,10 +300,10 @@ class BatchedCCM:
 				diagIndices = torch.arange(N_libraryIndices, device = self.device)
 				fullDistances[:batchNumSources, :, diagIndices, diagIndices] = float('inf')
 
-			for size_i, libSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False, disable = not self.showProgress)):
+			for size_i, train_size in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False, disable = not self.showProgress)):
 				for sample_i in ProgressBar(range(self.sample), desc = 'Repeats', leave = False, disable = not self.showProgress):
 					subsampleIndices = RNG.choice(N_libraryIndices,
-												  size = min(libSize, N_libraryIndices),
+												  size = min(train_size, N_libraryIndices),
 												  replace = False)
 					tensorIndices = torch.as_tensor(subsampleIndices, dtype = torch.long, device = self.device)
 

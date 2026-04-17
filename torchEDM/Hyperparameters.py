@@ -3,7 +3,7 @@ from typing import List, Tuple, Any, Optional
 import numpy
 import torch
 
-from .EDM._core import RowwiseCorrelation
+from .EDM._core import RowwiseCorrelation, batch_simplex_predict
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -63,6 +63,19 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 		X = X[:, None]
 	if Y is not None and len(Y.shape) < 2:
 		Y = Y[:, None]
+
+	# TODO: this needs to be refactored for some things because the sub-calls are growing too long
+	# we should be able to accomodate these options:
+	# parallel process all embedding dimensions vs sequentially process all embedding dimensions
+	# each X separately predict Y vs all Xs jointly predict Y
+	#	when Xs are separate, we can sequentially process embedding dimensions, but for each dimension, parallel batch across X
+	#	when Xs are joint, they only produce one matrix
+	# when X and Y are provided vs only when X are provided
+	#	when X and Y are provided, X vars are used to predict Y vars
+	#	when only X is provided, each X is used to predict every other X (this collapses the previous choice to no joint)
+	# these options can be handled by separate functions that branch, but there should only be one level of branching in
+	# each function (currently the Batched variant has two levels of nested branching).
+	# these options should all make use of the batch_simplex* methods in the _core.py file
 
 	if batched:
 		scores = _FindOptimalEmbeddingDimensionalityBatched(
@@ -128,36 +141,26 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 											   halfPrecision = False,
 											   batchSize = None):
 	"""
-	Evaluate all embedding dimensions using shared maxE indices and precomputed
-	cumulative per-column distances on GPU. Uses the most restrictive
-	NaN filtering (from maxE) for all E values.
+	Evaluate all embedding dimensions using shared maxDims indices and precomputed
+	cumulative per-column distances on GPU. Uses the most restrictive NaN filtering
+	(from maxDims) for all embedding dimension values.
 
 	When joint is True, all variables in X are used together to predict Y,
-	returning a [maxDims] array of scores.
+	returning a [nTargets, maxDims] array of scores.
 
-	When joint is False, each variable in X is used separately to predict Y.
-	Per-variable distances are concatenated along the first dimension of the
-	stacked distance matrices, and scores are returned as a [nVars x maxDims] array.
+	When joint is False, each variable in X is used separately to predict Y,
+	returning a [nTargets, nVars, maxDims] array of scores.
 
 	When Y is None, each column of X is used to predict itself (self-prediction),
-	returning a [nVars x maxDims] array of scores.
-
-	For the non-joint and self-prediction paths, variables are processed in batches
-	of size batchSize to bound VRAM usage. The joint path always processes all
-	variables together since they contribute to a single cumulative distance.
+	returning a [nVars, maxDims] array of scores.
 	"""
 	nVars = X.shape[1]
 	selfPrediction = Y is None
 
-	if selfPrediction:
-		combinedData = X
-		target = 0  # dummy target; actual targets come from X columns below
-	else:
-		combinedData = numpy.column_stack([X, Y])
-		target = nVars
+	combinedData = X if selfPrediction else numpy.column_stack([X, Y])
+	target = 0 if selfPrediction else nVars
 	columns = list(range(nVars))
 
-	# Create a Simplex at maxE to get proper indices, embedding, and target
 	dummy = Simplex(data = combinedData, columns = columns, target = target,
 				train = train, test = test, embedDimensions = maxDims,
 				predictionHorizon = predictionHorizon, knn = 0,
@@ -176,215 +179,25 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	nTrain = len(dummy.trainIndices)
 	nTest = len(dummy.testIndices)
 
-	# Build exclusion mask once (same for all E since indices are shared)
 	exclusionMask = dummy._BuildExclusionMask()
 	hasMask = exclusionMask.any()
-	if hasMask:
-		maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool)
+	maskTensor = torch.tensor(exclusionMask, device = device, dtype = torch.bool) if hasMask else None
 
-	if joint and not selfPrediction:
-		trainTensor = torch.tensor(trainEmbedding, device = device, dtype = dtype)
-		testTensor = torch.tensor(testEmbedding, device = device, dtype = dtype)
-		nEmbedded = trainTensor.shape[1]
-
-		# Compute per-column squared pairwise distances: [nEmbedded, nTrain, nTest]
-		distances = torch.zeros(nEmbedded, nTrain, nTest, device = device, dtype = dtype)
-		for c in range(nEmbedded):
-			diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
-			distances[c, :, :] = diff * diff
-
-		del trainTensor, testTensor
-
-		# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
-		# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
-		# so that totalDistance[dim*nVars - 1] correctly sums the first dim lags of all variables.
-		if nVars > 1:
-			perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
-			distances = distances[perm]
-
-		# cumulative sum across all embeddings
-		totalDistance = torch.cumsum(distances, dim = 0)
-
-		indices = []
-		for dim in range(1, maxDims + 1):
-			# For multi-variable embeddings, E dimensions use E * len(columns) actual columns
-			# so we index into the cumulative sum at the position that sums to the embedding dims
-			index = dim * nVars if not embedded else dim
-			indices.append(index - 1)
-		# select the indices that correspond to sums across all vars at each N dimensions
-		embeddingDistances = totalDistance[indices, :, :]
-		numBatch = maxDims
-
-		del distances, totalDistance
-
-		if hasMask:
-			embeddingDistances[:, maskTensor] = float('inf')
-
-		# batched over distances
-		neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
-		del embeddingDistances
-
-		neighborDistances.sqrt_()
-		torch.clamp_min(neighborDistances, 1e-6, out = neighborDistances)
-
-		# Compute weighted predictions
-		minDistances = torch.amin(neighborDistances, dim = 1)
-		weights = neighborDistances / minDistances.unsqueeze(1)
-		weights.neg_().exp_()
-
-		dimIndices = torch.arange(maxDims, device = device).repeat(numBatch // maxDims).view(numBatch, 1, 1)
-		kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
-		weights.masked_fill_(kIndices > dimIndices + 1, 0)
-
-		weightSum = torch.sum(weights, dim = 1)
-
-		nTargets = Y.shape[1]
-		# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
-		y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
-
-		testIndices = dummy.testIndices + predictionHorizon
-		testIndices = testIndices[testIndices < len(dummy.targetVec)]
-		nTestValid = len(testIndices)
-		# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
-		y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
-
-		# y_train[:, neighborIndices] gathers training target values for every
-		# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
-		# so the result is [nTargets, numBatch, maxDims+1, nTest].
-		select = y_train[:, neighborIndices]
-		predictions = (weights.unsqueeze(0) * select).sum(dim = 2) / weightSum.unsqueeze(0)
-		# predictions: [nTargets, numBatch, nTest]
-
-		y_pred = predictions[:, :, :nTestValid]  # [nTargets, numBatch, nTestValid]
-
-		out = torch.zeros(nTargets, numBatch, device = device, dtype = dtype)
-		for targetIndex in range(nTargets):
-			RowwiseCorrelation(y_test_all[targetIndex], y_pred[targetIndex], out[targetIndex])
-
-		scores = out.cpu().numpy()  # [nTargets, numBatch]
-
+	if selfPrediction:
+		scores = _BatchedSelfPrediction(
+			X, dummy, trainEmbedding, testEmbedding,
+			nTrain, nTest, maxDims, nVars, device, dtype,
+			hasMask, maskTensor, predictionHorizon, batchSize)
+	elif joint:
+		scores = _BatchedJointPrediction(
+			Y, dummy, trainEmbedding, testEmbedding,
+			nTrain, nTest, maxDims, nVars, device, dtype,
+			hasMask, maskTensor, predictionHorizon, embedded)
 	else:
-		# For non-joint and self-prediction, compute cumulative sums per variable.
-		# Process variables in batches of size batchSize to bound VRAM usage.
-		actualBatchSize = batchSize if batchSize is not None else nVars
-
-		if selfPrediction:
-			scores = numpy.zeros((nVars, maxDims), dtype = numpy.float32)
-			testIndices = dummy.testIndices + predictionHorizon
-			testIndices = testIndices[testIndices < X.shape[0]]
-			nTestValid = len(testIndices)
-		else:
-			nTargets = Y.shape[1]
-			scores = numpy.zeros((nTargets, nVars * maxDims), dtype = numpy.float32)
-			testIndices = dummy.testIndices + predictionHorizon
-			testIndices = testIndices[testIndices < len(dummy.targetVec)]
-			nTestValid = len(testIndices)
-			# y_train[t] = Y[trainIndices + Tp, t], shape [nTargets, nTrain]
-			y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
-			# y_test_all[t] = Y[testIndices, t], shape [nTargets, nTestValid]
-			y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
-
-		# kIndices is identical for every batch iteration
-		kIndices = torch.arange(maxDims + 1, device = device).view(1, maxDims + 1, 1)
-
-		for varBatchStart in range(0, nVars, actualBatchSize):
-			varBatchEnd = min(varBatchStart + actualBatchSize, nVars)
-			batchNumVars = varBatchEnd - varBatchStart
-			numBatch = batchNumVars * maxDims
-
-			colStart = varBatchStart * maxDims
-			colEnd = varBatchEnd * maxDims
-			trainTensor = torch.tensor(trainEmbedding[:, colStart:colEnd], device = device, dtype = dtype)
-			testTensor = torch.tensor(testEmbedding[:, colStart:colEnd], device = device, dtype = dtype)
-
-			# Compute per-column squared pairwise distances for this batch: [numBatch, nTrain, nTest]
-			distances = torch.zeros(numBatch, nTrain, nTest, device = device, dtype = dtype)
-			for c in range(numBatch):
-				diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
-				distances[c] = diff * diff
-			del trainTensor, testTensor
-
-			# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
-			# Reshape to [batchNumVars, maxDims, nTrain, nTest] so cumsum runs along the lag dimension
-			# independently for each variable. Index v*maxDims + E holds the cumulative distance
-			# for variable v over its first E+1 lags.
-			totalDistance = torch.cumsum(distances.view(batchNumVars, maxDims, nTrain, nTest), dim = 1)
-			embeddingDistances = totalDistance.view(numBatch, nTrain, nTest)
-			del distances, totalDistance
-
-			if hasMask:
-				embeddingDistances[:, maskTensor] = float('inf')
-
-			# batched over distances
-			neighborDistances, neighborIndices = torch.topk(embeddingDistances, maxDims + 1, dim = 1, largest = False)
-			del embeddingDistances
-
-			neighborDistances.sqrt_()
-			torch.clamp_min(neighborDistances, 1e-6, out = neighborDistances)
-
-			# Compute weighted predictions
-			minDistances = torch.amin(neighborDistances, dim = 1)
-			weights = neighborDistances / minDistances.unsqueeze(1)
-			weights.neg_().exp_()
-
-			# Zero out extra neighbors: for embedding dimension E (0-indexed), keep E+2 neighbors.
-			# The [0, maxDims-1] pattern repeats once per variable in the batch.
-			dimIndices = torch.arange(maxDims, device = device).repeat(batchNumVars).view(numBatch, 1, 1)
-			weights.masked_fill_(kIndices > dimIndices + 1, 0)
-
-			weightSum = torch.sum(weights, dim = 1)
-
-			if selfPrediction:
-				# Each variable predicts itself: for row i = v*maxDims + E_0, look up y_train for variable v.
-				# y_train[v] = X[trainIndices + predictionHorizon, v], shape [batchNumVars, nTrain]
-				y_train = torch.tensor(X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
-
-				# Reshape neighborIndices to [batchNumVars, maxDims, maxDims+1, nTest] so variable axis is explicit,
-				# then index into y_train per-variable using the variable index as the first dimension.
-				neighborIndices4d = neighborIndices.view(batchNumVars, maxDims, maxDims + 1, nTest)
-				variableIndex = torch.arange(batchNumVars, device = device).view(batchNumVars, 1, 1, 1).expand_as(neighborIndices4d)
-				select = y_train[variableIndex, neighborIndices4d].view(numBatch, maxDims + 1, nTest)
-
-				predictions = torch.sum(weights * select, dim = 1) / weightSum
-
-				# y_test[v] = X[testIndices, v], shape [batchNumVars, nTestValid]
-				# Expand to [numBatch, nTestValid] by repeating each variable's test values maxDims times.
-				y_test = torch.tensor(X[testIndices, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
-				y_test_expanded = y_test.unsqueeze(1).expand(batchNumVars, maxDims, nTestValid).reshape(numBatch, nTestValid)
-
-				y_pred = predictions[:, :nTestValid]
-
-				# Vectorized per-row Pearson correlation between each (variable, dim) pair and its self-target.
-				y_test_centered = y_test_expanded - y_test_expanded.mean(dim = 1, keepdim = True)
-				y_pred_centered = y_pred - y_pred.mean(dim = 1, keepdim = True)
-				numerator = (y_test_centered * y_pred_centered).sum(dim = 1)
-				denominator = y_test_centered.pow(2).sum(dim = 1).sqrt() * y_pred_centered.pow(2).sum(dim = 1).sqrt()
-				out = numerator / denominator
-
-				scores[varBatchStart:varBatchEnd] = out.cpu().numpy().reshape(batchNumVars, maxDims)
-
-			else:
-				# y_train[:, neighborIndices] gathers training target values for every
-				# target simultaneously. neighborIndices is [numBatch, maxDims+1, nTest],
-				# so the result is [nTargets, numBatch, maxDims+1, nTest].
-				select = y_train[:, neighborIndices]
-				predictions = (weights.unsqueeze(0) * select).sum(dim = 2) / weightSum.unsqueeze(0)
-				# predictions: [nTargets, numBatch, nTest]
-
-				y_pred = predictions[:, :, :nTestValid]  # [nTargets, numBatch, nTestValid]
-
-				out = torch.zeros(nTargets, numBatch, device = device, dtype = dtype)
-				for targetIndex in range(nTargets):
-					RowwiseCorrelation(y_test_all[targetIndex], y_pred[targetIndex], out[targetIndex])
-
-				scores[:, varBatchStart * maxDims:varBatchEnd * maxDims] = out.cpu().numpy()
-
-			del neighborDistances, neighborIndices, weights, weightSum, minDistances, dimIndices
-			if torch.cuda.is_available():
-				torch.cuda.empty_cache()
-
-		if not selfPrediction:
-			scores = scores.reshape(nTargets, nVars, maxDims)
+		scores = _BatchedSeparatePrediction(
+			Y, dummy, trainEmbedding, testEmbedding,
+			nTrain, nTest, maxDims, nVars, device, dtype,
+			hasMask, maskTensor, predictionHorizon, embedded, batchSize)
 
 	if hasMask:
 		del maskTensor
@@ -393,6 +206,182 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 
 	return scores
 
+
+def _ComputeJointEmbeddingDistances(trainEmbedding, testEmbedding, nTrain, nTest,
+									maxDims, nVars, device, dtype, embedded):
+	"""
+	Compute cumulative pairwise squared-distance matrices for the joint-prediction case.
+	Columns are reordered lag-first so that cumsum position dim*nVars - 1 accumulates
+	all variables through lag depth dim. Returns [maxDims, nTrain, nTest].
+	"""
+	trainTensor = torch.tensor(trainEmbedding, device = device, dtype = dtype)
+	testTensor = torch.tensor(testEmbedding, device = device, dtype = dtype)
+	nEmbedded = trainTensor.shape[1]
+
+	distances = torch.zeros(nEmbedded, nTrain, nTest, device = device, dtype = dtype)
+	for c in range(nEmbedded):
+		diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
+		distances[c] = diff * diff
+	del trainTensor, testTensor
+
+	# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
+	# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
+	# so cumsum at position dim*nVars - 1 correctly accumulates all variables through lag depth dim.
+	if nVars > 1:
+		perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
+		distances = distances[perm]
+
+	cumulativeDistances = torch.cumsum(distances, dim = 0)
+	del distances
+
+	indices = [dim * nVars - 1 if not embedded else dim - 1 for dim in range(1, maxDims + 1)]
+	embeddingDistances = cumulativeDistances[indices]
+	del cumulativeDistances
+	return embeddingDistances
+
+
+def _ComputePerVariableEmbeddingDistances(trainEmbedding, testEmbedding, nTrain, nTest,
+										  maxDims, batchNumVars, colStart, colEnd, device, dtype):
+	"""
+	Compute cumulative pairwise squared-distance matrices for a batch of variables.
+	Returns [batchNumVars * maxDims, nTrain, nTest] in variable-first ordering where
+	row v*maxDims + e holds the cumulative distance for variable v through lag depth e+1.
+	"""
+	numBatch = batchNumVars * maxDims
+	trainTensor = torch.tensor(trainEmbedding[:, colStart:colEnd], device = device, dtype = dtype)
+	testTensor = torch.tensor(testEmbedding[:, colStart:colEnd], device = device, dtype = dtype)
+
+	distances = torch.zeros(numBatch, nTrain, nTest, device = device, dtype = dtype)
+	for c in range(numBatch):
+		diff = trainTensor[:, c].unsqueeze(1) - testTensor[:, c].unsqueeze(0)
+		distances[c] = diff * diff
+	del trainTensor, testTensor
+
+	cumulativeDistances = torch.cumsum(distances.view(batchNumVars, maxDims, nTrain, nTest), dim = 1)
+	del distances
+	return cumulativeDistances.view(numBatch, nTrain, nTest)
+
+
+def _BatchedJointPrediction(Y, dummy, trainEmbedding, testEmbedding,
+							 nTrain, nTest, maxDims, nVars, device, dtype,
+							 hasMask, maskTensor, predictionHorizon, embedded):
+	"""
+	All X variables jointly predict Y. Returns [nTargets, maxDims].
+	"""
+	embeddingDistances = _ComputeJointEmbeddingDistances(
+		trainEmbedding, testEmbedding, nTrain, nTest, maxDims, nVars, device, dtype, embedded)
+
+	if hasMask:
+		embeddingDistances[:, maskTensor] = float('inf')
+
+	testIndices = dummy.testIndices + predictionHorizon
+	testIndices = testIndices[testIndices < len(dummy.targetVec)]
+	nTestValid = len(testIndices)
+
+	nTargets = Y.shape[1]
+	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
+	y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
+
+	out = torch.zeros(nTargets, maxDims, device = device, dtype = dtype)
+	for targetIndex in range(nTargets):
+		predictions = batch_simplex_predict(embeddingDistances, maxDims + 1, y_train[targetIndex])
+		RowwiseCorrelation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
+
+	del embeddingDistances, y_train, y_test_all
+	if torch.cuda.is_available():
+		torch.cuda.empty_cache()
+
+	return out.cpu().numpy()
+
+
+def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
+								nTrain, nTest, maxDims, nVars, device, dtype,
+								hasMask, maskTensor, predictionHorizon, embedded, batchSize):
+	"""
+	Each X variable separately predicts Y. Variables are processed in batches.
+	Returns [nTargets, nVars, maxDims].
+	"""
+	nTargets = Y.shape[1]
+	scores = numpy.zeros((nTargets, nVars, maxDims), dtype = numpy.float32)
+
+	testIndices = dummy.testIndices + predictionHorizon
+	testIndices = testIndices[testIndices < len(dummy.targetVec)]
+	nTestValid = len(testIndices)
+
+	y_train = torch.tensor(Y[dummy.trainIndices + predictionHorizon, :], device = device, dtype = dtype).T
+	y_test_all = torch.tensor(Y[testIndices, :], device = device, dtype = dtype).T
+
+	actualBatchSize = batchSize if batchSize is not None else nVars
+
+	for varBatchStart in range(0, nVars, actualBatchSize):
+		varBatchEnd = min(varBatchStart + actualBatchSize, nVars)
+		batchNumVars = varBatchEnd - varBatchStart
+		colStart = varBatchStart * maxDims
+		colEnd = varBatchEnd * maxDims
+
+		embeddingDistances = _ComputePerVariableEmbeddingDistances(
+			trainEmbedding, testEmbedding, nTrain, nTest, maxDims, batchNumVars, colStart, colEnd, device, dtype)
+
+		if hasMask:
+			embeddingDistances[:, maskTensor] = float('inf')
+
+		out = torch.zeros(nTargets, batchNumVars * maxDims, device = device, dtype = dtype)
+		for targetIndex in range(nTargets):
+			predictions = batch_simplex_predict(embeddingDistances, maxDims + 1, y_train[targetIndex])
+			RowwiseCorrelation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
+		scores[:, varBatchStart:varBatchEnd, :] = out.cpu().numpy().reshape(nTargets, batchNumVars, maxDims)
+
+		del embeddingDistances, out
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
+
+	return scores
+
+
+def _BatchedSelfPrediction(X, dummy, trainEmbedding, testEmbedding,
+							nTrain, nTest, maxDims, nVars, device, dtype,
+							hasMask, maskTensor, predictionHorizon, batchSize):
+	"""
+	Each X variable predicts itself. Variables are processed in batches.
+	Returns [nVars, maxDims].
+	"""
+	scores = numpy.zeros((nVars, maxDims), dtype = numpy.float32)
+
+	testIndices = dummy.testIndices + predictionHorizon
+	testIndices = testIndices[testIndices < X.shape[0]]
+	nTestValid = len(testIndices)
+
+	actualBatchSize = batchSize if batchSize is not None else nVars
+
+	for varBatchStart in range(0, nVars, actualBatchSize):
+		varBatchEnd = min(varBatchStart + actualBatchSize, nVars)
+		batchNumVars = varBatchEnd - varBatchStart
+		colStart = varBatchStart * maxDims
+		colEnd = varBatchEnd * maxDims
+
+		embeddingDistances = _ComputePerVariableEmbeddingDistances(
+			trainEmbedding, testEmbedding, nTrain, nTest, maxDims, batchNumVars, colStart, colEnd, device, dtype)
+
+		if hasMask:
+			embeddingDistances[:, maskTensor] = float('inf')
+
+		y_train_batch = torch.tensor(
+			X[dummy.trainIndices + predictionHorizon, varBatchStart:varBatchEnd],
+			device = device, dtype = dtype).T
+		y_test_batch = torch.tensor(X[testIndices, varBatchStart:varBatchEnd], device = device, dtype = dtype).T
+
+		out = torch.zeros(batchNumVars, maxDims, device = device, dtype = dtype)
+		for v in range(batchNumVars):
+			varDistances = embeddingDistances[v * maxDims:(v + 1) * maxDims]
+			predictions = batch_simplex_predict(varDistances, maxDims + 1, y_train_batch[v])
+			RowwiseCorrelation(y_test_batch[v, :nTestValid], predictions[:, :nTestValid], out[v])
+		scores[varBatchStart:varBatchEnd] = out.cpu().numpy()
+
+		del embeddingDistances, y_train_batch, y_test_batch, out
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
+
+	return scores
 
 def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 columns: List[int] = None,

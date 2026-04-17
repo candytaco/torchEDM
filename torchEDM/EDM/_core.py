@@ -131,7 +131,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	"""
 	if predictions is None:
 		predictions = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]], device = distanceMatrices.device)
-	predictions[:] = batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions)
+	batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions)
 	return score_function(test_y, predictions, perf_out)
 
 
@@ -140,10 +140,8 @@ def batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions_o
 	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
 	:param numNeighbors:		number of nearest neighbors to use
-	:param perf_out:			array to write the performance into
-	:param test_y:				test_y to compare against
 	:param train_y:				train_y to predict from
-	:param score_function:		score function to evaluate performance
+	:param predictions_out:		array to write the predictions into
 	:return:
 	"""
 	if predictions_out is None:
