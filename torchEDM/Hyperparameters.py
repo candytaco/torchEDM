@@ -5,6 +5,7 @@ import torch
 
 from .EDM._MDE import FloorArray, RowwiseCorrelation
 from .EDM._core import BuildEmbeddingIndices
+from .EDM.Embed import Embed
 from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
@@ -156,15 +157,28 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 		combinedData = numpy.column_stack([X, Y])
 	columns = list(range(nVars))
 
-	embedding, trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = combinedData, columns = columns, train = train, test = test, embedDimensions = maxDims,
-	                                                                             predictionHorizon = predictionHorizon, step = step, exclusionRadius = exclusionRadius,
-	                                                                             embedded = embedded, validLib = validLib, ignoreNan = ignoreNan, removeNan = True)
+	trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = combinedData, columns = columns, train = train, test = test, embedDimensions = maxDims,
+	                                                                 predictionHorizon = predictionHorizon, step = step, exclusionRadius = exclusionRadius,
+	                                                                 embedded = embedded, validLib = validLib)
+
+	if embedded:
+		fullEmbedding = combinedData[:, columns]
+	else:
+		fullEmbedding = Embed(data = combinedData, embeddingDimensions = maxDims, stepSize = step, columns = columns)
+
+	if ignoreNan:
+		na_lib = numpy.isnan(fullEmbedding[trainIndices, :]).any(axis = 1)
+		na_pred = numpy.isnan(fullEmbedding[testIndices, :]).any(axis = 1)
+		if na_lib.any():
+			trainIndices = trainIndices[~na_lib]
+		if na_pred.any():
+			testIndices = testIndices[~na_pred]
 
 	device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 	dtype = torch.float16 if halfPrecision else torch.float64
 
-	trainEmbedding = embedding[trainIndices, :]
-	testEmbedding = embedding[testIndices, :]
+	trainEmbedding = fullEmbedding[trainIndices, :]
+	testEmbedding = fullEmbedding[testIndices, :]
 	nTrain = len(trainIndices)
 	nTest = len(testIndices)
 	targetDataLength = X.shape[0] if selfPrediction else Y.shape[0]

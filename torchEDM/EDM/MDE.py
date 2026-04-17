@@ -227,16 +227,15 @@ class MDE:
 			for j, t in enumerate(self.targets):
 				self._selected_variables[j].append(t)
 
-		embedding, trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = self.data, columns = numpy.arange(self.data.shape[1]).tolist(), train = self.train,
-		                                                                             test = self.test, embedDimensions = self.embedDimensions,
-		                                                                             predictionHorizon = self.predictionHorizon, step = self.step,
-		                                                                             exclusionRadius = self.exclusionRadius, embedded = True, validLib = self.validLib,
-		                                                                             ignoreNan = self.ignoreNan, removeNan = False)
+		trainIndices, testIndices, exclusionMask = BuildEmbeddingIndices(data = self.data, columns = numpy.arange(self.data.shape[1]).tolist(), train = self.train,
+		                                                                    test = self.test, embedDimensions = self.embedDimensions,
+		                                                                    predictionHorizon = self.predictionHorizon, step = self.step,
+		                                                                    exclusionRadius = self.exclusionRadius, embedded = True, validLib = self.validLib)
 		trainIndices = numpy.array(trainIndices, dtype = int)
 		testIndices = numpy.array(testIndices, dtype = int)
 
-		trainData = embedding[trainIndices, :]
-		testData = embedding[testIndices, :]
+		trainData = self.data[trainIndices, :]
+		testData = self.data[testIndices, :]
 		self.trainData = trainData
 		self.testData = testData
 

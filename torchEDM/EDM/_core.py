@@ -2,25 +2,21 @@ from warnings import warn
 
 import numpy
 
-from .Embed import Embed
 
-
-def BuildEmbeddingIndices(data, columns, train, test, embedDimensions, predictionHorizon, step, exclusionRadius = 0, embedded = False, validLib = None, ignoreNan = True, removeNan = True):
-	"""Build embedding, train/test indices, and exclusion mask without creating a dummy Simplex.
+def BuildEmbeddingIndices(data, columns, train, test, embedDimensions, predictionHorizon, step, exclusionRadius = 0, embedded = False, validLib = None):
+	"""Compute train/test indices and exclusion mask without creating a dummy Simplex.
 
 	:param data: 2D numpy array containing the source data.
-	:param columns: Column indices used to build the embedding.
+	:param columns: Column indices used for the embedding.
 	:param train: Training index spans as [start1, end1, ...] with 1-based bounds.
 	:param test: Test index spans as [start1, end1, ...] with 1-based bounds.
-	:param embedDimensions: Embedding dimension E used when building lagged vectors.
+	:param embedDimensions: Embedding dimension E used when computing index offsets.
 	:param predictionHorizon: Prediction horizon Tp applied to library bounds.
 	:param step: Embedding step (tau), where negative values indicate lagging.
 	:param exclusionRadius: Temporal neighbor exclusion radius.
-	:param embedded: If True, treat data[:, columns] as pre-embedded vectors.
+	:param embedded: If True, skip the lag-shift offset when computing train start/stop.
 	:param validLib: Optional boolean mask selecting valid library rows.
-	:param ignoreNan: If True, allow NaN filtering when removeNan is enabled.
-	:param removeNan: If True, remove NaN-containing rows from train/test indices.
-	:returns: Tuple (embedding, trainIndices, testIndices, exclusionMask).
+	:returns: Tuple (trainIndices, testIndices, exclusionMask).
 	"""
 	if columns is None or not len(columns):
 		columns = list(range(1, data.shape[1]))
@@ -97,21 +93,6 @@ def BuildEmbeddingIndices(data, columns, train, test, embedDimensions, predictio
 			warn(f'BuildEmbeddingIndices(): only {len(lib_i_valid)} valid library points found, but default knn={knn_default}.')
 		trainIndices = lib_i_valid
 
-	if embedded:
-		embedding = data[:, columns]
-	else:
-		embedding = Embed(data = data, embeddingDimensions = embedDimensions, stepSize = step, columns = columns)
-
-	if removeNan and ignoreNan:
-		na_lib = numpy.isnan(embedding[trainIndices, :]).any(axis = 1)
-		na_pred = numpy.isnan(embedding[testIndices, :]).any(axis = 1)
-		if na_lib.any():
-			trainIndices = trainIndices[~na_lib]
-		if na_pred.any():
-			testIndices = testIndices[~na_pred]
-		if len(testIndices) == 0:
-			raise ValueError('BuildEmbeddingIndices(): No valid test indices after NaN removal.')
-
 	libOverlap = len(set(trainIndices).intersection(set(testIndices))) > 0
 	checkExclusion = False
 	if exclusionRadius > 0:
@@ -140,4 +121,4 @@ def BuildEmbeddingIndices(data, columns, train, test, embedDimensions, predictio
 					if rowLow <= lib_idx <= rowHi:
 						exclusionMask[lib_i, i] = True
 
-	return embedding, trainIndices, testIndices, exclusionMask
+	return trainIndices, testIndices, exclusionMask
