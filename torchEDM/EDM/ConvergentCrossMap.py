@@ -178,7 +178,7 @@ class ConvergentCrossMap:
 			self.CrossMapVariableBatched(with_delays, test_indices.shape[0],
 										 target, numSources, numTargets, performance, RNG, embedDims)
 
-		self.forward_performance = numpy.mean(performance, axis = 1).squeeze()
+		self.forward_performance_ = numpy.mean(performance, axis = 1).squeeze()
 		self.selectedForwardEmbedDimensions = embedDims
 
 		return BatchedCCMResult(
