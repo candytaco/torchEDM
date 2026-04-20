@@ -131,8 +131,6 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	:param perf_out:			array to write the performance into
 	:return:
 	"""
-	if predictions is None:
-		predictions = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]], device = distanceMatrices.device)
 	batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions)
 	return score_function(test_y, predictions, perf_out)
 
@@ -147,10 +145,6 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 	:param predictions:			array to write the predictions into
 	:return:
 	"""
-	if predictions is None:
-		predictions = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]],
-									  device = distanceMatrices.device)
-
 	sharedNeighbors = isinstance(numNeighbors, int)
 	if sharedNeighbors:
 		k = numNeighbors
@@ -171,5 +165,8 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 
 	weightSum = torch.sum(weights, dim = 1)
 	select = train_y[neighbor_indices]
-	predictions[:] = torch.sum(weights * select, dim = 1) / weightSum
+	if predictions is not None:
+		predictions[:] = torch.sum(weights * select, dim = 1) / weightSum
+	else:
+		predictions = torch.sum(weights * select, dim = 1) / weightSum
 	return predictions
