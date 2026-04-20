@@ -1,12 +1,12 @@
 import numpy
 import torch
+from typing import List, Union
 from tqdm import tqdm as ProgressBar
 
-from torchEDM.EDM.Simplex import Simplex
+from .Results import BatchedCCMResult
 from torchEDM.EDM._core import ElementwisePairwiseDistance
 from torchEDM.EDM.utils import BuildEmbeddingIndices, MakeDelays, _get_embedding_dimension
 from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
-
 
 class ConvergentCrossMap:
 	"""
@@ -114,23 +114,13 @@ class ConvergentCrossMap:
 
 	def Run(self):
 		"""
-		Execute BatchedCCM and return BatchedCCMResult.
+		Run CCM
 		"""
-		self.forward_performance_, self.selectedForwardEmbedDimensions = self.CrossMap(self.X,
-																					   self.Y if self.Y is not None else self.X,
-																					   self.embedDimensions,
-																					   self.maxEmbedDimensions)
 
-		from .Results import BatchedCCMResult
-		return BatchedCCMResult(
-				forward_performance = self.forward_performance_,
-				predictionHorizon = self.predictionHorizon,
-				library_sizes = self.trainSizes,
-				forward_embed_dimensions = self.selectedForwardEmbedDimensions,
-				)
-
-	def CrossMap(self, X, Y, embedDims, maxDims):
-		from .Embed import Embed
+		X = self.X
+		Y = self.Y if self.Y is not None else self.X
+		embedDims = self.embedDimensions,
+		maxDims = self.maxEmbedDimensions
 
 		if X.ndim == 1:
 			X = X[:, None]
@@ -160,7 +150,7 @@ class ConvergentCrossMap:
 
 		dims = int(numpy.max(embedDims))
 
-		train_indices, _ = BuildEmbeddingIndices(X.shape[0], X.shape[1],
+		train_indices, test_indices = BuildEmbeddingIndices(X.shape[0], X.shape[1],
 												 self.train, self.test,
 												 maxDims, self.predictionHorizon, self.step,
 												 self.embedded, self.validLib)
@@ -188,16 +178,15 @@ class ConvergentCrossMap:
 			self.CrossMapVariableBatched(with_delays, test_indices.shape[0],
 										 target, numSources, numTargets, performance, RNG, embedDims)
 
-		return numpy.mean(performance, axis = 1).squeeze(), embedDims
+		self.forward_performance = numpy.mean(performance, axis = 1).squeeze()
+		self.selectedForwardEmbedDimensions = embedDims
 
-	def _get_embedding_dimension(self, embedDims, sourceIndex, targetIndex):
-		"""Return the optimal embedding dimension for source sourceIndex predicting target targetIndex."""
-		if isinstance(embedDims, int):
-			return embedDims
-		arr = numpy.asarray(embedDims)
-		if arr.ndim == 1:
-			return int(arr[sourceIndex])
-		return int(arr[sourceIndex, targetIndex])  # [nVars, nTargets]
+		return BatchedCCMResult(
+			forward_performance = self.forward_performance_,
+			predictionHorizon = self.predictionHorizon,
+			library_sizes = self.trainSizes,
+			forward_embed_dimensions = self.selectedForwardEmbedDimensions,
+		)
 
 	def CrossMapVariableBatched(self, embeddings, N_libraryIndices,
 								target, numSources, numTargets, performance, RNG, embedDims):

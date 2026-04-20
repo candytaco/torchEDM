@@ -137,3 +137,16 @@ def MakeDelays(data, num_delays, stepSize = -1):
 
 	result = numpy.column_stack(embedded_cols)
 	return result
+
+
+def _get_embedding_dimension(embedDims, sourceIndex, targetIndex):
+	"""
+	Return the optimal embedding dimension for source sourceIndex predicting target targetIndex.
+	Small handler to deal with both 1D and 2D source:target matrices and also just an int
+	"""
+	if isinstance(embedDims, int):
+		return embedDims
+	arr = numpy.asarray(embedDims)
+	if arr.ndim == 1:
+		return int(arr[sourceIndex])
+	return int(arr[sourceIndex, targetIndex])  # [nVars, nTargets]
