@@ -71,49 +71,54 @@ def ComputePredictions(weights, select, weightSum):
 	return (weights * select).sum(dim = 1) / weightSum
 
 
-def RowwiseCorrelation(vector: torch.tensor, array: torch.tensor, out: Optional[torch.tensor] = None):
+def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	Correlation between a vector and columns of an array
-
-	Because of the order of operations in the MDE tensors, things end up in rows instead of columns
-
-	:param vector: [n] tensor
-	:param array: [m x n] tensor
-	:param out: [m] output tensor
+	Correlation between target time series and batched predictions.
+	:param target:		[n_time, n_targets] tensor of true values
+	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
+	:param out:			[n_sources, n_targets] output tensor
 	:return: out tensor with correlations
 	"""
+	if target.ndim < 2:
+		target = target[:, None]
+	if predictions.ndim < 3:
+		predictions = predictions[:, :, None]
 	if out is None:
-		out = torch.zeros(array.shape[0], device = vector.device)
+		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
-	vectorCentered = vector - torch.mean(vector)
-	vectorStd = torch.sqrt(torch.sum(vectorCentered ** 2))
+	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
+	targetStd = torch.sqrt(torch.sum(targetCentered ** 2, dim = 0))
 
-	arrayMeans = torch.mean(array, dim = 1, keepdim = True)
-	arrayCentered = array - arrayMeans
-	arrayStd = torch.sqrt(torch.sum(arrayCentered ** 2, dim = 1))
+	predictionsCentered = predictions - torch.mean(predictions, dim = 1, keepdim = True)
+	predictionsStd = torch.sqrt(torch.sum(predictionsCentered ** 2, dim = 1))
 
-	out[:] = torch.sum(vectorCentered * arrayCentered, dim = 1) / (vectorStd * arrayStd)
+	out[:] = torch.sum(targetCentered * predictionsCentered, dim = 1) / (targetStd * predictionsStd)
 
-	return out
+	return out.squeeze()
 
 
-def RowwiseR2(vector: torch.tensor, array: torch.tensor, out: Optional[torch.tensor] = None):
+def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	R2 (coefficient of determination) between a vector (Y_true) and rows of an array (Y_pred)
-	:param vector: [n] tensor of true values
-	:param array: [m x n] tensor of predicted values (each row is a set of predictions)
-	:param out: [m] output tensor
+	R2 (variance explained) between target time series and batched predictions.
+	:param target:		[n_time, n_targets] tensor of true values
+	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
+	:param out:			[n_sources, n_targets] output tensor
 	:return: out tensor with R2 values
 	"""
+	if target.ndim < 2:
+		target = target[:, None]
+	if predictions.ndim < 3:
+		predictions = predictions[:, :, None]
 	if out is None:
-		out = torch.zeros(array.shape[0], device = vector.device)
-	vectorMean = torch.mean(vector)
-	totalSumOfSquares = torch.sum((vector - vectorMean) ** 2)
+		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
-	residualSumOfSquares = torch.sum((vector - array) ** 2, dim = 1)
+	targetMean = torch.mean(target, dim = 0)
+	totalSumOfSquares = torch.sum((target - targetMean) ** 2, dim = 0)
+
+	residualSumOfSquares = torch.sum((target - predictions) ** 2, dim = 1)
 	out[:] = 1 - residualSumOfSquares / totalSumOfSquares
 
-	return out
+	return out.squeeze()
 
 def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
 									train_y: torch.tensor, test_y: torch.tensor, score_function: Callable,
@@ -147,15 +152,19 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 	:param train_y:				train_y to predict from
 	:param predictions:			array to write the predictions into
 	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
-	:return:
+	:return: predicted Y in <source, n_test, target>
 	"""
 	neighbor_indices, weights = batch_get_simplex_weights(distanceMatrices, numNeighbors, train_indices)
 
-	select = train_y[neighbor_indices]
+	# force columns so we can do multi-target predictions
+	if train_y.ndim < 2:
+		train_y = train_y[:, None]
+
+	select = train_y[neighbor_indices, :]
 	if predictions is not None:
-		predictions[:] = torch.sum(weights * select, dim = 1)
+		predictions[:] = torch.sum(weights[:, :, :, None] * select, dim = 1)
 	else:
-		predictions = torch.sum(weights * select, dim = 1)
+		predictions = torch.sum(weights[:, :, :, None] * select, dim = 1)
 	return predictions
 
 
@@ -166,7 +175,7 @@ def batch_get_simplex_weights(distanceMatrices, numNeighbors, train_indices = No
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
 	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
 	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
-	:return:
+	:return: neighbor_dist and weights <source, k, n_test> nearst neighbors and weights in train for each test point
 	"""
 	sharedNeighbors = isinstance(numNeighbors, int)
 	if sharedNeighbors:

@@ -8,7 +8,7 @@ from .ConvergentCrossMap import ConvergentCrossMap
 from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
-from ._core import RowwiseCorrelation, RowwiseR2, batch_simplex_predict_and_score, batch_simplex_predict
+from ._core import Correlation, R2, batch_simplex_predict_and_score, batch_simplex_predict
 from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
 
@@ -148,9 +148,9 @@ class MDE:
 		self.timeDelayResults = None
 
 		if metric == 'correlation':
-			self.ScoreFunction = RowwiseCorrelation
+			self.ScoreFunction = Correlation
 		elif metric in ['R2', 'r2', 'rsquared']:
-			self.ScoreFunction = RowwiseR2
+			self.ScoreFunction = R2
 		else:
 			raise ValueError('Metric {} not supported'.format(metric))
 

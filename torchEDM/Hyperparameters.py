@@ -3,7 +3,7 @@ from typing import List, Tuple, Any, Optional
 import numpy
 import torch
 
-from .EDM._core import RowwiseCorrelation, batch_simplex_predict
+from .EDM._core import Correlation, batch_simplex_predict
 from .EDM.utils import BuildEmbeddingIndices, build_exclusion_mask
 from .Scoring import Correlation
 from .EDM.SMap import SMap
@@ -291,7 +291,7 @@ def _BatchedJointPrediction(Y, dummy, trainEmbedding, testEmbedding,
 	out = torch.zeros(nTargets, maxDims, device = device, dtype = dtype)
 	for targetIndex in range(nTargets):
 		predictions = batch_simplex_predict(embeddingDistances, maxDims + 1, y_train[targetIndex])
-		RowwiseCorrelation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
+		Correlation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
 
 	del embeddingDistances, y_train, y_test_all
 	if torch.cuda.is_available():
@@ -334,7 +334,7 @@ def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
 		out = torch.zeros(nTargets, batchNumVars * maxDims, device = device, dtype = dtype)
 		for targetIndex in range(nTargets):
 			predictions = batch_simplex_predict(embeddingDistances, maxDims + 1, y_train[targetIndex])
-			RowwiseCorrelation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
+			Correlation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
 		scores[:, varBatchStart:varBatchEnd, :] = out.cpu().numpy().reshape(nTargets, batchNumVars, maxDims)
 
 		del embeddingDistances, out
