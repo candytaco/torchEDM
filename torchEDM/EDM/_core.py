@@ -71,6 +71,22 @@ def ComputePredictions(weights, select, weightSum):
 	return (weights * select).sum(dim = 1) / weightSum
 
 
+def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Optional[torch.tensor]], torch.tensor]):
+	"""
+	Decorator that reshape score functions inputs to handle multiple prediction targets
+	:param score_function:
+	:return:
+	"""
+	def wrapper(target, predictions, out = None):
+		if target.ndim < 2:
+			target = target[:, None]
+		if predictions.ndim < 3:
+			predictions = predictions[:, :, None]
+		return score_function(target, predictions, out)
+	return wrapper
+
+
+@_promoteDimensions
 def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
 	Correlation between target time series and batched predictions.
@@ -79,10 +95,6 @@ def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[t
 	:param out:			[n_sources, n_targets] output tensor
 	:return: out tensor with correlations
 	"""
-	if target.ndim < 2:
-		target = target[:, None]
-	if predictions.ndim < 3:
-		predictions = predictions[:, :, None]
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
@@ -97,6 +109,7 @@ def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[t
 	return out.squeeze()
 
 
+@_promoteDimensions
 def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
 	R2 (variance explained) between target time series and batched predictions.
@@ -105,10 +118,6 @@ def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tens
 	:param out:			[n_sources, n_targets] output tensor
 	:return: out tensor with R2 values
 	"""
-	if target.ndim < 2:
-		target = target[:, None]
-	if predictions.ndim < 3:
-		predictions = predictions[:, :, None]
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
