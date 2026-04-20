@@ -118,7 +118,8 @@ def RowwiseR2(vector: torch.tensor, array: torch.tensor, out: Optional[torch.ten
 def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
 									train_y: torch.tensor, test_y: torch.tensor, score_function: Callable,
 									predictions: Optional[torch.tensor] = None,
-									perf_out: Optional[torch.tensor] = None):
+									perf_out: Optional[torch.tensor] = None,
+									train_indices: Optional[torch.tensor] = None):
 	"""
 	Batched multiple predictions and score via simplex. Each distance matrix is used to make a separate prediction on Y.
 	These predictions are then scored
@@ -129,6 +130,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	:param score_function:		score function to evaluate performance
 	:param predictions:			tensor write prediction into
 	:param perf_out:			array to write the performance into
+	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
 	:return:
 	"""
 	batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions)
@@ -136,13 +138,34 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 
 
 def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
-						  train_y: torch.tensor, predictions: Optional[torch.tensor] = None) -> torch.tensory:
+						  train_y: torch.tensor, predictions: Optional[torch.tensor] = None,
+						  train_indices: Optional[torch.tensor] = None) -> torch.tensory:
 	"""
 	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
 	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
 	:param train_y:				train_y to predict from
 	:param predictions:			array to write the predictions into
+	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
+	:return:
+	"""
+	neighbor_indices, weights = batch_get_simplex_weights(distanceMatrices, numNeighbors, train_indices)
+
+	select = train_y[neighbor_indices]
+	if predictions is not None:
+		predictions[:] = torch.sum(weights * select, dim = 1)
+	else:
+		predictions = torch.sum(weights * select, dim = 1)
+	return predictions
+
+
+def batch_get_simplex_weights(distanceMatrices, numNeighbors, train_indices = None):
+	"""
+	Given distance matrices, get neighbor indices and weights per timepoint in the test set.
+	Useful for making custom predictions
+	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
+	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
+	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
 	:return:
 	"""
 	sharedNeighbors = isinstance(numNeighbors, int)
@@ -150,9 +173,12 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 		k = numNeighbors
 	else:
 		k = int(torch.max(numNeighbors))
+		if len(torch.unique(numNeighbors)) < 2:	# Case degenerate vector that could've been an int
+			sharedNeighbors = True
 
 	neighbor_dist, neighbor_indices = torch.topk(distanceMatrices, k, dim = 1,
 												 largest = False)
+
 	neighbor_dist.sqrt_()
 	torch.clamp_min(neighbor_dist, 1e-6, out = neighbor_dist)
 	minDistances = torch.amin(neighbor_dist, dim = 1)
@@ -162,11 +188,10 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 	# if different num neighbors per distance matrix, mask the extra ones to 0 weight
 	if not sharedNeighbors:
 		weights.masked_fill_(torch.arange(k, device = weights.device)[None, :, None] >= numNeighbors[:, None, None], 0)
+	weights.div_(weights.sum(dim = 1, keepdim = True)) # normalize weights to sum to 1
 
-	weightSum = torch.sum(weights, dim = 1)
-	select = train_y[neighbor_indices]
-	if predictions is not None:
-		predictions[:] = torch.sum(weights * select, dim = 1) / weightSum
-	else:
-		predictions = torch.sum(weights * select, dim = 1) / weightSum
-	return predictions
+	# in CCM, the distance matrices that this function sees are a view into a larger matrix along the train dimension
+	# so we need the actual indices corresponding to the columns to properly index into the data
+	if train_indices is not None:
+		neighbor_indices = train_indices[neighbor_indices]
+	return neighbor_indices, weights

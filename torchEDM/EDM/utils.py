@@ -72,11 +72,11 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 def build_exclusion_mask(train_indices, test_indices, exclusionRadius):
 	"""
 	Build an exclusion mask for a distance matrix that will be built from the train and test indices
-	THis accounts for re-using data for both train and test. Reconsider data choises if using this.
+	THis accounts for re-using data for both train and test. Reconsider data choices if using this.
 	:param train_indices:
 	:param test_indices:
 	:param exclusionRadius:
-	:return:
+	:return: exclusion mask, None if nothing is to be excluded
 	"""
 	train_test_overlap = len(set(train_indices).intersection(set(test_indices))) > 0
 	train_test_close = False
@@ -104,7 +104,7 @@ def build_exclusion_mask(train_indices, test_indices, exclusionRadius):
 				for lib_i, lib_idx in enumerate(train_indices):
 					if rowLow <= lib_idx <= rowHi:
 						exclusionMask[lib_i, i] = True
-	return exclusionMask
+	return exclusionMask if numpy.any(exclusionMask) else None
 
 
 def MakeDelays(data, num_delays, stepSize = -1):
