@@ -13,8 +13,8 @@ from scipy.spatial import KDTree
 
 from ..Utils import IsNonStringIterable
 # local modules
-from .Embed import Embed
-from .NeighborFinder import KDTreeNeighborFinder, PairwiseDistanceNeighborFinder
+	from .utils import MakeDelays
+	from .NeighborFinder import KDTreeNeighborFinder, PairwiseDistanceNeighborFinder
 
 
 # --------------------------------------------------------------------
@@ -682,8 +682,8 @@ class EDM:
 		"""
 
 		if not self.isEmbedded:
-			self.Embedding = Embed(data = self.Data, embeddingDimensions = self.embedDimensions,
-			                       stepSize = self.embedStep, columns = self.columns)
+			self.Embedding = MakeDelays(data = self.Data, num_delays = self.embedDimensions,
+										stepSize = self.embedStep)
 		else:
 			self.Embedding = self.Data[:, self.columns]  # Already an embedding
 

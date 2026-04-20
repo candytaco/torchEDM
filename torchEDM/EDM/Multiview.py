@@ -8,7 +8,7 @@ from warnings import warn
 from numpy import argsort, array, column_stack, mean
 
 # local modules
-from .Embed import Embed
+from .utils import MakeDelays
 from .. import Functions
 from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 from ..Utils import IsNonStringIterable
@@ -367,11 +367,7 @@ class Multiview:
             comboCols = self.columns
 
         # Embed Data - returns numpy array
-        self.Embedding = Embed(self.Data,
-                               columns = comboCols,
-                               embeddingDimensions = self.embedDimensions,
-                               stepSize = self.step,
-                               includeTime = False)
+        self.Embedding = MakeDelays(self.Data, num_delays = self.embedDimensions, stepSize = self.step)
 
         # Map target from original column index to embedded column index
         # Target in embedded space is the first lag (t-0) of the target variable

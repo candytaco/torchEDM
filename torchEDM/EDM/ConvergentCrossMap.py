@@ -4,7 +4,7 @@ from tqdm import tqdm as ProgressBar
 
 from torchEDM.EDM.Simplex import Simplex
 from torchEDM.EDM._core import ElementwisePairwiseDistance
-from torchEDM.EDM.utils import BuildEmbeddingIndices, build_exclusion_mask
+from torchEDM.EDM.utils import BuildEmbeddingIndices, MakeDelays, _get_embedding_dimension
 from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
 
 
@@ -170,26 +170,22 @@ class ConvergentCrossMap:
 
 		# Always embed with the maximum number of lags. The CrossMap functions select
 		# the appropriate per-(source, target) lag prefix during distance computation.
-		embeddings = []
+		with_delays = []
 		for varIndex in range(numSources):
 			if self.embedded:
-				embedding = X[:, varIndex].reshape(-1, 1)
+				delayed = X[:, varIndex][:, None]
 			else:
-				embedding = Embed(data = X,
-								  columns = [varIndex],
-								  embeddingDimensions = dims,
-								  stepSize = self.step,
-								  includeTime = False)
-			embeddings.append(embedding[libraryIndices, :])
+				delayed = MakeDelays(data = X[:, varIndex], num_delays = dims, stepSize = self.step)
+			with_delays.append(delayed[train_indices, :])
 
 		target = torch.tensor(Y[libraryIndices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 		performance = numpy.zeros([len(self.trainSizes), self.sample, numSources, numTargets])
 
 		if self.batchMode == 'sample':
-			self.CrossMapSampleBatched(embeddings, N_libraryIndices,
+			self.CrossMapSampleBatched(with_delays, test_indices.shape[0],
 									   target, numSources, performance, RNG, embedDims)
 		else:
-			self.CrossMapVariableBatched(embeddings, N_libraryIndices,
+			self.CrossMapVariableBatched(with_delays, test_indices.shape[0],
 										 target, numSources, numTargets, performance, RNG, embedDims)
 
 		return numpy.mean(performance, axis = 1).squeeze(), embedDims

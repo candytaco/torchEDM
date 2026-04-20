@@ -66,7 +66,7 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 			raise ValueError('Not enough training data for minimum nearest neighbors')
 		train_indices = lib_i_valid
 
-	return train_indices, test_indices
+	return numpy.array(train_indices), numpy.array(test_indices)
 
 
 def build_exclusion_mask(train_indices, test_indices, exclusionRadius):
@@ -107,26 +107,20 @@ def build_exclusion_mask(train_indices, test_indices, exclusionRadius):
 	return exclusionMask
 
 
-def MakeDelays(data,
-			   columns,
-			   embeddingDimensions,
-			   stepSize = -1):
+def MakeDelays(data, num_delays, stepSize = -1):
 	"""
-	Takens time-delay embedding on columns via pandas DataFrame.shift()
-	if includeTime True : insert dataFrame column 0 in first column
-	nan will be present in |step| * (E-1) rows.
+	Make delayed copies of the columns of the data
 	"""
 
-	if embeddingDimensions < 1:
+	if num_delays < 1:
 		raise RuntimeError('Embed(): E must be positive.')
 	if stepSize == 0:
 		raise RuntimeError('Embed(): step must be non-zero.')
 
-	selected_data = data[:, columns]
-	n_rows, n_cols = selected_data.shape
+	n_rows, n_cols = data.shape
 
 	# Setup shift indices
-	shiftVec = [i for i in range(0, int(embeddingDimensions * (-stepSize)), -stepSize)]
+	shiftVec = [i for i in range(0, int(num_delays * (-stepSize)), -stepSize)]
 
 	# Create embedded array
 	embedded_cols = []
@@ -135,10 +129,10 @@ def MakeDelays(data,
 			shifted_col = numpy.full(n_rows, numpy.nan)
 			if shift >= 0:
 				if shift < n_rows:
-					shifted_col[shift:] = selected_data[:n_rows - shift, col_idx]
+					shifted_col[shift:] = data[:n_rows - shift, col_idx]
 			else:
 				if -shift < n_rows:
-					shifted_col[:shift] = selected_data[-shift:, col_idx]
+					shifted_col[:shift] = data[-shift:, col_idx]
 			embedded_cols.append(shifted_col)
 
 	result = numpy.column_stack(embedded_cols)
