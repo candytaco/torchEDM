@@ -1,5 +1,5 @@
 ## core functions for torchEDM
-from typing import Optional
+from typing import Optional, Union, Callable
 
 import torch
 
@@ -115,7 +115,8 @@ def RowwiseR2(vector: torch.tensor, array: torch.tensor, out: Optional[torch.ten
 
 	return out
 
-def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors, train_y, test_y, score_function,
+def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
+									train_y: torch.tensor, test_y: torch.tensor, score_function: Callable,
 									predictions: Optional[torch.tensor] = None,
 									perf_out: Optional[torch.tensor] = None):
 	"""
@@ -126,6 +127,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	:param test_y:				test_y to compare against
 	:param train_y:				train_y to predict from
 	:param score_function:		score function to evaluate performance
+	:param predictions:			tensor write prediction into
 	:param perf_out:			array to write the performance into
 	:return:
 	"""
@@ -135,26 +137,39 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	return score_function(test_y, predictions, perf_out)
 
 
-def batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions_out = None):
+def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
+						  train_y: torch.tensor, predictions: Optional[torch.tensor] = None) -> torch.tensory:
 	"""
 	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
-	:param numNeighbors:		number of nearest neighbors to use
+	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
 	:param train_y:				train_y to predict from
-	:param predictions_out:		array to write the predictions into
+	:param predictions:			array to write the predictions into
 	:return:
 	"""
-	if predictions_out is None:
-		predictions_out = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]], device = distanceMatrices.device)
+	if predictions is None:
+		predictions = torch.zeros([distanceMatrices.shape[0], distanceMatrices.shape[2]],
+									  device = distanceMatrices.device)
 
-	neighbor_dist, neighbor_indices = torch.topk(distanceMatrices, numNeighbors, dim = 1,
+	sharedNeighbors = isinstance(numNeighbors, int)
+	if sharedNeighbors:
+		k = numNeighbors
+	else:
+		k = int(torch.max(numNeighbors))
+
+	neighbor_dist, neighbor_indices = torch.topk(distanceMatrices, k, dim = 1,
 												 largest = False)
 	neighbor_dist.sqrt_()
 	torch.clamp_min(neighbor_dist, 1e-6, out = neighbor_dist)
 	minDistances = torch.amin(neighbor_dist, dim = 1)
 	weights = neighbor_dist / minDistances.unsqueeze(1)
 	weights.neg_().exp_()
+
+	# if different num neighbors per distance matrix, mask the extra ones to 0 weight
+	if not sharedNeighbors:
+		weights.masked_fill_(torch.arange(k, device = weights.device)[None, :, None] >= numNeighbors[:, None, None], 0)
+
 	weightSum = torch.sum(weights, dim = 1)
 	select = train_y[neighbor_indices]
-	predictions_out[:] = torch.sum(weights * select, dim = 1) / weightSum
-	return predictions_out
+	predictions[:] = torch.sum(weights * select, dim = 1) / weightSum
+	return predictions
