@@ -156,18 +156,6 @@ class ConvergentCrossMap:
 												 self.embedded, self.validLib)
 		exclusion = build_exclusion_mask(train_indices, test_indices, self.exclusionRadius)
 
-		# Always embed with the maximum number of lags. The CrossMap functions select
-		# the appropriate per-(source, target) lag prefix during distance computation.
-		train_delayed = []
-		test_delayed = []
-		for varIndex in range(numSources):
-			if self.embedded:
-				delayed = X[:, varIndex][:, None]
-			else:
-				delayed = MakeDelays(data = X[:, varIndex], num_delays = maxEmbedDims, stepSize = self.step)
-			train_delayed.append(delayed[train_indices, :])
-			test_delayed.append(delayed[test_indices, :])
-
 		y_train = torch.tensor(Y[train_indices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 		y_test = torch.tensor(Y[test_indices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 		performance = numpy.zeros([len(self.trainSizes), self.sample, numSources, numTargets])
@@ -176,11 +164,11 @@ class ConvergentCrossMap:
 		# so sample mode is better suited for a few smallish distance matrices
 
 		if self.batchMode == 'sample':
-			self.CrossMapSampleBatched(train_delayed, test_indices.shape[0],
+			self.CrossMapSampleBatched(X, train_indices,
 									   y_train, numSources, performance, RNG, embedDims, exclusion)
 		else:
-			self.CrossMapVariableBatched(train_delayed, test_delayed,
-										 y_train, numSources, numTargets, performance, RNG, embedDims, exclusion)
+			self.CrossMapVariableBatched(X, train_indices, test_indices,
+										 y_train, y_test, performance, RNG, embedDims, exclusion)
 
 		self.forward_performance_ = numpy.mean(performance, axis = 1).squeeze()
 		self.selectedForwardEmbedDimensions = embedDims
@@ -192,22 +180,22 @@ class ConvergentCrossMap:
 			forward_embed_dimensions = self.selectedForwardEmbedDimensions,
 		)
 
-	def CrossMapVariableBatched(self, train_embedded: List[torch.tensor], test_embedded: List[torch.tensor],
+	def CrossMapVariableBatched(self, X, train_indices, test_indices,
 								y_train: Union[numpy.ndarray, torch.tensor], y_test: Union[numpy.ndarray, torch.tensor],
-								numSources, numTargets, performance, RNG, embedDims,
+								performance, RNG, embedDims,
 								exclusion = None):
 		"""
-		Batch over source->target pairs. Distances are computed on the fly for each batch.
+		Batch over source->target pairs. Embeddings are computed per-batch to minimize VRAM usage.
 		"""
-		maxEmbeddingDims = train_embedded[0].shape[1]
-		numTrain = train_embedded[0].shape[0]
-		numTest = test_embedded[0].shape[0]
+		maxEmbeddingDims = int(numpy.max(embedDims))
+		numTrain = train_indices.shape[0]
+		numTest = test_indices.shape[0]
 
 		uniqueSourceDelayPairs = []	# list of the parameters for all evaluated distance matrices
 		sourceIndices = []			# source variable for each evaluated distance matrix
 		uniqueSourceDims = {}
 		delayIndices = []			# embedding dimension for each evaluated distance matrix
-		for s in range(numSources):
+		for s in range(X.shape[1]):
 			uniqueSourceDims[s] = numpy.sort(numpy.unique(embedDims[s, :]))
 			for d in uniqueSourceDims[s]:
 				uniqueSourceDelayPairs.append((s, d))
@@ -216,7 +204,6 @@ class ConvergentCrossMap:
 		numUniqueSourceDelayPairs = len(uniqueSourceDelayPairs)
 
 		batchSize = numUniqueSourceDelayPairs if numUniqueSourceDelayPairs < self.batchSize else self.batchSize
-		max_knn = self.knn if self.knn is not None else int(numpy.max(embedDims)) + 1
 
 		# Reusable per-lag squared distance buffer for one source: [lag number, train samples, test samples]
 		# in the case we need to compute multiple embedding dimensions per source
@@ -239,7 +226,6 @@ class ConvergentCrossMap:
 									  disable = not self.showProgress):
 			batchEnd = min(batchStart + self.batchSize, numUniqueSourceDelayPairs)
 			batchPairs = uniqueSourceDelayPairs[batchStart:batchEnd]
-			batchNumPairs = len(batchPairs)
 
 			theseSources = []
 			theseDims = {}
@@ -252,11 +238,19 @@ class ConvergentCrossMap:
 			numNeighbors = []
 
 			i = 0	# ith distance matrix because it could be variable across sources
-			# compute the distances from each embedding
+			# compute the distances needed per source in this batch
 			for source in theseSources:
-				# calculate cumulative distances
+				if self.embedded:
+					delayed = X[:, source][:, None]
+				else:
+					delayed = MakeDelays(data = X[:, source], num_delays = maxEmbeddingDims, stepSize = self.step)
+				train_embedding = torch.tensor(delayed[train_indices, :], dtype = self.dtype, device = self.device)
+				test_embedding = torch.tensor(delayed[test_indices, :], dtype = self.dtype, device = self.device)
+
 				for d in range(maxEmbeddingDims):
-					delay_dists[d, :, :] = train_embedded[source][:, d].unsqueeze(1) - test_embedded[source][:, d].unsqueeze(0)
+					delay_dists[d, :, :] = train_embedding[:, d].unsqueeze(1) - test_embedding[:, d].unsqueeze(0)
+				del train_embedding, test_embedding
+
 				delay_dists **= 2
 				torch.cumsum(delay_dists, dim = 0, out = delay_dists)
 				# insert only needed ones into the batched tensor matrix
@@ -283,20 +277,18 @@ class ConvergentCrossMap:
 					# subsampledDistances: [distance matrices, subsampled train, test indices]
 					subsampledDistances = distances[:, indices, :]
 
-					# Q: can this simplex predict function even take 2d matrices for Y instead of a vector?
-					# the scoring functions certainly can't
-					perf = batch_simplex_predict_and_score(subsampledDistances, numNeighbors, y_train, y_test, Correlation,
-														   train_indices = indices)
-
-					# perf contains some superfluous entries, so we want to index out only the proper pairs
+					# TODO:
+					# 1. compute neighbors and weights
+					# 2. batch compute predictions over Ys and score
+					#    this could best be done by batching over <source/dim> combos over targets to avoid unnecessary compute
+					# 4. place necessary source->target pairs into perfs
 
 					performance[size_i, sample_i, source_indices, target_indices] = perfs.cpu().numpy()
 
-			del pairDistances, pairTargets
 			if torch.cuda.is_available():
 				torch.cuda.empty_cache()
 
-	def CrossMapSampleBatched(self, embeddings, N_libraryIndices,
+	def CrossMapSampleBatched(self, X, train_indices,
 							  target, numSources, performance, RNG, embedDims, exclusion = None):
 		"""
 		Batch over subsamples per library size. Efficient when the number of source variables is small.
@@ -313,21 +305,30 @@ class ConvergentCrossMap:
 		"""
 		numSamplesInBatch = self.sampleBatchSize if self.sampleBatchSize is not None else self.sample
 		numTargets = target.shape[1]
-		dims = embeddings[0].shape[1]
+		dims = int(numpy.max(embedDims))
+		N_libraryIndices = train_indices.shape[0]
+
+		embeddings = []
+		for varIndex in range(numSources):
+			if self.embedded:
+				delayed = X[:, varIndex][:, None]
+			else:
+				delayed = MakeDelays(data = X[:, varIndex], num_delays = dims, stepSize = self.step)
+			embeddings.append(delayed[train_indices, :])
 
 		max_knn = self.knn if self.knn is not None else int(numpy.max(embedDims)) + 1
 
 		# Build per-lag cumulative distance matrices for all source variables: [numSources, dims, N, N]
-		trainEmbeddings = torch.tensor(numpy.array(embeddings), dtype = self.dtype, device = self.device)
+		train_embeddingeddings = torch.tensor(numpy.array(embeddings), dtype = self.dtype, device = self.device)
 		d = torch.zeros([dims, N_libraryIndices, N_libraryIndices],
 						dtype = self.dtype, device = self.device)
 		cumulativeSqDist = torch.zeros([numSources, dims, N_libraryIndices, N_libraryIndices],
 									   dtype = self.dtype, device = self.device)
 		for i in range(numSources):
-			ElementwisePairwiseDistance(trainEmbeddings[i, :, :], trainEmbeddings[i, :, :], d)
+			ElementwisePairwiseDistance(train_embeddingeddings[i, :, :], train_embeddingeddings[i, :, :], d)
 			cumulativeSqDist[i] = torch.cumsum(d, dim = 0)
 
-		del trainEmbeddings
+		del train_embeddingeddings
 		del d
 
 		# Select per-(source, target) sqrt distances: [numSources, numTargets, N, N]
