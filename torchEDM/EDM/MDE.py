@@ -336,8 +336,9 @@ class MDE:
 							  current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
-					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn, test_y_tensor,
-													perfs[j, :numCandidates], train_y_tensor, self.ScoreFunction)
+					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn, train_y_tensor,
+													test_y_tensor, self.ScoreFunction,
+													perfs[j, :numCandidates])
 
 					perfs_numpy = perfs[j, :numCandidates].cpu().numpy()
 					for v, var in enumerate(theseCandidates):
