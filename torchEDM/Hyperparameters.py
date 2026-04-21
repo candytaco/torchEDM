@@ -5,7 +5,6 @@ import torch
 
 from .EDM._core import Correlation, batch_simplex_predict
 from .EDM.utils import BuildEmbeddingIndices, build_exclusion_mask
-from .Scoring import Correlation
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
 from .Utils import IsNonStringIterable
