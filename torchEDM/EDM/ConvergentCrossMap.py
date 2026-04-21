@@ -129,7 +129,6 @@ class ConvergentCrossMap:
 		X = self.X
 		Y = self.Y if self.Y is not None else self.X
 		embedDims = self.embedDimensions
-		maxDims = self.maxEmbedDimensions
 
 		if X.ndim == 1:
 			X = X[:, None]
@@ -142,7 +141,7 @@ class ConvergentCrossMap:
 		RNG = numpy.random.default_rng(self.seed)
 
 		if embedDims is None:
-			scores = FindOptimalEmbeddingDimensionality(X, Y, maxDims = maxDims, train = self.train, test = self.test,
+			scores = FindOptimalEmbeddingDimensionality(X, Y, maxDims = self.maxEmbedDimensions, train = self.train, test = self.test,
 														predictionHorizon = self.predictionHorizon, step = self.step,
 														ignoreNan = self.ignoreNan,
 														batched = True, joint = False,
@@ -157,7 +156,7 @@ class ConvergentCrossMap:
 
 		train_indices, test_indices = BuildEmbeddingIndices(X.shape[0], X.shape[1],
 												 self.train, self.test,
-												 maxDims, self.predictionHorizon, self.step,
+												 int(numpy.max(embedDims)), self.predictionHorizon, self.step,
 												 self.embedded, self.validLib)
 		exclusion = build_exclusion_mask(train_indices, test_indices, self.exclusionRadius)
 
