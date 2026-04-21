@@ -30,6 +30,7 @@ class CCMFitterCV(EDMFitter):
 				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
+				 y_batch: Optional[int] = None,
 				 HalfPrecision: bool = False,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
@@ -49,8 +50,9 @@ class CCMFitterCV(EDMFitter):
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
 		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Number of variables to process per batch in 'variable' mode
-		:param HalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param batchSize: 			Number of distance matrices to process per batch in 'variable' mode
+		:param y_batch:				number of target variable to predict in batches, independent of batchSize, which is X
+		:param HalfPrecision: 		Use float16 instead of float32 to save VRAM
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples)
 		:param sampleBatchSize: 	Number of subsamples per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
@@ -69,6 +71,7 @@ class CCMFitterCV(EDMFitter):
 		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
+		self.y_batch = y_batch
 		self.useHalfPrecision = HalfPrecision
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
@@ -143,11 +146,11 @@ class CCMFitterCV(EDMFitter):
 									 step = self.Step,
 									 exclusionRadius = self.ExclusionRadius,
 									 seed = self.seed,
-									 directions = self.directions,
 									 trainIndices = foldTrainIndices,
 									 testIndices = foldTestIndices,
 									 device = self.device,
 									 batchSize = self.batchSize,
+									 y_batch = self.y_batch,
 									 HalfPrecision = self.useHalfPrecision,
 									 showProgress = False,
 									 batchMode = self.batchMode,
