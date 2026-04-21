@@ -13,8 +13,8 @@ from scipy.spatial import KDTree
 
 from ..Utils import IsNonStringIterable
 # local modules
-	from .utils import MakeDelays
-	from .NeighborFinder import KDTreeNeighborFinder, PairwiseDistanceNeighborFinder
+from .utils import MakeDelays
+from .NeighborFinder import KDTreeNeighborFinder, PairwiseDistanceNeighborFinder
 
 
 # --------------------------------------------------------------------

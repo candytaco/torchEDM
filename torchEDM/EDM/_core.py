@@ -153,7 +153,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 
 def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
 						  train_y: torch.tensor, predictions: Optional[torch.tensor] = None,
-						  train_indices: Optional[torch.tensor] = None) -> torch.tensory:
+						  train_indices: Optional[torch.tensor] = None) -> torch.tensor:
 	"""
 	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
 	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>

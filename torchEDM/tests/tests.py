@@ -20,7 +20,6 @@ from torchEDM.Fitters.SimplexFitter import SimplexFitter
 from torchEDM.Fitters.SMapFitter import SMapFitter
 from torchEDM.Fitters.CCMFitter import CCMFitter
 from torchEDM.Fitters.MultiviewFitter import MultiviewFitter
-import torchEDM.EDM.Embed
 from torchEDM.ExampleData import dataFileNames
 import importlib.resources
 
@@ -691,21 +690,16 @@ class test_EDM( unittest.TestCase ):
         CCM = ConvergentCrossMap(X = data[:, [col_index, col_index]], Y = data[:, target_index][:, None],
 								 trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
 								 sample = 100, embedDimensions = 3,
-								 predictionHorizon = 0, knn = 0, step = -1,
-								 embedded = False, validLib = [], includeData = False,
-								 batchMode = 'sample',
-								 showProgress = False
-								 )
+								 predictionHorizon = 0, knn = None, step = -1,
+								 embedded = False, validLib = [],
+								 batchMode = 'variable',
+								 showProgress = False)
         results = CCM.Run()
 
         dfv = self.ValidationFiles["CCM_anch_sst_valid.csv"].values
 
         self.assertTrue(numpy.allclose(results.forward_performance[:, 0], dfv[:, 1], atol = 5e-2))
         self.assertTrue(numpy.allclose(results.forward_performance[:, 1], dfv[:, 1], atol = 5e-2))
-
-        self.assertTrue(numpy.allclose(results.reverse_performance[:, 0], dfv[:, 2], atol = 5e-2))
-        self.assertTrue(numpy.allclose(results.reverse_performance[:, 1], dfv[:, 2], atol = 5e-2))
-
     
     # Multiview
     

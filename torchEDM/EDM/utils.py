@@ -107,10 +107,12 @@ def build_exclusion_mask(train_indices, test_indices, exclusionRadius):
 	return exclusionMask if numpy.any(exclusionMask) else None
 
 
-def MakeDelays(data, num_delays, stepSize = -1):
+def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 	"""
 	Make delayed copies of the columns of the data
 	"""
+	if data.ndim < 2:
+		data = data[:, None]
 
 	if num_delays < 1:
 		raise RuntimeError('Embed(): E must be positive.')
@@ -126,7 +128,7 @@ def MakeDelays(data, num_delays, stepSize = -1):
 	embedded_cols = []
 	for col_idx in range(n_cols):
 		for shift in shiftVec:
-			shifted_col = numpy.full(n_rows, numpy.nan)
+			shifted_col = numpy.full(n_rows, fill)
 			if shift >= 0:
 				if shift < n_rows:
 					shifted_col[shift:] = data[:n_rows - shift, col_idx]
