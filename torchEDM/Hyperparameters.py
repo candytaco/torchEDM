@@ -165,7 +165,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	train_indices, _ = BuildEmbeddingIndices(combinedData.shape[0], combinedData.shape[1],
 											 train, test,
 											 maxDims, predictionHorizon, step,
-											 0, embedded, validLib)
+											 embedded, validLib)
 
 	dummy = Simplex(data = combinedData, columns = columns, target = target,
 				train = train, test = test, embedDimensions = maxDims,

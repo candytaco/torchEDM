@@ -115,9 +115,9 @@ def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 		data = data[:, None]
 
 	if num_delays < 1:
-		raise RuntimeError('Embed(): E must be positive.')
+		raise RuntimeError('Need at least 1 delay')
 	if stepSize == 0:
-		raise RuntimeError('Embed(): step must be non-zero.')
+		raise RuntimeError('Need non-zero delay size')
 
 	n_rows, n_cols = data.shape
 

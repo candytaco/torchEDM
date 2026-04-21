@@ -22,7 +22,7 @@ class CCMFitterCV(EDMFitter):
 	def __init__(self,
 				 TrainSizes: Optional[List[int]] = None,
 				 numRepeats: int = 10,
-				 EmbedDimensions: int = 0,
+				 EmbedDimensions: int = None,
 				 PredictionHorizon: int = 1,
 				 KNN: int = 0,
 				 Step: int = -1,
@@ -43,7 +43,7 @@ class CCMFitterCV(EDMFitter):
 
 		:param TrainSizes: 			Library sizes to evaluate for the convergence curve
 		:param numRepeats: 			Number of random subsamples at each library size
-		:param EmbedDimensions: 	Embedding dimension (E). 0 for auto-selection per fold.
+		:param EmbedDimensions: 	Embedding dimension (E). None for auto-selection per fold.
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
 		:param KNN: 				Number of nearest neighbors
 		:param Step: 				Time delay step size (tau)
