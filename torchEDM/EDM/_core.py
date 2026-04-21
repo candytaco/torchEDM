@@ -82,6 +82,8 @@ def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Opt
 			target = target[:, None]
 		if predictions.ndim < 3:
 			predictions = predictions[:, :, None]
+		if out is not None and out.ndim < 2:
+			out = out.unsqueeze(-1)
 		return score_function(target, predictions, out)
 	return wrapper
 
