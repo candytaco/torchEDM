@@ -105,7 +105,7 @@ class EDMCVSplitter:
 			indices.append(numpy.arange(start, end + 1))
 		return numpy.concatenate(indices) if indices else numpy.array([], dtype = int)
 
-	def RangesToEDM(self, ranges: List[Tuple[int, int]]) -> List[int]:
+	def RangesToEDM(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
 		"""
 		Convert list of (start, end) ranges to EDM-style flat list.
 
@@ -114,7 +114,7 @@ class EDMCVSplitter:
 		"""
 		result = []
 		for start, end in ranges:
-			result.extend([start, end])
+			result.append((start, end))
 		return result
 
 	def FormatIndices(self, ranges: List[Tuple[int, int]]) -> Union[numpy.ndarray, List[int]]:
