@@ -259,13 +259,9 @@ class BatchedCCMResult:
 	:param forward_performance: Forward direction correlations. Shape (n_lib_sizes, 1+M):
 		Column 0: Library size
 		Columns 1-M: Mean correlation for each predictor variable
-	:param reverse_performance: Reverse direction correlations. Shape (n_lib_sizes, 1+M) or None:
-		Column 0: Library size
-		Columns 1-M: Mean correlation for each predictor variable
 	:param predictionHorizon: Prediction horizon used
 	:param forward_embed_dimensions: Embedding dimensions used for the forward direction.
 		Shape [nSources] or [nSources, nTargets] if auto-selected, otherwise the scalar input value.
-	:param reverse_embed_dimensions: Embedding dimensions used for the reverse direction, or None.
 	"""
 	forward_performance: np.ndarray
 	predictionHorizon: int
@@ -600,12 +596,8 @@ class ResultsIO:
 			'predictionHorizon': np.array(result.predictionHorizon),
 			'library_sizes': np.array(result.library_sizes)
 		}
-		if result.reverse_performance is not None:
-			arrays['reverse_performance'] = result.reverse_performance
 		if result.forward_embed_dimensions is not None:
 			arrays['forward_embed_dimensions'] = np.array(result.forward_embed_dimensions)
-		if result.reverse_embed_dimensions is not None:
-			arrays['reverse_embed_dimensions'] = np.array(result.reverse_embed_dimensions)
 		return arrays
 
 	@staticmethod
@@ -745,11 +737,9 @@ class ResultsIO:
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
 		return BatchedCCMResult(
 			forward_performance = data['forward_performance'],
-			reverse_performance = data['reverse_performance'] if 'reverse_performance' in data else None,
 			predictionHorizon = int(data['predictionHorizon']),
 			library_sizes = data['library_sizes'],
-			forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None,
-			reverse_embed_dimensions = data['reverse_embed_dimensions'] if 'reverse_embed_dimensions' in data else None
+			forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None
 		)
 
 	@staticmethod
