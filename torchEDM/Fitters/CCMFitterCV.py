@@ -24,7 +24,7 @@ class CCMFitterCV(EDMFitter):
 				 numRepeats: int = 10,
 				 EmbedDimensions: int = None,
 				 PredictionHorizon: int = 1,
-				 KNN: int = 0,
+				 KNN: Optional[int] = None,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 directions: str = 'both',
@@ -45,7 +45,7 @@ class CCMFitterCV(EDMFitter):
 		:param numRepeats: 			Number of random subsamples at each library size
 		:param EmbedDimensions: 	Embedding dimension (E). None for auto-selection per fold.
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param KNN: 				Number of nearest neighbors
+		:param KNN: 				Number of nearest neighbors, if none will be set to embed dims + 1
 		:param Step: 				Time delay step size (tau)
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
 		:param directions: 			Which directions to compute: forward|reverse|both
