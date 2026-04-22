@@ -288,26 +288,18 @@ class CCMCVResult:
 	Results from cross-validated CCM.
 
 	:param fold_results: BatchedCCMResult for each cross-validation fold
-	:param fold_forward_correlations: Per-fold forward correlation at the fold's max library size.
-		Shape [nFolds, nSources] (single target) or [nFolds, nSources, nTargets]
-	:param fold_reverse_correlations: Per-fold reverse correlation at the fold's max library size, or None
-	:param mean_forward_correlation: Mean forward correlation across folds.
-		Shape [nSources] or [nSources, nTargets]
-	:param std_forward_correlation: Standard deviation of forward correlation across folds.
-		Same shape as mean_forward_correlation
-	:param mean_reverse_correlation: Mean reverse correlation across folds, or None
-	:param std_reverse_correlation: Standard deviation of reverse correlation across folds, or None
-	:param fold_forward_embed_dimensions: Per-fold forward embedding dimensions. Each entry is a scalar
-		int or array of shape [nSources] or [nSources, nTargets] depending on auto-selection.
-	:param fold_reverse_embed_dimensions: Per-fold reverse embedding dimensions, or None
+	:param fold_performances: Per-fold performance at for each X to each Y
+	:param mean_performance: Mean performance across folds.
+	:param std_performance: Standard deviation of performance across folds.
+	:param fold_forward_embed_dimensions: Per-fold embedding dimensions.
 	:param predictionHorizon: Prediction horizon used
 	"""
 	fold_results: List['BatchedCCMResult']
-	fold_forward_correlations: Optional[np.ndarray]
-	mean_forward_correlation: Optional[np.ndarray]
-	std_forward_correlation: Optional[np.ndarray]
+	fold_performances: Optional[np.ndarray] # Shape [nFolds, nSources] (single target) or [nFolds, nSources, nTargets]
+	mean_performance: Optional[np.ndarray]	# Shape [nSources] or [nSources, nTargets]
+	std_performance: Optional[np.ndarray]
 	predictionHorizon: int
-	fold_forward_embed_dimensions: Optional[List] = None
+	fold_forward_embed_dimensions: Optional[List] = None # int or array of shape [nSources, nTargets]
 
 
 class ResultsIO:
@@ -344,6 +336,8 @@ class ResultsIO:
 			arrays = ResultsIO._MDECVResultsArrays(result)
 		elif isinstance(result, BatchedCCMResult):
 			arrays = ResultsIO._BatchedCCMArrays(result)
+		elif isinstance(result, CCMCVResult):
+			arrays = ResultsIO._CCMCVArrays(result)
 		else:
 			raise TypeError(f"Unsupported result type: {result_type}")
 
@@ -377,6 +371,8 @@ class ResultsIO:
 			return ResultsIO._LoadMDECVResults(data)
 		elif result_type == 'BatchedCCMResult':
 			return ResultsIO._LoadBatchedCCM(data)
+		elif result_type == 'CCMCVResult':
+			return ResultsIO._LoadCCMCV(data)
 		else:
 			raise ValueError(f"Unknown result type in file: {result_type}")
 
@@ -411,6 +407,8 @@ class ResultsIO:
 			arrays = ResultsIO._MDECVResultsArrays(result)
 		elif isinstance(result, BatchedCCMResult):
 			arrays = ResultsIO._BatchedCCMArrays(result)
+		elif isinstance(result, CCMCVResult):
+			arrays = ResultsIO._CCMCVArrays(result)
 		else:
 			raise TypeError(f"Unsupported result type: {result_type}")
 
@@ -455,6 +453,8 @@ class ResultsIO:
 			return ResultsIO._LoadMDECVResults(data)
 		elif result_type == 'BatchedCCMResult':
 			return ResultsIO._LoadBatchedCCM(data)
+		elif result_type == 'CCMCVResult':
+			return ResultsIO._LoadCCMCV(data)
 		else:
 			raise ValueError(f"Unknown result type in cloud folder: {result_type}")
 
@@ -608,6 +608,28 @@ class ResultsIO:
 			arrays['reverse_embed_dimensions'] = np.array(result.reverse_embed_dimensions)
 		return arrays
 
+	@staticmethod
+	def _CCMCVArrays(result: CCMCVResult) -> dict:
+		nFolds = len(result.fold_results)
+		arrays = {
+			'predictionHorizon': np.array(result.predictionHorizon),
+			'n_folds': np.array(nFolds)
+		}
+		if result.fold_performances is not None:
+			arrays['fold_performances'] = result.fold_performances
+		if result.mean_performance is not None:
+			arrays['mean_performance'] = result.mean_performance
+		if result.std_performance is not None:
+			arrays['std_performance'] = result.std_performance
+		if result.fold_forward_embed_dimensions is not None:
+			for i, embedDimensions in enumerate(result.fold_forward_embed_dimensions):
+				arrays['fold_forward_embed_dimensions_{}'.format(i)] = np.array(embedDimensions)
+		for i, foldResult in enumerate(result.fold_results):
+			foldArrays = ResultsIO._BatchedCCMArrays(foldResult)
+			for key, value in foldArrays.items():
+				arrays['fold_{}_{}'.format(i, key)] = value
+		return arrays
+
 	# --- internal helpers: result from loaded data ---
 
 	@staticmethod
@@ -728,4 +750,25 @@ class ResultsIO:
 			library_sizes = data['library_sizes'],
 			forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None,
 			reverse_embed_dimensions = data['reverse_embed_dimensions'] if 'reverse_embed_dimensions' in data else None
+		)
+
+	@staticmethod
+	def _LoadCCMCV(data) -> CCMCVResult:
+		nFolds = int(data['n_folds'])
+		foldResults = []
+		for i in range(nFolds):
+			foldData = {key[len('fold_{}_'.format(i)):]: data[key]
+			            for key in list(data)
+			            if key.startswith('fold_{}_'.format(i))}
+			foldResults.append(ResultsIO._LoadBatchedCCM(foldData))
+		foldForwardEmbedDimensions = None
+		if 'fold_forward_embed_dimensions_0' in data:
+			foldForwardEmbedDimensions = [data['fold_forward_embed_dimensions_{}'.format(i)] for i in range(nFolds)]
+		return CCMCVResult(
+			fold_results = foldResults,
+			fold_performances = data['fold_performances'] if 'fold_performances' in data else None,
+			mean_performance = data['mean_performance'] if 'mean_performance' in data else None,
+			std_performance = data['std_performance'] if 'std_performance' in data else None,
+			predictionHorizon = int(data['predictionHorizon']),
+			fold_forward_embed_dimensions = foldForwardEmbedDimensions
 		)

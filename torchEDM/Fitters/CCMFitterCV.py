@@ -173,9 +173,9 @@ class CCMFitterCV(EDMFitter):
 
 		self.Result = CCMCVResult(
 			fold_results = self.foldResults,
-			fold_forward_correlations = foldForwardCorrelations,
-			mean_forward_correlation = meanForwardCorrelation,
-			std_forward_correlation = stdForwardCorrelation,
+			fold_performances = foldForwardCorrelations,
+			mean_performance = meanForwardCorrelation,
+			std_performance = stdForwardCorrelation,
 			predictionHorizon = self.PredictionHorizon,
 			fold_forward_embed_dimensions = foldForwardEmbedDimensions,
 		)
