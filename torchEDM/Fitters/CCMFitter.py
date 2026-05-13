@@ -1,6 +1,7 @@
 from typing import Optional, List
 
 import numpy
+import torch
 
 from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
 from .EDMFitter import EDMFitter
@@ -23,7 +24,7 @@ class CCMFitter(EDMFitter):
 				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
-				 HalfPrecision: bool = False,
+				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None):
@@ -40,7 +41,7 @@ class CCMFitter(EDMFitter):
 		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
-		:param HalfPrecision: 	Use float16 instead of float32 to save VRAM
+		:param dtype: 			Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
 		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
@@ -58,7 +59,7 @@ class CCMFitter(EDMFitter):
 		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
-		self.useHalfPrecision = HalfPrecision
+		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 		self.seed = seed
@@ -87,7 +88,7 @@ class CCMFitter(EDMFitter):
 			trainIndices = TrainIndices,
 			device = self.device,
 			batchSize = self.batchSize,
-			HalfPrecision = self.useHalfPrecision,
+			dtype = self.dtype,
 			showProgress = not self.hideProgress,
 			batchMode = self.batchMode,
 			sampleBatchSize = self.sampleBatchSize

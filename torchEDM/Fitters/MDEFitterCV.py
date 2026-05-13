@@ -1,6 +1,7 @@
 from typing import Optional, List, Union
 
 import numpy
+import torch
 from tqdm import tqdm as ProgressBar
 
 from .DataAdapter import DataAdapter
@@ -23,7 +24,7 @@ class MDEFitterCV(EDMFitter):
 				 Convergent: Union[str, bool] = 'post',
 				 Metric: str = "correlation",
 				 BatchSize: int = 10000,
-				 HalfPrecision: bool = False,
+				 dtype: torch.dtype = torch.float32,
 				 Folds: int = 5,
 				 LeaveOneRunOut: bool = True,
 				 FinalVariableSelection: str = "best_fold",
@@ -53,7 +54,7 @@ class MDEFitterCV(EDMFitter):
 		:param Convergent: 			Whether to use convergence checking
 		:param Metric: 				Metric to use: "correlation" or "r2"
 		:param BatchSize: 			Number of variables to process in each batch
-		:param HalfPrecision: 		Use float16 instead of float32 for GPU tensors
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
 		:param LeaveOneRunOut: 		If True, use leave-one-run-out CV instead of n-fold
 		:param FinalVariableSelection: 	Method for selecting final variables: "best_fold", "frequency", or 'reselect'
@@ -75,7 +76,7 @@ class MDEFitterCV(EDMFitter):
 		self.Convergent = Convergent
 		self.Metric = Metric
 		self.BatchSize = BatchSize
-		self.HalfPrecision = HalfPrecision
+		self.dtype = dtype
 		self.Folds = Folds
 		self.LeaveOneRunOut = LeaveOneRunOut
 		self.FinalVariableSelection = FinalVariableSelection
@@ -223,7 +224,7 @@ class MDEFitterCV(EDMFitter):
 			convergent = convergent if convergent is not None else self.Convergent, # for final call without convergence
 			metric = self.Metric,
 			batch_size = self.BatchSize,
-			use_half_precision = self.HalfPrecision,
+			dtype = self.dtype,
 			columns = initialVariables,
 			train = trainIndices,
 			test = testIndices,

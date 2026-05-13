@@ -26,7 +26,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   batched: bool = True,
 									   scoring_function = Correlation,
 									   joint: bool = True,
-									   HalfPrecision: bool = False,
+									   dtype: torch.dtype = torch.float32,
 									   BatchSize: Optional[int] = None):
 	"""
 	Estimate optimal embedding dimension for simplex. When Y is not provided, each X variable
@@ -53,7 +53,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	:param batched: 			Use shared maxE indices for all E (faster, slightly less accurate for low E)
 	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
 	:param joint:				when X is 2D, use all vars together to predict Y? If False, each X is used separately to predict Y
-	:param HalfPrecision:		Use float16 instead of float32 to reduce VRAM usage
+	:param dtype:				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 	:param BatchSize:			Number of variables to process per batch (non-joint/self-prediction only); None processes all at once
 	:return: score for each embedding dimension
 	"""
@@ -82,7 +82,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
 			validLib, ignoreNan, scoring_function, joint,
-			halfPrecision = HalfPrecision, batchSize = BatchSize)
+			dtype = dtype, batchSize = BatchSize)
 	else:
 		scores = _FindOptimalEmbeddingDimensionalityIterative(
 			X, Y, maxDims, train, test,
@@ -138,7 +138,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 											   validLib, ignoreNan,
 											   scoring_function,
 											   joint,
-											   halfPrecision = False,
+											   dtype = torch.float32,
 											   batchSize = None):
 	"""
 	Evaluate all embedding dimensions using shared maxDims indices and precomputed
@@ -177,7 +177,6 @@ def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
 	dummy.RemoveNan()
 
 	device = dummy.device
-	dtype = torch.float16 if halfPrecision else dummy.dtype
 
 	trainEmbedding = dummy.Embedding[dummy.trainIndices, :]
 	testEmbedding = dummy.Embedding[dummy.testIndices, :]

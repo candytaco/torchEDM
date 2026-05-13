@@ -2,6 +2,7 @@
 from typing import Optional, List, Union
 
 import numpy
+import torch
 
 from torchEDM.EDM.MDE import MDE
 from .EDMFitter import EDMFitter
@@ -17,7 +18,7 @@ class MDEFitter(EDMFitter):
 				 Convergent: Union[str, bool] = 'pre',
 				 Metric: str = "correlation",
 				 BatchSize: int = 1000,
-				 HalfPrecision: bool = False,
+				 dtype: torch.dtype = torch.float32,
 				 Embed: bool = False,
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
@@ -44,7 +45,7 @@ class MDEFitter(EDMFitter):
 		:param Convergent: 			Whether to use convergence checking
 		:param Metric: 				Metric to use: "correlation" or "MAE"
 		:param BatchSize: 			Number of features to process in each batch
-		:param HalfPrecision: 		Use float16 instead of float32 for GPU tensors
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param Embed:				whether to embed the data or not
 		:param EmbedDimensions: 	Embedding dimension (E)
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
@@ -63,7 +64,7 @@ class MDEFitter(EDMFitter):
 		self.Convergent = Convergent
 		self.Metric = Metric
 		self.BatchSize = BatchSize
-		self.HalfPrecision = HalfPrecision
+		self.dtype = dtype
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
@@ -108,7 +109,7 @@ class MDEFitter(EDMFitter):
 			convergent = self.Convergent,
 			metric = self.Metric,
 			batch_size = self.BatchSize,
-			use_half_precision = self.HalfPrecision,
+			dtype = self.dtype,
 			columns = Columns,
 			train = TrainIndices,
 			test = TestIndices,

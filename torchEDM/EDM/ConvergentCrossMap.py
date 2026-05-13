@@ -35,7 +35,7 @@ class ConvergentCrossMap:
 				 device = 'cuda',
 				 batchSize = 10000,
 				 y_batch = None,
-				 HalfPrecision = False,
+				 dtype: torch.dtype = torch.float32,
 				 showProgress = True,
 				 batchMode = 'variables',
 				 sampleBatchSize = None):
@@ -61,7 +61,7 @@ class ConvergentCrossMap:
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of distance matrices / embeddings to process per batch
 		:param y_batch:				Number of Y variables to predict per batch within each embedding batch
-		:param HalfPrecision: 		Use float16 instead of float32 to save VRAM
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode:			'variables' to batch over variables, 'sample' to batch over samples per library size
 		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
 		"""
@@ -96,7 +96,7 @@ class ConvergentCrossMap:
 		self.seed = seed
 
 		self.device = torch.device(device) if isinstance(device, str) else device
-		self.dtype = torch.float16 if HalfPrecision else torch.float32
+		self.dtype = dtype
 		self.showProgress = showProgress
 
 		if trainIndices is not None:
@@ -144,7 +144,7 @@ class ConvergentCrossMap:
 														predictionHorizon = self.predictionHorizon, step = self.step,
 														ignoreNan = self.ignoreNan,
 														batched = True, joint = False,
-														HalfPrecision = (self.dtype == torch.float16),
+														dtype = self.dtype,
 														BatchSize = self.batchSize)
 			# scores: [nVars, maxDims] (single target, squeezed) or [nTargets, nVars, maxDims].
 			# Per-(source, target) best num dims is (argmax over the maxDims axis) + 1  since it is 1-indexed internally.

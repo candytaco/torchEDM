@@ -32,7 +32,7 @@ class MDE:
 				 convergent = 'post',
 				 metric: str = "correlation",
 				 batch_size: int = 1000,
-				 use_half_precision: bool = False,
+				 dtype: torch.dtype = torch.float32,
 				 columns = None,
 				 train = None,
 				 test = None,
@@ -67,7 +67,7 @@ class MDE:
 		:param convergent: 	Convergence checking mode: 'pre' runs batch CCM on all variables before selection, 'post' checks convergence within each selection loop iteration, False disables convergence checking
 		:param metric: 	Metric to use: "correlation" or "r2"
 		:param batch_size: 	Number of variables to process in each batch
-		:param use_half_precision: 	Use float16 instead of float32 for GPU tensors to save memory
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param columns: 	Column indices to use for embedding (defaults to all except time)
 		:param train: 	Training set indices [start, end]
 		:param test: 	Test set indices [start, end]
@@ -117,7 +117,7 @@ class MDE:
 		self.useSMap = useSMap
 		self.theta = theta
 		self.stdThreshold = stdThreshold
-		self.use_half_precision = use_half_precision
+		self.dtype = dtype
 		self.CCMLibraryPercentiles = CCMLibraryPercentiles
 		self.CCMNumSamples = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
@@ -138,7 +138,6 @@ class MDE:
 		else:
 			self.device = torch.device('cpu')
 
-		self.dtype = torch.float16 if use_half_precision else torch.float32
 
 		self.stepwise_performance = None
 		self.selectedVariables = None
@@ -557,7 +556,7 @@ class MDE:
 			testIndices = self.test,
 			device = self.device,
 			batchSize = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
-			HalfPrecision = self.use_half_precision,
+			dtype = self.dtype,
 			seed = self.CCMSeed
 		)
 
@@ -651,7 +650,7 @@ class MDE:
 			device = self.device,
 			batchSize = 1,
 			batchMode = 'samples',
-			HalfPrecision = self.use_half_precision,
+			dtype = self.dtype,
 			showProgress = False,
 			seed = self.CCMSeed
 		)

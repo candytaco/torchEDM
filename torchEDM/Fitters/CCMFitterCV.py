@@ -1,6 +1,7 @@
 from typing import Optional, List, Union
 
 import numpy
+import torch
 from tqdm import tqdm as ProgressBar
 
 from .DataAdapter import DataAdapter
@@ -31,7 +32,7 @@ class CCMFitterCV(EDMFitter):
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
 				 y_batch: Optional[int] = None,
-				 HalfPrecision: bool = False,
+				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None,
@@ -52,7 +53,7 @@ class CCMFitterCV(EDMFitter):
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of distance matrices to process per batch in 'variable' mode
 		:param y_batch:				number of target variable to predict in batches, independent of batchSize, which is X
-		:param HalfPrecision: 		Use float16 instead of float32 to save VRAM
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples)
 		:param sampleBatchSize: 	Number of subsamples per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
@@ -72,7 +73,7 @@ class CCMFitterCV(EDMFitter):
 		self.device = device
 		self.batchSize = batchSize
 		self.y_batch = y_batch
-		self.useHalfPrecision = HalfPrecision
+		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 		self.seed = seed
@@ -151,7 +152,7 @@ class CCMFitterCV(EDMFitter):
 									 device = self.device,
 									 batchSize = self.batchSize,
 									 y_batch = self.y_batch,
-									 HalfPrecision = self.useHalfPrecision,
+									 dtype = self.dtype,
 									 showProgress = False,
 									 batchMode = self.batchMode,
 									 sampleBatchSize = self.sampleBatchSize)
