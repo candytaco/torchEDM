@@ -163,9 +163,6 @@ class CCMFitterCV(EDMFitter):
 
 		progressBarIterator.close()
 
-		foldForwardCorrelations = None
-		foldForwardEmbedDimensions = None
-
 		foldForwardCorrelations = numpy.stack([r.forward_performance for r in self.foldResults], axis = 0)
 		foldForwardEmbedDimensions = [r.forward_embed_dimensions for r in self.foldResults]
 

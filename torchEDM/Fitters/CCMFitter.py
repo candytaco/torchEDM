@@ -84,7 +84,6 @@ class CCMFitter(EDMFitter):
 			step = self.Step,
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,
-			directions = self.directions,
 			trainIndices = TrainIndices,
 			device = self.device,
 			batchSize = self.batchSize,
