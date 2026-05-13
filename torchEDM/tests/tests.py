@@ -689,7 +689,7 @@ class test_EDM( unittest.TestCase ):
 
         CCM = ConvergentCrossMap(X = data[:, [col_index, col_index]], Y = data[:, target_index][:, None],
 								 trainSizes = [10, 20, 30, 40, 50, 60, 70, 75],
-								 sample = 100, embedDimensions = 3,
+								 repeats = 100, embedDimensions = 3,
 								 predictionHorizon = 0, knn = None, step = -1,
 								 embedded = False, validLib = [],
 								 batchMode = 'variable',

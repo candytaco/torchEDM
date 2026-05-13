@@ -76,7 +76,7 @@ class CCMFitter(EDMFitter):
 			X = self.DataAdapter.XTrain,
 			Y = self.DataAdapter.YTrain,
 			trainSizes = self.TrainSizes,
-			sample = self.Sample,
+			repeats = self.Sample,
 			embedDimensions = self.EmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
 			knn = self.KNN,

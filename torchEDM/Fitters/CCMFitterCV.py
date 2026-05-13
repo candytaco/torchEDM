@@ -62,7 +62,7 @@ class CCMFitterCV(EDMFitter):
 		super().__init__(progressBar)
 
 		self.TrainSizes = TrainSizes
-		self.Sample = numRepeats
+		self.Repeats = numRepeats
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
@@ -139,7 +139,7 @@ class CCMFitterCV(EDMFitter):
 			ccm = ConvergentCrossMap(X = XArray,
 									 Y = YArray,
 									 trainSizes = self.TrainSizes,
-									 sample = self.Sample,
+									 repeats = self.Repeats,
 									 embedDimensions = self.EmbedDimensions,
 									 predictionHorizon = self.PredictionHorizon,
 									 knn = self.KNN,

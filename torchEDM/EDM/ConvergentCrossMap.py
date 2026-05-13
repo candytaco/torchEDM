@@ -19,7 +19,7 @@ class ConvergentCrossMap:
 				 X,
 				 Y = None,
 				 trainSizes = None,
-				 sample = 10,
+				 repeats = 10,
 				 embedDimensions = None,
 				 maxEmbedDimensions = 20,
 				 predictionHorizon = 1,
@@ -45,7 +45,7 @@ class ConvergentCrossMap:
 		:param X: 					2D numpy array of predictor variables (N_timepoints, M_variables)
 		:param Y: 					1D or 2D numpy array of target variable (N_timepoints,) or (N_timepoints, 1)
 		:param trainSizes: 			Library sizes to evaluate
-		:param sample: 				Number of random samples at each library size
+		:param repeats: 			Number of repeat with random train samples at each library size
 		:param embedDimensions: 	Embedding dimension, if None, explore up to max provided
 		:param maxEmbedDimensions:	max embedding dimension to explore, only used if embedDimension is None
 		:param predictionHorizon: 	Prediction time horizon
@@ -66,7 +66,6 @@ class ConvergentCrossMap:
 		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
 		"""
 
-		self.name = 'BatchedCCM'
 		self.X = X[:, None] if X.ndim == 1 else X
 		if Y is not None:
 			self.Y = Y[:, None] if Y.ndim == 1 else Y
@@ -93,7 +92,7 @@ class ConvergentCrossMap:
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 
-		self.sample = sample
+		self.sample = repeats
 		self.seed = seed
 
 		self.device = torch.device(device) if isinstance(device, str) else device
