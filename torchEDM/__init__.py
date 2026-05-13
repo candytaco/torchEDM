@@ -1,5 +1,9 @@
 """Python tools for EDM"""
 
+# disable grad computations
+import torch
+torch.set_grad_enabled(False)
+
 # provide functional API
 from . import Functions
 # provide object-based API with train/test splits
