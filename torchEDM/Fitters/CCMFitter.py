@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Union
 
 import numpy
 import torch
@@ -66,16 +66,24 @@ class CCMFitter(EDMFitter):
 
 		self.CCM = None
 
-	def Fit(self, XTrain: numpy.ndarray, YTrain: Optional[numpy.ndarray] = None, XTest: numpy.ndarray = None, YTest: numpy.ndarray = None,
+	def Fit(self, XTrain: Union[numpy.ndarray, List[numpy.ndarray]], YTrain: Union[numpy.ndarray, List[numpy.ndarray], None] = None,
+			XTest: Optional[numpy.ndarray] = None, YTest: Optional[numpy.ndarray] = None,
 			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
 			TestTime: Optional[numpy.ndarray] = None):
 		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
 
+		fullData = self.DataAdapter.fullData
+		xStart, xEnd = self.DataAdapter.XIndices
+		yColumnIndices = self.DataAdapter.YIndex
+
+		XArray = fullData[:, xStart:xEnd + 1]
+		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
+
 		TrainIndices = self.GetTrainIndices()
 
 		self.CCM = ConvergentCrossMap(
-			X = self.DataAdapter.XTrain,
-			Y = self.DataAdapter.YTrain,
+			X = XArray,
+			Y = YArray,
 			trainSizes = self.TrainSizes,
 			repeats = self.Repeats,
 			embedDimensions = self.EmbedDimensions,

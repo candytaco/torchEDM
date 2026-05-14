@@ -94,7 +94,7 @@ class CCMFitterCV(EDMFitter):
 			TrainTime: Optional[numpy.ndarray] = None,
 			TestTime: Optional[numpy.ndarray] = None):
 		"""
-		Fit CCM using cross-validation.
+		Fit cross-validated CCM
 
 		:param XTrain:		Source variables (single array or list of arrays for multiple runs)
 		:param YTrain:		Target variable (single array or list of arrays for multiple runs)

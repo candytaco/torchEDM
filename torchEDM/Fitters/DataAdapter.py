@@ -216,7 +216,7 @@ class DataAdapterSingleRun(DataAdapter):
 
 	@property
 	def TrainIndices(self) -> List[Tuple[int, int]]:
-		return [(self.trainOffset, self.XTrain.shape[0] - 1 + self.trainOffset - self.TrainEnd)]
+		return [(self.trainOffset, self.XTrain.shape[0] - 1 - self.TrainEnd)]
 
 	@property
 	def TestIndices(self) -> List[Tuple[int, int]]:
