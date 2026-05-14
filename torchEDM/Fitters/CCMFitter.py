@@ -21,7 +21,6 @@ class CCMFitter(EDMFitter):
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 progressBar: bool = True,
-				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
 				 dtype: torch.dtype = torch.float32,
@@ -38,7 +37,6 @@ class CCMFitter(EDMFitter):
 		:param KNN: 				Number of nearest neighbors
 		:param Step: 				Time delay step size (tau)
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Number of variables to process per batch in 'variable' mode
 		:param dtype: 			Torch dtype for tensors (e.g. torch.float32 or torch.float16)
@@ -56,7 +54,6 @@ class CCMFitter(EDMFitter):
 		self.KNN = KNN
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
-		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
 		self.dtype = dtype
