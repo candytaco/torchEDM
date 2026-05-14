@@ -15,9 +15,9 @@ class CCMFitter(EDMFitter):
 	def __init__(self,
 				 TrainSizes: Optional[List[int]] = None,
 				 numRepeats: int = 10,
-				 EmbedDimensions: int = 0,
+				 EmbedDimensions: int = None,
 				 PredictionHorizon: int = 1,
-				 KNN: int = 0,
+				 KNN: int = None,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 progressBar: bool = True,
@@ -26,6 +26,7 @@ class CCMFitter(EDMFitter):
 				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
+				 y_batch: Optional[int] = None,
 				 seed: Optional[int] = None):
 		"""
 		Init.
@@ -42,13 +43,14 @@ class CCMFitter(EDMFitter):
 		:param dtype: 			Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
 		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
+		:param y_batch:				Number of target variables to predict per batch
 		:param seed: 				Random seed for reproducible sampling
 		"""
 
 		super().__init__(progressBar)
 
 		self.TrainSizes = TrainSizes
-		self.Sample = numRepeats
+		self.Repeats = numRepeats
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
@@ -59,6 +61,7 @@ class CCMFitter(EDMFitter):
 		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
+		self.y_batch = y_batch
 		self.seed = seed
 
 		self.CCM = None
@@ -74,7 +77,7 @@ class CCMFitter(EDMFitter):
 			X = self.DataAdapter.XTrain,
 			Y = self.DataAdapter.YTrain,
 			trainSizes = self.TrainSizes,
-			repeats = self.Sample,
+			repeats = self.Repeats,
 			embedDimensions = self.EmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
 			knn = self.KNN,
@@ -84,6 +87,7 @@ class CCMFitter(EDMFitter):
 			trainIndices = TrainIndices,
 			device = self.device,
 			batchSize = self.batchSize,
+			y_batch = self.y_batch,
 			dtype = self.dtype,
 			showProgress = not self.hideProgress,
 			batchMode = self.batchMode,

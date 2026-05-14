@@ -28,7 +28,6 @@ class CCMFitterCV(EDMFitter):
 				 KNN: Optional[int] = None,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
-				 directions: str = 'both',
 				 device: str = 'cuda',
 				 batchSize: int = 10000,
 				 y_batch: Optional[int] = None,
@@ -69,7 +68,6 @@ class CCMFitterCV(EDMFitter):
 		self.KNN = KNN
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
-		self.directions = directions
 		self.device = device
 		self.batchSize = batchSize
 		self.y_batch = y_batch
@@ -110,9 +108,6 @@ class CCMFitterCV(EDMFitter):
 		:param TestTime:	Unused; included for API compatibility with EDMFitter
 		"""
 		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
-
-		if YTrain is None:
-			self.directions = 'forward'
 
 		self.trainDataAdapter = DataAdapter.MakeDataAdapter(
 			XTrain, YTrain, None, None, TrainStart, TrainEnd, 0, 0, TrainTime, None
