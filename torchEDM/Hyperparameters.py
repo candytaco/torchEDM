@@ -2,9 +2,10 @@ from typing import List, Tuple, Any, Optional
 
 import numpy
 import torch
+from tqdm import tqdm as ProgressBar
 
-from .EDM._core import Correlation, batch_simplex_predict
-from .EDM.utils import BuildEmbeddingIndices, build_exclusion_mask
+from .EDM._core import Correlation, batch_simplex_predict, batch_get_simplex_weights
+from .EDM.utils import BuildEmbeddingIndices, build_exclusion_mask, MakeDelays
 from .EDM.SMap import SMap
 from .EDM.Simplex import Simplex
 from .Utils import IsNonStringIterable
@@ -95,6 +96,125 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	if Y is not None and Y.shape[1] == 1:
 		return scores.squeeze(0)
 	return scores
+
+
+def FindSelfPredictionEmbeddingDimension(X,
+										  maxDims: int = 10,
+										  train: List[Tuple[int, int]] = None,
+										  test: List[Tuple[int, int]] = None,
+										  predictionHorizon: int = 1,
+										  step: int = -1,
+										  exclusionRadius: float = 0,
+										  embedded: bool = False,
+										  validLib: List = [],
+										  dtype: torch.dtype = torch.float32,
+										  device = 'cuda',
+										  showProgress: bool = True) -> numpy.ndarray:
+	"""
+	Find the optimal embedding dimension for each source variable via self-prediction.
+
+	For each variable, finds the embedding dimension E in [1, maxDims] that maximises the
+	correlation between simplex predictions of that variable from its own shadow manifold
+	and the actual observed values. This is the correct embedding dimension to use for CCM,
+	where the quality of source s's shadow manifold governs how well it cross-maps target t.
+
+	Processes one source at a time so GPU memory scales as O(maxDims x numTrain x numTest)
+	regardless of the number of variables.
+
+	:param X:               2D numpy array (N_timepoints, M_variables)
+	:param maxDims:         Maximum embedding dimension to test
+	:param train:           Train block index pairs [(start, end), ...]
+	:param test:            Test block index pairs [(start, end), ...]
+	:param predictionHorizon: Prediction time horizon
+	:param step:            Time delay step size
+	:param exclusionRadius: Temporal exclusion radius for neighbors
+	:param embedded:        Whether data is already embedded
+	:param validLib:        Boolean mask for valid library points
+	:param dtype:           Torch dtype for tensors
+	:param device:          Device string or torch.device
+	:param showProgress:    Show tqdm progress bar
+	:return:                1D int array [M_variables] of optimal embedding dimensions, 1-indexed
+	"""
+	if X.ndim == 1:
+		X = X[:, None]
+	numSources = X.shape[1]
+	torchDevice = torch.device(device) if isinstance(device, str) else device
+
+	if train is None:
+		train = [(1, X.shape[0])]
+	if test is None:
+		test = [(1, X.shape[0])]
+
+	train_indices, test_indices = BuildEmbeddingIndices(
+		X.shape[0], X.shape[1],
+		train, test,
+		maxDims, predictionHorizon, step,
+		embedded, validLib
+	)
+	exclusionMask = build_exclusion_mask(train_indices, test_indices, exclusionRadius)
+
+	numTrain = train_indices.shape[0]
+	numTest = test_indices.shape[0]
+
+	scores = numpy.zeros([numSources, maxDims], dtype = numpy.float32)
+
+	perLagSquaredDistances = torch.zeros(
+		[maxDims, numTrain, numTest],
+		dtype = dtype, device = torchDevice
+	)
+
+	yTrain = torch.tensor(X[train_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)
+	yTest = torch.tensor(X[test_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)
+
+	for sourceIndex in ProgressBar(range(numSources), desc = 'Embedding dim search', leave = False,
+								   disable = not showProgress):
+		if embedded:
+			delayed = X[:, sourceIndex][:, None]
+		else:
+			delayed = MakeDelays(data = X[:, sourceIndex], num_delays = maxDims, stepSize = step, fill = 0.0)
+
+		trainEmbedding = torch.tensor(delayed[train_indices, :], dtype = dtype, device = torchDevice)
+		testEmbedding = torch.tensor(delayed[test_indices, :], dtype = dtype, device = torchDevice)
+
+		for lagIndex in range(maxDims):
+			perLagSquaredDistances[lagIndex, :, :] = (
+				trainEmbedding[:, lagIndex].unsqueeze(1) - testEmbedding[:, lagIndex].unsqueeze(0)
+			)
+		del trainEmbedding, testEmbedding
+
+		perLagSquaredDistances.square_()
+		torch.cumsum(perLagSquaredDistances, dim = 0, out = perLagSquaredDistances)
+
+		if exclusionMask is not None:
+			perLagSquaredDistances[:, exclusionMask] = float('inf')
+
+		yTrainSelf = yTrain[:, sourceIndex]
+		yTestSelf = yTest[:, sourceIndex]
+
+		for embedDimIndex in range(maxDims):
+			numKnn = embedDimIndex + 2  # E + 1 neighbors for embedding dimension E + 1
+
+			distMatrix = perLagSquaredDistances[embedDimIndex, :, :].unsqueeze(0)  # [1, numTrain, numTest]
+			neighborIndices, neighborWeights = batch_get_simplex_weights(distMatrix, numKnn)
+			# neighborIndices: [1, numKnn, numTest], neighborWeights: [1, numKnn, numTest]
+
+			selectedTargets = yTrainSelf[neighborIndices[0]]  # [numKnn, numTest]
+			predictions = (neighborWeights[0] * selectedTargets).sum(dim = 0)  # [numTest]
+
+			targetCentered = yTestSelf - yTestSelf.mean()
+			predCentered = predictions - predictions.mean()
+			targetStd = torch.sqrt((targetCentered ** 2).sum())
+			predStd = torch.sqrt((predCentered ** 2).sum())
+
+			if targetStd > 0 and predStd > 0:
+				scores[sourceIndex, embedDimIndex] = (
+					(targetCentered * predCentered).sum() / (targetStd * predStd)
+				).item()
+
+	if torch.cuda.is_available():
+		torch.cuda.empty_cache()
+
+	return numpy.argmax(scores, axis = 1) + 1
 
 
 def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,

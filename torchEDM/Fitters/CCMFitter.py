@@ -22,11 +22,11 @@ class CCMFitter(EDMFitter):
 				 ExclusionRadius: int = 0,
 				 progressBar: bool = True,
 				 device: str = 'cuda',
-				 batchSize: int = 10000,
+				 batchSize: int = 500,
 				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
-				 y_batch: Optional[int] = None,
+				 y_batch: int = 2000,
 				 seed: Optional[int] = None):
 		"""
 		Init.

@@ -11,7 +11,7 @@ from . import Fitters
 
 from .Utils import PlotObsPred, PlotCoeff
 from .Scoring import ComputeError
-from .Hyperparameters import FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon, FindSMapNeighborhood
+from .Hyperparameters import FindOptimalEmbeddingDimensionality, FindOptimalPredictionHorizon, FindSMapNeighborhood, FindSelfPredictionEmbeddingDimension
 from .FunctionalExamples import FunctionalExamples
 from .FitterExamples import FitterExamples
 from .Utils import SurrogateData
