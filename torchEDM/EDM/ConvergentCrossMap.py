@@ -205,6 +205,7 @@ class ConvergentCrossMap:
 		# are predictions and kthNeighborValues, both [sourceBatch, numTest, y_batch].
 		# Peak tensors that scale with sourceBatch:
 		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]          (persistent per source batch)
+		#   subsampledDistances     [sourceBatch, maxTrainSize, numTest]      (transient during topk; advanced indexing creates a copy)
 		#   neighborIndices         [sourceBatch, maxKnn, numTest] int64      (persistent per repeat)
 		#   neighborWeights         [sourceBatch, maxKnn, numTest]            (persistent per repeat)
 		#   predictions             [sourceBatch, numTest, y_batch]           (persistent per target batch)
@@ -212,7 +213,9 @@ class ConvergentCrossMap:
 		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
 		targetVRAMBytes = self.targetVRAM * 1e9
+		maxTrainSize = min(max(self.trainSizes), numTrain)
 		perSourceBytes = (numTrain * numTest * elementSize +
+		                  maxTrainSize * numTest * elementSize +
 		                  conservativeMaxKnn * numTest * 8 +
 		                  conservativeMaxKnn * numTest * elementSize +
 		                  2 * numTest * self.y_batch * elementSize)
@@ -280,6 +283,7 @@ class ConvergentCrossMap:
 
 					subsampledDistances = sourceDistanceMatrices[:, sampledIndices, :]
 					neighborIndices, neighborWeights = batch_get_simplex_weights(subsampledDistances, numNeighbors, sampledIndices)
+					del subsampledDistances
 					# neighborIndices: [actualSourceBatchSize, maxKnn, numTest] — row positions into y_train
 					# neighborWeights: [actualSourceBatchSize, maxKnn, numTest]
 
