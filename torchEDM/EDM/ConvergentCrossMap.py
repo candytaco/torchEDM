@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm as ProgressBar
 
 from .Results import BatchedCCMResult
-from ._core import batch_get_simplex_weights, Correlation
+from ._core import batch_get_simplex_weights, CorrelationInPlace
 from torchEDM.EDM._core import ElementwisePairwiseDistance
 from torchEDM.EDM.utils import BuildEmbeddingIndices, MakeDelays, _get_embedding_dimension, build_exclusion_mask
 from torchEDM.Hyperparameters import FindSelfPredictionEmbeddingDimension
@@ -300,9 +300,8 @@ class ConvergentCrossMap:
 							predictions.add_(kthNeighborValues)
 							del kthNeighborValues
 
-						Correlation(y_test[:, targetBatchStart:targetBatchEnd], predictions,
-									out = performanceBuffer[:, :actualTargetBatchSize],
-									center_in_place = True)
+						CorrelationInPlace(y_test[:, targetBatchStart:targetBatchEnd], predictions,
+						                   out = performanceBuffer[:, :actualTargetBatchSize])
 						performance[size_i, sample_i,
 									sourceBatchStart:sourceBatchEnd,
 									targetBatchStart:targetBatchEnd] = performanceBuffer[:, :actualTargetBatchSize].cpu().numpy()

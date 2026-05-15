@@ -89,33 +89,48 @@ def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Opt
 
 
 @_promoteDimensions
-def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None,
-				center_in_place: bool = False):
+def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
 	Correlation between target time series and batched predictions.
-	:param target:			[n_time, n_targets] tensor of true values
-	:param predictions:		[n_sources, n_time, n_targets] tensor of predicted values
-	:param out:				[n_sources, n_targets] output tensor
-	:param center_in_place:	If True, center predictions in-place to avoid allocating a separate
-							centered copy. Caller must not use predictions after this call.
+	:param target:		[n_time, n_targets] tensor of true values
+	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
+	:param out:			[n_sources, n_targets] output tensor
 	:return: out tensor with correlations
 	"""
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
 	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
-	targetStd = targetCentered.norm(dim = 0)
+	targetStd = torch.sqrt(torch.sum(targetCentered ** 2, dim = 0))
 
-	if center_in_place:
-		predictions.sub_(torch.mean(predictions, dim = 1, keepdim = True))
-		predictionsCentered = predictions
-	else:
-		predictionsCentered = predictions - torch.mean(predictions, dim = 1, keepdim = True)
-	predictionsStd = predictionsCentered.norm(dim = 1)
+	predictionsCentered = predictions - torch.mean(predictions, dim = 1, keepdim = True)
+	predictionsStd = torch.sqrt(torch.sum(predictionsCentered ** 2, dim = 1))
 
-	out[:] = torch.sum(targetCentered * predictionsCentered, dim = 1) / (targetStd * predictionsStd).clamp(min = 1e-8)
+	out[:] = torch.sum(targetCentered * predictionsCentered, dim = 1) / (targetStd * predictionsStd)
 
 	return out.squeeze()
+
+@_promoteDimensions
+def CorrelationInPlace(target: torch.tensor, predictions: torch.tensor, out: torch.tensor):
+	"""
+	Correlation between target and batched predictions. Centers predictions in-place to avoid
+	allocating a separate centered copy. Uses .norm() for std to avoid materializing the squared
+	tensor in global memory. Caller must not use predictions after this call.
+
+	Expects fully 3D inputs — no dimension promotion. Peak memory is 2x [n_sources, n_time, n_targets]
+	instead of 3x for the standard Correlation.
+
+	:param target:		[n_time, n_targets]
+	:param predictions:	[n_sources, n_time, n_targets] — modified in-place
+	:param out:			[n_sources, n_targets] output tensor
+	"""
+	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
+	targetStd = targetCentered.norm(dim = 0)
+
+	predictions.sub_(torch.mean(predictions, dim = 1, keepdim = True))
+	predictionsStd = predictions.norm(dim = 1)
+
+	out[:] = torch.sum(targetCentered * predictions, dim = 1) / (targetStd * predictionsStd).clamp(min = 1e-8)
 
 
 @_promoteDimensions
