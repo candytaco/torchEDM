@@ -110,6 +110,7 @@ def FindSelfPredictionEmbeddingDimension(X,
 										  dtype: torch.dtype = torch.float16,
 										  device = 'cuda',
 										  batchSize: int = 1000,
+										  targetVRAM: float = 32.0,
 										  showProgress: bool = True) -> numpy.ndarray:
 	"""
 	Find the optimal embedding dimension for each source variable via self-prediction.
@@ -135,6 +136,7 @@ def FindSelfPredictionEmbeddingDimension(X,
 	:param dtype:           Torch dtype for tensors
 	:param device:          Device string or torch.device
 	:param batchSize:       Maximum number of source variables per batch (auto-reduced to fit VRAM)
+	:param targetVRAM:      VRAM budget in GB for source-batch-scaling tensors; controls auto-tuned sourceBatchSize
 	:param showProgress:    Show tqdm progress bar
 	:return:                1D int array [M_variables] of optimal embedding dimensions, 1-indexed
 	"""
@@ -161,8 +163,11 @@ def FindSelfPredictionEmbeddingDimension(X,
 
 	scores = numpy.zeros([numSources, maxDims], dtype = numpy.float32)
 
+	# Auto-tune source batch size so peak VRAM stays within targetVRAM.
+	# Peak tensors that scale with sourceBatch: cumulativeDistances and lagDiffs coexist at [sourceBatch, numTrain, numTest].
 	elementSize = torch.zeros(1, dtype = dtype).element_size()
-	sourceBatchSize = min(batchSize, max(1, int(2e9 / (numTrain * numTest * elementSize))))
+	targetVRAMBytes = targetVRAM * 1e9
+	sourceBatchSize = min(batchSize, max(1, int(targetVRAMBytes / (2 * numTrain * numTest * elementSize))))
 
 	yTrain = torch.tensor(X[train_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)
 	yTest = torch.tensor(X[test_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)

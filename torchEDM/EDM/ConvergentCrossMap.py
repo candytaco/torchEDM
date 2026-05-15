@@ -34,6 +34,7 @@ class ConvergentCrossMap:
 				 device = 'cuda',
 				 batchSize = 1000,
 				 y_batch = 2000,
+				 targetVRAM: float = 32.0,
 				 dtype: torch.dtype = torch.float16,
 				 showProgress = True,
 				 batchMode = 'variables',
@@ -60,6 +61,7 @@ class ConvergentCrossMap:
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param batchSize: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
 		:param y_batch:				Number of Y variables to predict per batch within each source batch
+		:param targetVRAM:			VRAM budget in GB for the source-batch-scaling tensors; controls auto-tuned sourceBatchSize
 		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode:			'variables' to batch over variables, 'sample' to batch over samples per library size
 		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
@@ -83,6 +85,7 @@ class ConvergentCrossMap:
 		self.ignoreNan = ignoreNan
 		self.batchSize = batchSize
 		self.y_batch = y_batch
+		self.targetVRAM = targetVRAM
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 
@@ -147,6 +150,7 @@ class ConvergentCrossMap:
 				dtype = self.dtype,
 				device = self.device,
 				batchSize = self.batchSize,
+				targetVRAM = self.targetVRAM,
 				showProgress = self.showProgress
 			)
 
@@ -196,9 +200,17 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# Auto-tune source batch size so [sourceBatchSize, numTrain, numTest] stays near 2 GB
+		# Auto-tune source batch size so peak VRAM for the dominant tensors stays within targetVRAM.
+		# Peak tensors that scale with sourceBatch:
+		#   sourceDistanceMatrices [sourceBatch, numTrain, numTest]
+		#   neighborTargetValues   [sourceBatch, maxKnn, numTest, y_batch]  (transient, dominant)
+		#   predictions            [sourceBatch, numTest, y_batch]           (transient)
+		# conservativeMaxKnn = maxEmbeddingDims + 1 bounds the actual per-batch maxKnn.
+		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		sourceBatchSize = min(self.batchSize, max(1, int(2e9 / (numTrain * numTest * elementSize))))
+		targetVRAMBytes = self.targetVRAM * 1e9
+		perSourceBytes = numTest * elementSize * (numTrain + self.y_batch * (conservativeMaxKnn + 1))
+		sourceBatchSize = min(self.batchSize, max(1, int(targetVRAMBytes / perSourceBytes)))
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],

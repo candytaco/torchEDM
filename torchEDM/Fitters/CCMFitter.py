@@ -23,10 +23,11 @@ class CCMFitter(EDMFitter):
 				 progressBar: bool = True,
 				 device: str = 'cuda',
 				 batchSize: int = 1000,
+				 y_batch: int = 2000,
+				 targetVRAM: float = 42,
 				 dtype: torch.dtype = torch.float16,
 				 batchMode: str = 'variable',
 				 sampleBatchSize: Optional[int] = None,
-				 y_batch: int = 2000,
 				 seed: Optional[int] = None):
 		"""
 		Init.
@@ -58,10 +59,11 @@ class CCMFitter(EDMFitter):
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
 		self.batchSize = batchSize
+		self.y_batch = y_batch
+		self.targetVRAM = targetVRAM
 		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
-		self.y_batch = y_batch
 		self.seed = seed
 
 		self.CCM = None
@@ -96,6 +98,7 @@ class CCMFitter(EDMFitter):
 			device = self.device,
 			batchSize = self.batchSize,
 			y_batch = self.y_batch,
+			targetVRAM = self.targetVRAM,
 			dtype = self.dtype,
 			showProgress = not self.hideProgress,
 			batchMode = self.batchMode,
