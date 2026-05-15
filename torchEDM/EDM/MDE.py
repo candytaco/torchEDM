@@ -539,8 +539,8 @@ class MDE:
 		Y = self.data[:, target]
 
 		batchedCCM = ConvergentCrossMap(
-			X = X,
-			Y = Y,
+			X = Y,
+			Y = X,
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
 			embedDimensions = self.embedDimensions,
@@ -549,9 +549,7 @@ class MDE:
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
 			validLib = self.validLib,
-			includeData = False,
 			ignoreNan = self.ignoreNan,
-			directions = 'reverse',
 			trainIndices = self.train,
 			testIndices = self.test,
 			device = self.device,
