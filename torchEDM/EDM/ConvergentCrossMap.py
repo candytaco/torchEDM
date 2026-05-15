@@ -32,7 +32,7 @@ class ConvergentCrossMap:
 				 trainIndices = None,
 				 testIndices = None,
 				 device = 'cuda',
-				 batchSize = 1000,
+				 x_batch = 1000,
 				 y_batch = 2000,
 				 targetVRAM: float = 32.0,
 				 dtype: torch.dtype = torch.float16,
@@ -59,7 +59,7 @@ class ConvergentCrossMap:
 		:param trainIndices: 		Train block index range [start, end]. If None, uses all data.
 		:param testIndices: 		Test block index range [start, end]. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
+		:param x_batch: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
 		:param y_batch:				Number of Y variables to predict per batch within each source batch
 		:param targetVRAM:			VRAM budget in GB for the source-batch-scaling tensors; controls auto-tuned sourceBatchSize
 		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
@@ -83,7 +83,7 @@ class ConvergentCrossMap:
 		self.embedded = embedded
 		self.validLib = validLib if validLib is not None else []
 		self.ignoreNan = ignoreNan
-		self.batchSize = batchSize
+		self.x_batch = x_batch
 		self.y_batch = y_batch
 		self.targetVRAM = targetVRAM
 		self.batchMode = batchMode
@@ -149,7 +149,7 @@ class ConvergentCrossMap:
 				validLib = self.validLib,
 				dtype = self.dtype,
 				device = self.device,
-				batchSize = self.batchSize,
+				batchSize = self.x_batch,
 				targetVRAM = self.targetVRAM,
 				showProgress = self.showProgress
 			)
@@ -219,7 +219,7 @@ class ConvergentCrossMap:
 		                  conservativeMaxKnn * numTest * 8 +
 		                  conservativeMaxKnn * numTest * elementSize +
 		                  2 * numTest * self.y_batch * elementSize)
-		sourceBatchSize = min(self.batchSize, max(1, int(targetVRAMBytes / perSourceBytes)))
+		sourceBatchSize = min(self.x_batch, max(1, int(targetVRAMBytes / perSourceBytes)))
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],

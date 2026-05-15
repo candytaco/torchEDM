@@ -22,7 +22,7 @@ class CCMFitter(EDMFitter):
 				 ExclusionRadius: int = 0,
 				 progressBar: bool = True,
 				 device: str = 'cuda',
-				 batchSize: int = 1000,
+				 x_batch: int = 1000,
 				 y_batch: int = 2000,
 				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float16,
@@ -40,7 +40,7 @@ class CCMFitter(EDMFitter):
 		:param Step: 				Time delay step size (tau)
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Number of variables to process per batch in 'variable' mode
+		:param x_batch: 			Number of variables to process per batch in 'variable' mode
 		:param dtype: 			Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
 		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
@@ -58,7 +58,7 @@ class CCMFitter(EDMFitter):
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
-		self.batchSize = batchSize
+		self.x_batch = x_batch
 		self.y_batch = y_batch
 		self.targetVRAM = targetVRAM
 		self.dtype = dtype
@@ -96,7 +96,7 @@ class CCMFitter(EDMFitter):
 			seed = self.seed,
 			trainIndices = TrainIndices,
 			device = self.device,
-			x_batch = self.batchSize,
+			x_batch = self.x_batch,
 			y_batch = self.y_batch,
 			targetVRAM = self.targetVRAM,
 			dtype = self.dtype,
