@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy
 import torch
 from tqdm import tqdm as ProgressBar
@@ -34,7 +36,7 @@ class ConvergentCrossMap:
 				 device = 'cuda',
 				 x_batch = 1000,
 				 y_batch = 2000,
-				 targetVRAM: float = 32.0,
+				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float16,
 				 showProgress = True,
 				 batchMode = 'variables',
@@ -200,26 +202,35 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# Auto-tune source batch size so peak VRAM stays within targetVRAM.
-		# Weighted prediction is computed one neighbor at a time (k-loop), so peak transient tensors
-		# are predictions and kthNeighborValues, both [sourceBatch, numTest, y_batch].
+		# If targetVRAM is given, scale source and target batch sizes up from the specified minimums
+		# to fill the budget. Target batch uses whatever budget remains after source allocation.
+		# If targetVRAM is None, use x_batch and y_batch exactly as specified.
 		# Peak tensors that scale with sourceBatch:
-		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]          (persistent per source batch)
-		#   subsampledDistances     [sourceBatch, maxTrainSize, numTest]      (transient during topk; advanced indexing creates a copy)
-		#   neighborIndices         [sourceBatch, maxKnn, numTest] int64      (persistent per repeat)
-		#   neighborWeights         [sourceBatch, maxKnn, numTest]            (persistent per repeat)
-		#   predictions             [sourceBatch, numTest, y_batch]           (persistent per target batch)
-		#   kthNeighborValues       [sourceBatch, numTest, y_batch]           (transient per k step)
+		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]                  (persistent per source batch)
+		#   subsampledDistances     [sourceBatch, maxTrainSize, numTest]              (transient during topk)
+		#   neighborIndices         [sourceBatch, maxKnn, numTest] int64              (persistent per sample)
+		#   neighborWeights         [sourceBatch, maxKnn, numTest]                   (persistent per sample)
+		#   flatIndices             [sourceBatch * numTest, maxKnn] int64             (persistent per sample; permuted copy)
+		#   weightsForBmm           [sourceBatch * numTest, 1, maxKnn]               (persistent per sample; permuted copy)
+		#   valuesForBmm            [sourceBatch * numTest, maxKnn, y_batch]         (transient per target batch; dominant)
 		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		targetVRAMBytes = self.targetVRAM * 1e9
-		maxTrainSize = min(max(self.trainSizes), numTrain)
-		perSourceBytes = (numTrain * numTest * elementSize +
-		                  maxTrainSize * numTest * elementSize +
-		                  conservativeMaxKnn * numTest * 8 +
-		                  conservativeMaxKnn * numTest * elementSize +
-		                  2 * numTest * self.y_batch * elementSize)
-		sourceBatchSize = min(self.x_batch, max(1, int(targetVRAMBytes / perSourceBytes)))
+		if self.targetVRAM is None:
+			sourceBatchSize = self.x_batch
+			targetBatchSize = self.y_batch
+		else:
+			targetVRAMBytes = self.targetVRAM * 1e9
+			maxTrainSize = min(max(self.trainSizes), numTrain)
+			sourceOnlyBytesPerSource = ((numTrain + maxTrainSize) * numTest * elementSize +
+			                            2 * conservativeMaxKnn * numTest * (8 + elementSize))
+			yBytesPerSourcePerTarget = conservativeMaxKnn * numTest * elementSize
+			perSourceBytes = sourceOnlyBytesPerSource + yBytesPerSourcePerTarget * self.y_batch
+			vramBatchSize = max(1, int(targetVRAMBytes / perSourceBytes))
+			sourceBatchSize = max(self.x_batch, vramBatchSize)
+			actualBatchSizeEstimate = min(sourceBatchSize, numSources)
+			remainingBytes = targetVRAMBytes - actualBatchSizeEstimate * sourceOnlyBytesPerSource
+			vramTargetBatch = max(1, int(remainingBytes / (actualBatchSizeEstimate * yBytesPerSourcePerTarget)))
+			targetBatchSize = max(self.y_batch, vramTargetBatch)
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],
@@ -269,8 +280,8 @@ class ConvergentCrossMap:
 			if exclusion is not None:
 				sourceDistanceMatrices[:, exclusion] = float('inf')
 
-			# Pre-allocate score output buffer for this source batch: [actualSourceBatchSize, y_batch]
-			performanceBuffer = torch.zeros([actualSourceBatchSize, self.y_batch], dtype = self.dtype, device = self.device)
+			# Pre-allocate score output buffer for this source batch: [actualSourceBatchSize, targetBatchSize]
+			performanceBuffer = torch.zeros([actualSourceBatchSize, targetBatchSize], dtype = self.dtype, device = self.device)
 
 			for size_i, trainSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False,
 															disable = not self.showProgress)):
@@ -284,31 +295,31 @@ class ConvergentCrossMap:
 					subsampledDistances = sourceDistanceMatrices[:, sampledIndices, :]
 					neighborIndices, neighborWeights = batch_get_simplex_weights(subsampledDistances, numNeighbors, sampledIndices)
 					del subsampledDistances
-					# neighborIndices: [actualSourceBatchSize, maxKnn, numTest] — row positions into y_train
+					# neighborIndices: [actualSourceBatchSize, maxKnn, numTest]
 					# neighborWeights: [actualSourceBatchSize, maxKnn, numTest]
 
-					for targetBatchStart in range(0, numTargets, self.y_batch):
-						targetBatchEnd = min(targetBatchStart + self.y_batch, numTargets)
+					# Permute and copy to bmm layout once; reused across all target batches.
+					# flatIndices:  [actualSourceBatchSize * numTest, maxKnn]
+					# weightsForBmm:[actualSourceBatchSize * numTest, 1, maxKnn]
+					flatIndices = neighborIndices.permute(0, 2, 1).contiguous().view(actualSourceBatchSize * numTest, maxKnn)
+					weightsForBmm = neighborWeights.permute(0, 2, 1).contiguous().view(actualSourceBatchSize * numTest, 1, maxKnn)
+
+					for targetBatchStart in range(0, numTargets, targetBatchSize):
+						targetBatchEnd = min(targetBatchStart + targetBatchSize, numTargets)
 						actualTargetBatchSize = targetBatchEnd - targetBatchStart
 
 						yBatch = y_train[:, targetBatchStart:targetBatchEnd]  # [numTrain, actualTargetBatchSize]
-
-						# Accumulate weighted neighbor contributions one k at a time.
-						# Peak memory is 2 x [sourceBatch, numTest, targetBatch] instead of
-						# 2 x [sourceBatch, maxKnn, numTest, targetBatch] from gather-all-then-bmm.
-						predictions = torch.zeros([actualSourceBatchSize, numTest, actualTargetBatchSize],
-						                          dtype = self.dtype, device = self.device)
-						for k in range(maxKnn):
-							kthNeighborValues = yBatch[neighborIndices[:, k, :]]  # [sourceBatch, numTest, actualTargetBatchSize]
-							kthNeighborValues.mul_(neighborWeights[:, k, :].unsqueeze(2))
-							predictions.add_(kthNeighborValues)
-							del kthNeighborValues
+						valuesForBmm = yBatch[flatIndices]                    # [S*numTest, maxKnn, actualTargetBatchSize]
+						predictions = torch.bmm(weightsForBmm, valuesForBmm).view(actualSourceBatchSize, numTest, actualTargetBatchSize)
+						del valuesForBmm
 
 						CorrelationInPlace(y_test[:, targetBatchStart:targetBatchEnd], predictions,
 						                   out = performanceBuffer[:, :actualTargetBatchSize])
 						performance[size_i, sample_i,
 									sourceBatchStart:sourceBatchEnd,
 									targetBatchStart:targetBatchEnd] = performanceBuffer[:, :actualTargetBatchSize].cpu().numpy()
+
+					del flatIndices, weightsForBmm
 
 			del sourceDistanceMatrices, performanceBuffer
 			if torch.cuda.is_available():
