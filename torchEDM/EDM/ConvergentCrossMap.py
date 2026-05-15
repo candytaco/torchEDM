@@ -139,14 +139,12 @@ class ConvergentCrossMap:
 		RNG = numpy.random.default_rng(self.seed)
 
 		if embedDims is None:
-			# for CCM we often use prediction at 0/now, so the self-embed horizon is set
-			# 1 so we avoid now-predict-now degenerate case
 			embedDims = FindSelfPredictionEmbeddingDimension(
 				X,
 				maxDims = self.maxEmbedDimensions,
 				train = self.train,
 				test = self.test,
-				predictionHorizon = 1,
+				predictionHorizon = self.predictionHorizon,
 				step = self.step,
 				exclusionRadius = self.exclusionRadius,
 				embedded = self.embedded,
@@ -204,36 +202,26 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# Auto-tune source and target batch sizes so peak VRAM stays near targetVRAM.
-		# Per-source cost splits into a source-only term and a per-target term so that
-		# leftover budget after source allocation can scale up target batch size.
+		# Auto-tune source batch size so peak VRAM stays within targetVRAM.
+		# Weighted prediction is computed one neighbor at a time (k-loop), so peak transient tensors
+		# are predictions and kthNeighborValues, both [sourceBatch, numTest, y_batch].
 		# Peak tensors that scale with sourceBatch:
 		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]          (persistent per source batch)
 		#   subsampledDistances     [sourceBatch, maxTrainSize, numTest]      (transient during topk; advanced indexing creates a copy)
 		#   neighborIndices         [sourceBatch, maxKnn, numTest] int64      (persistent per repeat)
 		#   neighborWeights         [sourceBatch, maxKnn, numTest]            (persistent per repeat)
-		#   predictions             [sourceBatch, numTest, targetBatch]       (persistent per target batch)
-		#   kthNeighborValues       [sourceBatch, numTest, targetBatch]       (transient per k step)
+		#   predictions             [sourceBatch, numTest, y_batch]           (persistent per target batch)
+		#   kthNeighborValues       [sourceBatch, numTest, y_batch]           (transient per k step)
 		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		if self.targetVRAM is None:
-			sourceBatchSize = self.x_batch
-			targetBatchSize = self.y_batch
-		else:
-			targetVRAMBytes = self.targetVRAM * 1e9
-			maxTrainSize = min(max(self.trainSizes), numTrain)
-			sourceOnlyBytesPerSource = ((numTrain + maxTrainSize) * numTest * elementSize +
-			                            conservativeMaxKnn * numTest * (8 + elementSize))
-			yBytesPerSourcePerTarget = 2 * numTest * elementSize
-			perSourceBytes = sourceOnlyBytesPerSource + yBytesPerSourcePerTarget * self.y_batch
-			vramBatchSize = max(1, int(targetVRAMBytes / perSourceBytes))
-			sourceBatchSize = max(self.x_batch, vramBatchSize)
-			# Use the actual number of sources per batch (capped at numSources) to compute leftover
-			# budget for target batch. When sources are few, this leftover is large and target scales up.
-			actualBatchSizeEstimate = min(sourceBatchSize, numSources)
-			remainingBytes = targetVRAMBytes - actualBatchSizeEstimate * sourceOnlyBytesPerSource
-			vramTargetBatch = max(1, int(remainingBytes / (actualBatchSizeEstimate * yBytesPerSourcePerTarget)))
-			targetBatchSize = max(self.y_batch, vramTargetBatch)
+		targetVRAMBytes = self.targetVRAM * 1e9
+		maxTrainSize = min(max(self.trainSizes), numTrain)
+		perSourceBytes = (numTrain * numTest * elementSize +
+		                  maxTrainSize * numTest * elementSize +
+		                  conservativeMaxKnn * numTest * 8 +
+		                  conservativeMaxKnn * numTest * elementSize +
+		                  2 * numTest * self.y_batch * elementSize)
+		sourceBatchSize = min(self.x_batch, max(1, int(targetVRAMBytes / perSourceBytes)))
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],
@@ -283,8 +271,8 @@ class ConvergentCrossMap:
 			if exclusion is not None:
 				sourceDistanceMatrices[:, exclusion] = float('inf')
 
-			# Pre-allocate score output buffer for this source batch: [actualSourceBatchSize, targetBatchSize]
-			performanceBuffer = torch.zeros([actualSourceBatchSize, targetBatchSize], dtype = self.dtype, device = self.device)
+			# Pre-allocate score output buffer for this source batch: [actualSourceBatchSize, y_batch]
+			performanceBuffer = torch.zeros([actualSourceBatchSize, self.y_batch], dtype = self.dtype, device = self.device)
 
 			for size_i, trainSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False,
 															disable = not self.showProgress)):
@@ -302,8 +290,8 @@ class ConvergentCrossMap:
 					# neighborIndices: [actualSourceBatchSize, maxKnn, numTest] — row positions into y_train
 					# neighborWeights: [actualSourceBatchSize, maxKnn, numTest]
 
-					for targetBatchStart in range(0, numTargets, targetBatchSize):
-						targetBatchEnd = min(targetBatchStart + targetBatchSize, numTargets)
+					for targetBatchStart in range(0, numTargets, self.y_batch):
+						targetBatchEnd = min(targetBatchStart + self.y_batch, numTargets)
 						actualTargetBatchSize = targetBatchEnd - targetBatchStart
 
 						yBatch = y_train[:, targetBatchStart:targetBatchEnd]  # [numTrain, actualTargetBatchSize]
