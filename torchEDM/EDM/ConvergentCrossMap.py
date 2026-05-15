@@ -200,16 +200,22 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# Auto-tune source batch size so peak VRAM for the dominant tensors stays within targetVRAM.
+		# Auto-tune source batch size so peak VRAM stays within targetVRAM.
+		# Weighted prediction is computed one neighbor at a time (k-loop), so peak transient tensors
+		# are predictions and kthNeighborValues, both [sourceBatch, numTest, y_batch].
 		# Peak tensors that scale with sourceBatch:
-		#   sourceDistanceMatrices [sourceBatch, numTrain, numTest]
-		#   neighborTargetValues   [sourceBatch, maxKnn, numTest, y_batch]  (transient, dominant)
-		#   predictions            [sourceBatch, numTest, y_batch]           (transient)
-		# conservativeMaxKnn = maxEmbeddingDims + 1 bounds the actual per-batch maxKnn.
+		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]          (persistent per source batch)
+		#   neighborIndices         [sourceBatch, maxKnn, numTest] int64      (persistent per repeat)
+		#   neighborWeights         [sourceBatch, maxKnn, numTest]            (persistent per repeat)
+		#   predictions             [sourceBatch, numTest, y_batch]           (persistent per target batch)
+		#   kthNeighborValues       [sourceBatch, numTest, y_batch]           (transient per k step)
 		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
 		targetVRAMBytes = self.targetVRAM * 1e9
-		perSourceBytes = numTest * elementSize * (numTrain + self.y_batch * (conservativeMaxKnn + 1))
+		perSourceBytes = (numTrain * numTest * elementSize +
+		                  conservativeMaxKnn * numTest * 8 +
+		                  conservativeMaxKnn * numTest * elementSize +
+		                  2 * numTest * self.y_batch * elementSize)
 		sourceBatchSize = min(self.batchSize, max(1, int(targetVRAMBytes / perSourceBytes)))
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
@@ -282,14 +288,17 @@ class ConvergentCrossMap:
 						actualTargetBatchSize = targetBatchEnd - targetBatchStart
 
 						yBatch = y_train[:, targetBatchStart:targetBatchEnd]  # [numTrain, actualTargetBatchSize]
-						neighborTargetValues = yBatch[neighborIndices]  # [sourceBatch, maxKnn, numTest, actualTargetBatchSize]
 
-						# Use bmm to compute weighted sum without materializing the element-wise product intermediate.
-						# Reshape weights to [sourceBatch * numTest, 1, maxKnn] and values to [sourceBatch * numTest, maxKnn, T].
-						weightsForBmm = neighborWeights.permute(0, 2, 1).reshape(actualSourceBatchSize * numTest, 1, maxKnn)
-						valuesForBmm = neighborTargetValues.permute(0, 2, 1, 3).reshape(actualSourceBatchSize * numTest, maxKnn, actualTargetBatchSize)
-						predictions = torch.bmm(weightsForBmm, valuesForBmm).reshape(actualSourceBatchSize, numTest, actualTargetBatchSize)
-						del neighborTargetValues, weightsForBmm, valuesForBmm
+						# Accumulate weighted neighbor contributions one k at a time.
+						# Peak memory is 2 x [sourceBatch, numTest, targetBatch] instead of
+						# 2 x [sourceBatch, maxKnn, numTest, targetBatch] from gather-all-then-bmm.
+						predictions = torch.zeros([actualSourceBatchSize, numTest, actualTargetBatchSize],
+						                          dtype = self.dtype, device = self.device)
+						for k in range(maxKnn):
+							kthNeighborValues = yBatch[neighborIndices[:, k, :]]  # [sourceBatch, numTest, actualTargetBatchSize]
+							kthNeighborValues.mul_(neighborWeights[:, k, :].unsqueeze(2))
+							predictions.add_(kthNeighborValues)
+							del kthNeighborValues
 
 						Correlation(y_test[:, targetBatchStart:targetBatchEnd], predictions,
 									out = performanceBuffer[:, :actualTargetBatchSize])
