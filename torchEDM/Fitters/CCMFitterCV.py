@@ -24,15 +24,17 @@ class CCMFitterCV(EDMFitter):
 				 TrainSizes: Optional[List[int]] = None,
 				 numRepeats: int = 10,
 				 EmbedDimensions: int = None,
+				 MaxEmbedDimensions: int = 20,
 				 PredictionHorizon: int = 1,
 				 KNN: Optional[int] = None,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 device: str = 'cuda',
-				 batchSize: int = 10000,
+				 x_batch: int = 1000,
 				 y_batch: Optional[int] = None,
+				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float32,
-				 batchMode: str = 'variable',
+				 batchMode: str = 'variables',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None,
 				 Folds: int = 5,
@@ -44,16 +46,17 @@ class CCMFitterCV(EDMFitter):
 		:param TrainSizes: 			Library sizes to evaluate for the convergence curve
 		:param numRepeats: 			Number of random subsamples at each library size
 		:param EmbedDimensions: 	Embedding dimension (E). None for auto-selection per fold.
+		:param MaxEmbedDimensions:	Maximum embedding dimension to explore when EmbedDimensions is None
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
 		:param KNN: 				Number of nearest neighbors, if none will be set to embed dims + 1
 		:param Step: 				Time delay step size (tau)
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param directions: 			Which directions to compute: forward|reverse|both
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Number of distance matrices to process per batch in 'variable' mode
-		:param y_batch:				number of target variable to predict in batches, independent of batchSize, which is X
+		:param x_batch: 			Number of source variables to process per batch in 'variables' mode
+		:param y_batch:				Number of target variables to predict per batch
+		:param targetVRAM:			VRAM budget in GB for auto-tuning source batch size
 		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
-		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples)
+		:param batchMode: 			'variables' (batch over source variables) or 'sample' (batch over subsamples)
 		:param sampleBatchSize: 	Number of subsamples per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
 		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
@@ -64,13 +67,15 @@ class CCMFitterCV(EDMFitter):
 		self.TrainSizes = TrainSizes
 		self.Repeats = numRepeats
 		self.EmbedDimensions = EmbedDimensions
+		self.MaxEmbedDimensions = MaxEmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
-		self.batchSize = batchSize
+		self.x_batch = x_batch
 		self.y_batch = y_batch
+		self.targetVRAM = targetVRAM
 		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
@@ -132,25 +137,29 @@ class CCMFitterCV(EDMFitter):
 		progressBarIterator = ProgressBar(total = numSplits, desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
 
 		for foldTrainIndices, foldTestIndices in self.cvSplitter.Split():
-			ccm = ConvergentCrossMap(X = XArray,
-									 Y = YArray,
-									 trainSizes = self.TrainSizes,
-									 repeats = self.Repeats,
-									 embedDimensions = self.EmbedDimensions,
-									 predictionHorizon = self.PredictionHorizon,
-									 knn = self.KNN,
-									 step = self.Step,
-									 exclusionRadius = self.ExclusionRadius,
-									 seed = self.seed,
-									 trainIndices = foldTrainIndices,
-									 testIndices = foldTestIndices,
-									 device = self.device,
-									 x_batch = self.batchSize,
-									 y_batch = self.y_batch,
-									 dtype = self.dtype,
-									 showProgress = False,
-									 batchMode = self.batchMode,
-									 sampleBatchSize = self.sampleBatchSize)
+			ccm = ConvergentCrossMap(
+				X = XArray,
+				Y = YArray,
+				trainSizes = self.TrainSizes,
+				repeats = self.Repeats,
+				embedDimensions = self.EmbedDimensions,
+				maxEmbedDimensions = self.MaxEmbedDimensions,
+				predictionHorizon = self.PredictionHorizon,
+				knn = self.KNN,
+				step = self.Step,
+				exclusionRadius = self.ExclusionRadius,
+				seed = self.seed,
+				trainIndices = foldTrainIndices,
+				testIndices = foldTestIndices,
+				device = self.device,
+				x_batch = self.x_batch,
+				y_batch = self.y_batch,
+				targetVRAM = self.targetVRAM,
+				dtype = self.dtype,
+				showProgress = False,
+				batchMode = self.batchMode,
+				sampleBatchSize = self.sampleBatchSize
+			)
 
 			foldResult = ccm.Run()
 			self.foldResults.append(foldResult)

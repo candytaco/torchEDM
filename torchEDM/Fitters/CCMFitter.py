@@ -16,6 +16,7 @@ class CCMFitter(EDMFitter):
 				 TrainSizes: Optional[List[int]] = None,
 				 numRepeats: int = 10,
 				 EmbedDimensions: int = None,
+				 MaxEmbedDimensions: int = 20,
 				 PredictionHorizon: int = 1,
 				 KNN: int = None,
 				 Step: int = -1,
@@ -26,7 +27,7 @@ class CCMFitter(EDMFitter):
 				 y_batch: int = 2000,
 				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float16,
-				 batchMode: str = 'variable',
+				 batchMode: str = 'variables',
 				 sampleBatchSize: Optional[int] = None,
 				 seed: Optional[int] = None):
 		"""
@@ -34,17 +35,19 @@ class CCMFitter(EDMFitter):
 
 		:param TrainSizes: 			train sizes to explore, when none, it defaults to the 10th, 25th, 50th, 75th, and 90th percentiles of the data size
 		:param numRepeats: 			Number of repeats at each training size
-		:param EmbedDimensions: 	Embedding dimension (E)
+		:param EmbedDimensions: 	Embedding dimension (E); if None, auto-selected up to MaxEmbedDimensions
+		:param MaxEmbedDimensions:	Maximum embedding dimension to explore when EmbedDimensions is None
 		:param PredictionHorizon: 	Prediction time horizon (Tp)
 		:param KNN: 				Number of nearest neighbors
 		:param Step: 				Time delay step size (tau)
 		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param x_batch: 			Number of variables to process per batch in 'variable' mode
-		:param dtype: 			Torch dtype for tensors (e.g. torch.float32 or torch.float16)
-		:param batchMode: 			'variable' (batch over source variables) or 'sample' (batch over subsamples per library size)
-		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
+		:param x_batch: 			Number of variables to process per batch in 'variables' mode
 		:param y_batch:				Number of target variables to predict per batch
+		:param targetVRAM:			VRAM budget in GB for auto-tuning source batch size
+		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
+		:param batchMode: 			'variables' (batch over source variables) or 'sample' (batch over subsamples per library size)
+		:param sampleBatchSize: 	Number of subsamples to process per batch in 'sample' mode
 		:param seed: 				Random seed for reproducible sampling
 		"""
 
@@ -53,6 +56,7 @@ class CCMFitter(EDMFitter):
 		self.TrainSizes = TrainSizes
 		self.Repeats = numRepeats
 		self.EmbedDimensions = EmbedDimensions
+		self.MaxEmbedDimensions = MaxEmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
 		self.Step = Step
@@ -81,20 +85,20 @@ class CCMFitter(EDMFitter):
 		XArray = fullData[:, xStart:xEnd + 1]
 		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
 
-		TrainIndices = self.GetTrainIndices()
-
 		self.CCM = ConvergentCrossMap(
 			X = XArray,
 			Y = YArray,
 			trainSizes = self.TrainSizes,
 			repeats = self.Repeats,
 			embedDimensions = self.EmbedDimensions,
+			maxEmbedDimensions = self.MaxEmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
 			knn = self.KNN,
 			step = self.Step,
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,
-			trainIndices = TrainIndices,
+			trainIndices = self.GetTrainIndices(),
+			testIndices = self.GetTestIndices(),
 			device = self.device,
 			x_batch = self.x_batch,
 			y_batch = self.y_batch,

@@ -9,7 +9,6 @@ from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
 from ._core import Correlation, R2, batch_simplex_predict_and_score, batch_simplex_predict
-from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 from ..Scoring import Correlation
 
 
@@ -55,8 +54,6 @@ class MDE:
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
-				 EmbedDimCorrelationMin: float = 0.0,
-				 FirstEMax: bool = False,
 				 TimeDelay: int = 0):
 		"""Initialize MDE with data and parameters.
 
@@ -90,8 +87,6 @@ class MDE:
 		:param CCMSeed: 	Random seed for reproducible CCM sampling (None for non-reproducible)
 		:param CCMMaxEmbeddingDimensions: 	Maximum embedding dimension for per-variable E search in CCM convergence check
 		:param MinPredictionThreshold: 	Minimum correlation threshold for candidate filtering
-		:param EmbedDimCorrelationMin: 	Minimum correlation for E selection
-		:param FirstEMax: 	Use first local maximum in E-rho curve instead of global max
 		:param TimeDelay: 	Time delay analysis depth. If 0, time delay analysis is disabled
 		"""
 		self.data = data
@@ -124,12 +119,7 @@ class MDE:
 		self.CCMSeed = CCMSeed
 		self.CCMMaxE = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
-		self.EmbedDimCorrelationMin = EmbedDimCorrelationMin
-		self.FirstEMax = FirstEMax
 		self.TimeDelay = TimeDelay
-
-		# Keyed by (column, target) to support multi-target convergence checks
-		self.optimalEmbeddingDimensions = {}
 
 		self._userProvidedE = embedDimensions != 0
 
@@ -167,20 +157,6 @@ class MDE:
 		:rtype: MDEResult
 		"""
 		nTargets = len(self.targets)
-
-		if self.embedDimensions == 0:
-			scores = FindOptimalEmbeddingDimensionality(
-				self.data[:, self.targets],
-				maxDims = self.CCMMaxE,
-				train = self.train, test = self.test,
-				predictionHorizon = self.predictionHorizon,
-				step = self.step,
-				exclusionRadius = self.exclusionRadius,
-				ignoreNan = self.ignoreNan,
-				batched = True
-			)
-			# scores shape: [nTargets, maxDims]; best E per target is argmax + 1
-			self.embedDimensions = int(numpy.argmax(scores, axis = 1).max()) + 1
 
 		self._select_variables()
 
@@ -543,9 +519,10 @@ class MDE:
 			Y = X,
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
-			embedDimensions = self.embedDimensions,
+			embedDimensions = self.embedDimensions if self._userProvidedE else None,
+			maxEmbedDimensions = self.CCMMaxE,
 			predictionHorizon = self.predictionHorizon,
-			knn = self.knn if self.knn > 0 else self.embedDimensions + 1,
+			knn = self.knn if self.knn > 0 else None,
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
 			validLib = self.validLib,
@@ -555,7 +532,8 @@ class MDE:
 			device = self.device,
 			x_batch = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
 			dtype = self.dtype,
-			seed = self.CCMSeed
+			seed = self.CCMSeed,
+			showProgress = False
 		)
 
 		result = batchedCCM.Run()
@@ -565,7 +543,7 @@ class MDE:
 			torch.cuda.empty_cache()
 
 		x = torch.tensor(lib_sizes_normalized, dtype = torch.float32, device = self.device)
-		y = torch.tensor(result.reverse_performance, dtype = torch.float32, device = self.device)
+		y = torch.tensor(result.forward_performance, dtype = torch.float32, device = self.device)
 
 		x_mean = x.mean()
 		y_mean = y.mean(dim = 0)
@@ -586,39 +564,6 @@ class MDE:
 		:param target: Target column index
 		:return: (convergent, ccm_slope) tuple
 		"""
-		from scipy.signal import argrelextrema
-
-		cache_key = (candidate, target)
-
-		if self._userProvidedE:
-			best_e = self.embedDimensions
-		elif cache_key not in self.optimalEmbeddingDimensions:
-			corrs = FindOptimalEmbeddingDimensionality(self.data[: candidate], self.data[: target],
-													   self.CCMMaxE + 1,
-													   train = self.train, test = self.test,
-													   predictionHorizon = self.predictionHorizon)
-
-			correlations = numpy.array(corrs)
-
-			if self.FirstEMax:
-				local_max_indices = argrelextrema(correlations, numpy.greater)[0]
-				if len(local_max_indices) > 0:
-					best_e_idx = local_max_indices[0]
-				else:
-					best_e_idx = len(correlations) - 1
-			else:
-				best_e_idx = numpy.argmax(correlations)
-
-			best_e = best_e_idx + 1
-			best_e_correlation = correlations[best_e_idx]
-
-			if best_e_correlation < self.EmbedDimCorrelationMin:
-				return (False, 0.0)
-
-			self.optimalEmbeddingDimensions[cache_key] = best_e
-		else:
-			best_e = self.optimalEmbeddingDimensions[cache_key]
-
 		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
 		if len(lib_sizes) < 2:
@@ -634,9 +579,10 @@ class MDE:
 			Y = self.data[:, [candidate]],
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
-			embedDimensions = best_e,
+			embedDimensions = self.embedDimensions if self._userProvidedE else None,
+			maxEmbedDimensions = self.CCMMaxE,
 			predictionHorizon = self.predictionHorizon,
-			knn = self.knn if self.knn > 0 else best_e + 1,
+			knn = self.knn if self.knn > 0 else None,
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
 			validLib = self.validLib,
@@ -645,7 +591,7 @@ class MDE:
 			testIndices = self.test,
 			device = self.device,
 			x_batch = 1,
-			batchMode = 'samples',
+			batchMode = 'sample',
 			dtype = self.dtype,
 			showProgress = False,
 			seed = self.CCMSeed

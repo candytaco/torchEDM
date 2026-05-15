@@ -41,9 +41,9 @@ class MDEFitterCV(EDMFitter):
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
+				 CCMSeed = None,
+				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
-				 EmbedDimCorrelationMin: float = 0.0,
-				 FirstEMax: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -94,9 +94,9 @@ class MDEFitterCV(EDMFitter):
 		self.CCMLibraryPercentiles = CCMLibraryPercentiles
 		self.CCMNumSamples = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
+		self.CCMSeed = CCMSeed
+		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
-		self.EmbedDimCorrelationMin = EmbedDimCorrelationMin
-		self.FirstEMax = FirstEMax
 		self.TimeDelay = TimeDelay
 
 		self.trainDataAdapter = None
@@ -242,9 +242,9 @@ class MDEFitterCV(EDMFitter):
 			CCMLibraryPercentiles = self.CCMLibraryPercentiles,
 			CCMNumSamples = self.CCMNumSamples,
 			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
+			CCMSeed = self.CCMSeed,
+			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
-			EmbedDimCorrelationMin = self.EmbedDimCorrelationMin,
-			FirstEMax = self.FirstEMax,
 			TimeDelay = self.TimeDelay
 		)
 
