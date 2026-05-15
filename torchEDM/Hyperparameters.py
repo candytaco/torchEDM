@@ -107,8 +107,9 @@ def FindSelfPredictionEmbeddingDimension(X,
 										  exclusionRadius: float = 0,
 										  embedded: bool = False,
 										  validLib: List = [],
-										  dtype: torch.dtype = torch.float32,
+										  dtype: torch.dtype = torch.float16,
 										  device = 'cuda',
+										  batchSize: int = 1000,
 										  showProgress: bool = True) -> numpy.ndarray:
 	"""
 	Find the optimal embedding dimension for each source variable via self-prediction.
@@ -118,8 +119,9 @@ def FindSelfPredictionEmbeddingDimension(X,
 	and the actual observed values. This is the correct embedding dimension to use for CCM,
 	where the quality of source s's shadow manifold governs how well it cross-maps target t.
 
-	Processes one source at a time so GPU memory scales as O(maxDims x numTrain x numTest)
-	regardless of the number of variables.
+	Processes variables in batches. The dominant memory cost is [sourceBatch, numTrain, numTest],
+	auto-tuned to stay near 2 GB. Exclusion mask positions are pre-applied as inf so they
+	propagate correctly through incremental lag accumulation.
 
 	:param X:               2D numpy array (N_timepoints, M_variables)
 	:param maxDims:         Maximum embedding dimension to test
@@ -132,6 +134,7 @@ def FindSelfPredictionEmbeddingDimension(X,
 	:param validLib:        Boolean mask for valid library points
 	:param dtype:           Torch dtype for tensors
 	:param device:          Device string or torch.device
+	:param batchSize:       Maximum number of source variables per batch (auto-reduced to fit VRAM)
 	:param showProgress:    Show tqdm progress bar
 	:return:                1D int array [M_variables] of optimal embedding dimensions, 1-indexed
 	"""
@@ -158,58 +161,77 @@ def FindSelfPredictionEmbeddingDimension(X,
 
 	scores = numpy.zeros([numSources, maxDims], dtype = numpy.float32)
 
-	perLagSquaredDistances = torch.zeros(
-		[maxDims, numTrain, numTest],
-		dtype = dtype, device = torchDevice
-	)
+	elementSize = torch.zeros(1, dtype = dtype).element_size()
+	sourceBatchSize = min(batchSize, max(1, int(2e9 / (numTrain * numTest * elementSize))))
 
 	yTrain = torch.tensor(X[train_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)
 	yTest = torch.tensor(X[test_indices + predictionHorizon, :], dtype = dtype, device = torchDevice)
 
-	for sourceIndex in ProgressBar(range(numSources), desc = 'Embedding dim search', leave = False,
-								   disable = not showProgress):
-		if embedded:
-			delayed = X[:, sourceIndex][:, None]
-		else:
-			delayed = MakeDelays(data = X[:, sourceIndex], num_delays = maxDims, stepSize = step, fill = 0.0)
+	for sourceBatchStart in ProgressBar(range(0, numSources, sourceBatchSize), desc = 'Embedding dim search',
+										leave = False, disable = not showProgress):
+		sourceBatchEnd = min(sourceBatchStart + sourceBatchSize, numSources)
+		actualSourceBatchSize = sourceBatchEnd - sourceBatchStart
 
-		trainEmbedding = torch.tensor(delayed[train_indices, :], dtype = dtype, device = torchDevice)
-		testEmbedding = torch.tensor(delayed[test_indices, :], dtype = dtype, device = torchDevice)
+		# Build time-delay embeddings for all sources in this batch: [sourceBatch, numTrain/numTest, maxDims]
+		trainEmbeddings = torch.zeros([actualSourceBatchSize, numTrain, maxDims], dtype = dtype, device = torchDevice)
+		testEmbeddings = torch.zeros([actualSourceBatchSize, numTest, maxDims], dtype = dtype, device = torchDevice)
+		for localSourceIndex in range(actualSourceBatchSize):
+			globalSourceIndex = sourceBatchStart + localSourceIndex
+			if embedded:
+				delayed = X[:, globalSourceIndex][:, None]
+			else:
+				delayed = MakeDelays(data = X[:, globalSourceIndex], num_delays = maxDims, stepSize = step, fill = 0.0)
+			trainEmbeddings[localSourceIndex] = torch.tensor(delayed[train_indices, :], dtype = dtype, device = torchDevice)
+			testEmbeddings[localSourceIndex] = torch.tensor(delayed[test_indices, :], dtype = dtype, device = torchDevice)
 
-		for lagIndex in range(maxDims):
-			perLagSquaredDistances[lagIndex, :, :] = (
-				trainEmbedding[:, lagIndex].unsqueeze(1) - testEmbedding[:, lagIndex].unsqueeze(0)
-			)
-		del trainEmbedding, testEmbedding
-
-		perLagSquaredDistances.square_()
-		torch.cumsum(perLagSquaredDistances, dim = 0, out = perLagSquaredDistances)
-
+		# Cumulative squared Euclidean distances across lags: [sourceBatch, numTrain, numTest].
+		# Pre-apply exclusion mask as inf so that inf + finite = inf keeps those positions excluded
+		# through all subsequent lag additions.
+		cumulativeDistances = torch.zeros([actualSourceBatchSize, numTrain, numTest], dtype = dtype, device = torchDevice)
 		if exclusionMask is not None:
-			perLagSquaredDistances[:, exclusionMask] = float('inf')
+			cumulativeDistances[:, exclusionMask] = float('inf')
 
-		yTrainSelf = yTrain[:, sourceIndex]
-		yTestSelf = yTest[:, sourceIndex]
+		# yTrain/yTest rows for this source batch, transposed for efficient diagonal gather
+		yTrainBatch = yTrain[:, sourceBatchStart:sourceBatchEnd].T.contiguous()  # [sourceBatch, numTrain]
+		yTestBatch = yTest[:, sourceBatchStart:sourceBatchEnd].T.contiguous()    # [sourceBatch, numTest]
 
 		for embedDimIndex in range(maxDims):
-			numKnn = embedDimIndex + 2  # E + 1 neighbors for embedding dimension E + 1
+			numKnn = embedDimIndex + 2
 
-			distMatrix = perLagSquaredDistances[embedDimIndex, :, :].unsqueeze(0)  # [1, numTrain, numTest]
-			neighborIndices, neighborWeights = batch_get_simplex_weights(distMatrix, numKnn)
-			# neighborIndices: [1, numKnn, numTest], neighborWeights: [1, numKnn, numTest]
+			# Accumulate this lag's squared differences in-place
+			lagDiffs = trainEmbeddings[:, :, embedDimIndex].unsqueeze(2) - testEmbeddings[:, :, embedDimIndex].unsqueeze(1)
+			lagDiffs.square_()
+			cumulativeDistances.add_(lagDiffs)
+			del lagDiffs
 
-			selectedTargets = yTrainSelf[neighborIndices[0]]  # [numKnn, numTest]
-			predictions = (neighborWeights[0] * selectedTargets).sum(dim = 0)  # [numTest]
+			neighborIndices, neighborWeights = batch_get_simplex_weights(cumulativeDistances, numKnn)
+			# neighborIndices: [sourceBatch, numKnn, numTest]
+			# neighborWeights: [sourceBatch, numKnn, numTest]
 
-			targetCentered = yTestSelf - yTestSelf.mean()
-			predCentered = predictions - predictions.mean()
-			targetStd = torch.sqrt((targetCentered ** 2).sum())
-			predStd = torch.sqrt((predCentered ** 2).sum())
+			# Diagonal gather: source i predicts itself, so index yTrainBatch[i] with neighborIndices[i]
+			flatNeighborIndices = neighborIndices.reshape(actualSourceBatchSize, -1)  # [sourceBatch, numKnn * numTest]
+			selectedTargets = yTrainBatch.gather(1, flatNeighborIndices).reshape(actualSourceBatchSize, numKnn, numTest)
+			del flatNeighborIndices
 
-			if targetStd > 0 and predStd > 0:
-				scores[sourceIndex, embedDimIndex] = (
-					(targetCentered * predCentered).sum() / (targetStd * predStd)
-				).item()
+			predictions = (neighborWeights * selectedTargets).sum(dim = 1)  # [sourceBatch, numTest]
+			del selectedTargets
+
+			targetCentered = yTestBatch - yTestBatch.mean(dim = 1, keepdim = True)
+			predCentered = predictions - predictions.mean(dim = 1, keepdim = True)
+			del predictions
+			targetStd = torch.sqrt((targetCentered ** 2).sum(dim = 1))
+			predStd = torch.sqrt((predCentered ** 2).sum(dim = 1))
+
+			validMask = (targetStd > 0) & (predStd > 0)
+			batchScores = torch.zeros(actualSourceBatchSize, dtype = dtype, device = torchDevice)
+			if validMask.any():
+				batchScores[validMask] = (
+					(targetCentered[validMask] * predCentered[validMask]).sum(dim = 1) /
+					(targetStd[validMask] * predStd[validMask])
+				)
+			scores[sourceBatchStart:sourceBatchEnd, embedDimIndex] = batchScores.cpu().float().numpy()
+
+		del trainEmbeddings, testEmbeddings, cumulativeDistances, yTrainBatch, yTestBatch
 
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()

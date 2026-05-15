@@ -32,9 +32,9 @@ class ConvergentCrossMap:
 				 trainIndices = None,
 				 testIndices = None,
 				 device = 'cuda',
-				 batchSize = 500,
+				 batchSize = 1000,
 				 y_batch = 2000,
-				 dtype: torch.dtype = torch.float32,
+				 dtype: torch.dtype = torch.float16,
 				 showProgress = True,
 				 batchMode = 'variables',
 				 sampleBatchSize = None):
@@ -146,6 +146,7 @@ class ConvergentCrossMap:
 				validLib = self.validLib,
 				dtype = self.dtype,
 				device = self.device,
+				batchSize = self.batchSize,
 				showProgress = self.showProgress
 			)
 
@@ -195,8 +196,9 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# Auto-tune source batch size so [sourceBatchSize, numTrain, numTest] float32 stays near 2 GB
-		sourceBatchSize = min(self.batchSize, max(1, int(2e9 / (numTrain * numTest * 4))))
+		# Auto-tune source batch size so [sourceBatchSize, numTrain, numTest] stays near 2 GB
+		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
+		sourceBatchSize = min(self.batchSize, max(1, int(2e9 / (numTrain * numTest * elementSize))))
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],
