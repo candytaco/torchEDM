@@ -286,7 +286,8 @@ class ConvergentCrossMap:
 			for size_i, trainSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False,
 															disable = not self.showProgress)):
 				trainSize = min(trainSize, numTrain)
-				for sample_i in range(self.sample):
+				for sample_i in ProgressBar(range(self.sample), desc = 'Repeats', leave = False,
+															disable = not self.showProgress):
 					sampledIndices = torch.as_tensor(
 						RNG.choice(numTrain, size = trainSize, replace = False),
 						dtype = torch.long, device = self.device
