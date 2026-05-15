@@ -202,9 +202,9 @@ class ConvergentCrossMap:
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
 
-		# If targetVRAM is given, scale source and target batch sizes up from the specified minimums
-		# to fill the budget. Target batch uses whatever budget remains after source allocation.
-		# If targetVRAM is None, use x_batch and y_batch exactly as specified.
+		# If targetVRAM is given, the budget fully controls batch sizes: source batch is set to fill
+		# the budget; if sources are exhausted before the budget, remaining VRAM goes to targets.
+		# x_batch and y_batch are defaults used only when targetVRAM is None.
 		# Peak tensors that scale with sourceBatch:
 		#   sourceDistanceMatrices  [sourceBatch, numTrain, numTest]                  (persistent per source batch)
 		#   subsampledDistances     [sourceBatch, maxTrainSize, numTest]              (transient during topk)
@@ -225,8 +225,7 @@ class ConvergentCrossMap:
 			                            2 * conservativeMaxKnn * numTest * (8 + elementSize))
 			yBytesPerSourcePerTarget = conservativeMaxKnn * numTest * elementSize
 			perSourceBytes = sourceOnlyBytesPerSource + yBytesPerSourcePerTarget * self.y_batch
-			vramBatchSize = max(1, int(targetVRAMBytes / perSourceBytes))
-			sourceBatchSize = max(self.x_batch, vramBatchSize)
+			sourceBatchSize = max(1, int(targetVRAMBytes / perSourceBytes))
 			actualBatchSizeEstimate = min(sourceBatchSize, numSources)
 			remainingBytes = targetVRAMBytes - actualBatchSizeEstimate * sourceOnlyBytesPerSource
 			vramTargetBatch = max(1, int(remainingBytes / (actualBatchSizeEstimate * yBytesPerSourcePerTarget)))
