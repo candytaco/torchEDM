@@ -632,8 +632,8 @@ class MDE:
 		lib_sizes_normalized = lib_sizes_normalized / lib_sizes_normalized.max()
 
 		batchedCCM = ConvergentCrossMap(
-			X = self.data[:, [candidate]],
-			Y = self.data[:, target],
+			X = self.data[:, target],
+			Y = self.data[:, [candidate]],
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
 			embedDimensions = best_e,
@@ -642,9 +642,7 @@ class MDE:
 			step = self.step,
 			exclusionRadius = self.exclusionRadius,
 			validLib = self.validLib,
-			includeData = False,
 			ignoreNan = self.ignoreNan,
-			directions = 'reverse',
 			trainIndices = self.train,
 			testIndices = self.test,
 			device = self.device,
@@ -662,7 +660,7 @@ class MDE:
 			torch.cuda.empty_cache()
 
 		x = torch.tensor(lib_sizes_normalized, dtype = torch.float32, device = self.device)
-		y = torch.tensor(result.reverse_performance, dtype = torch.float32, device = self.device)
+		y = torch.tensor(result.forward_performance, dtype = torch.float32, device = self.device)
 
 		x_mean = x.mean()
 		y_mean = y.mean()
