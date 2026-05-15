@@ -139,12 +139,14 @@ class ConvergentCrossMap:
 		RNG = numpy.random.default_rng(self.seed)
 
 		if embedDims is None:
+			# for CCM we often use prediction at 0/now, so the self-embed horizon is set
+			# 1 so we avoid now-predict-now degenerate case
 			embedDims = FindSelfPredictionEmbeddingDimension(
 				X,
 				maxDims = self.maxEmbedDimensions,
 				train = self.train,
 				test = self.test,
-				predictionHorizon = self.predictionHorizon,
+				predictionHorizon = 1,
 				step = self.step,
 				exclusionRadius = self.exclusionRadius,
 				embedded = self.embedded,
