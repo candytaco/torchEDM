@@ -555,7 +555,7 @@ class MDE:
 			trainIndices = self.train,
 			testIndices = self.test,
 			device = self.device,
-			batchSize = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
+			x_batch = int(self.batch_size * self.testData.shape[0] / self.trainData.shape[0]),
 			dtype = self.dtype,
 			seed = self.CCMSeed
 		)
@@ -648,7 +648,7 @@ class MDE:
 			trainIndices = self.train,
 			testIndices = self.test,
 			device = self.device,
-			batchSize = 1,
+			x_batch = 1,
 			batchMode = 'samples',
 			dtype = self.dtype,
 			showProgress = False,

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy
 import torch
 from tqdm import tqdm as ProgressBar
@@ -32,9 +34,9 @@ class ConvergentCrossMap:
 				 trainIndices = None,
 				 testIndices = None,
 				 device = 'cuda',
-				 batchSize = 1000,
+				 x_batch = 1000,
 				 y_batch = 2000,
-				 targetVRAM: float = 32.0,
+				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float16,
 				 showProgress = True,
 				 batchMode = 'variables',
@@ -59,9 +61,9 @@ class ConvergentCrossMap:
 		:param trainIndices: 		Train block index range [start, end]. If None, uses all data.
 		:param testIndices: 		Test block index range [start, end]. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param batchSize: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
+		:param x_batch: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
 		:param y_batch:				Number of Y variables to predict per batch within each source batch
-		:param targetVRAM:			VRAM budget in GB for the source-batch-scaling tensors; controls auto-tuned sourceBatchSize
+		:param targetVRAM:			Target VRAM in GB. If None, sourceBatchSize = batchSize. If given, scales sourceBatchSize up from batchSize to fill the budget.
 		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
 		:param batchMode:			'variables' to batch over variables, 'sample' to batch over samples per library size
 		:param sampleBatchSize:		Number of subsamples to process per batch in 'sample' mode. Defaults to all samples at once.
@@ -83,13 +85,13 @@ class ConvergentCrossMap:
 		self.embedded = embedded
 		self.validLib = validLib if validLib is not None else []
 		self.ignoreNan = ignoreNan
-		self.batchSize = batchSize
+		self.x_batch = x_batch
 		self.y_batch = y_batch
 		self.targetVRAM = targetVRAM
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 
-		self.sample = repeats
+		self.repeats = repeats
 		self.seed = seed
 
 		self.device = torch.device(device) if isinstance(device, str) else device
@@ -149,7 +151,7 @@ class ConvergentCrossMap:
 				validLib = self.validLib,
 				dtype = self.dtype,
 				device = self.device,
-				batchSize = self.batchSize,
+				batchSize = self.x_batch,
 				targetVRAM = self.targetVRAM,
 				showProgress = self.showProgress
 			)
@@ -164,7 +166,7 @@ class ConvergentCrossMap:
 		y_test = torch.tensor(Y[test_indices + self.predictionHorizon, :], dtype = self.dtype, device = self.device)
 
 		# note performance is kept in numpy array in CPU RAM because it might get lorge
-		performance = numpy.zeros([len(self.trainSizes), self.sample, numSources, numTargets])
+		performance = numpy.zeros([len(self.trainSizes), self.repeats, numSources, numTargets])
 
 		# the rate-limiting factor is the number of and size of the distance matrices because they are a 3D tensor
 		# so sample mode is better suited for a few smallish distance matrices
@@ -212,14 +214,18 @@ class ConvergentCrossMap:
 		#   kthNeighborValues       [sourceBatch, numTest, y_batch]           (transient per k step)
 		conservativeMaxKnn = maxEmbeddingDims + 1
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		targetVRAMBytes = self.targetVRAM * 1e9
-		maxTrainSize = min(max(self.trainSizes), numTrain)
-		perSourceBytes = (numTrain * numTest * elementSize +
-		                  maxTrainSize * numTest * elementSize +
-		                  conservativeMaxKnn * numTest * 8 +
-		                  conservativeMaxKnn * numTest * elementSize +
-		                  2 * numTest * self.y_batch * elementSize)
-		sourceBatchSize = min(self.batchSize, max(1, int(targetVRAMBytes / perSourceBytes)))
+		if self.targetVRAM is None:
+			sourceBatchSize = self.x_batch
+		else:
+			targetVRAMBytes = self.targetVRAM * 1e9
+			maxTrainSize = min(max(self.trainSizes), numTrain)
+			perSourceBytes = (numTrain * numTest * elementSize +
+			                  maxTrainSize * numTest * elementSize +
+			                  conservativeMaxKnn * numTest * 8 +
+			                  conservativeMaxKnn * numTest * elementSize +
+			                  2 * numTest * self.y_batch * elementSize)
+			vramBatchSize = max(1, int(targetVRAMBytes / perSourceBytes))
+			sourceBatchSize = max(self.x_batch, vramBatchSize)
 
 		# Reusable per-lag squared distance buffer for one source: [maxEmbeddingDims, numTrain, numTest]
 		perLagSquaredDistances = torch.zeros([maxEmbeddingDims, numTrain, numTest],
@@ -275,8 +281,8 @@ class ConvergentCrossMap:
 			for size_i, trainSize in enumerate(ProgressBar(self.trainSizes, desc = 'CCM library sizes', leave = False,
 															disable = not self.showProgress)):
 				trainSize = min(trainSize, numTrain)
-				for sample_i in ProgressBar(range(self.sample), desc = 'Repeat', leave = False,
-															disable = not self.showProgress):
+				for sample_i in ProgressBar(range(self.repeats), desc = 'Repeat', leave = False,
+											disable = not self.showProgress):
 					sampledIndices = torch.as_tensor(
 						RNG.choice(numTrain, size = trainSize, replace = False),
 						dtype = torch.long, device = self.device
@@ -330,7 +336,7 @@ class ConvergentCrossMap:
 
 		Note that this function still operates only over the train data, using the train data to predict itself
 		"""
-		numSamplesInBatch = self.sampleBatchSize if self.sampleBatchSize is not None else self.sample
+		numSamplesInBatch = self.sampleBatchSize if self.sampleBatchSize is not None else self.repeats
 		numTargets = target.shape[1]
 		dims = int(numpy.max(embedDims))
 		N_libraryIndices = train_indices.shape[0]
@@ -379,9 +385,9 @@ class ConvergentCrossMap:
 													 disable = not self.showProgress)):
 			libSizeActual = min(libSize, N_libraryIndices)
 
-			for batchStart in ProgressBar(range(0, self.sample, numSamplesInBatch), desc = 'Sample batch',
+			for batchStart in ProgressBar(range(0, self.repeats, numSamplesInBatch), desc = 'Sample batch',
 										  leave = False, disable = not self.showProgress):
-				batchEnd = min(batchStart + numSamplesInBatch, self.sample)
+				batchEnd = min(batchStart + numSamplesInBatch, self.repeats)
 				numSamplesInThisBatch = batchEnd - batchStart
 
 				# Draw subsamples: [numSamplesInThisBatch, libSizeActual]

@@ -145,7 +145,7 @@ class CCMFitterCV(EDMFitter):
 									 trainIndices = foldTrainIndices,
 									 testIndices = foldTestIndices,
 									 device = self.device,
-									 batchSize = self.batchSize,
+									 x_batch = self.batchSize,
 									 y_batch = self.y_batch,
 									 dtype = self.dtype,
 									 showProgress = False,
