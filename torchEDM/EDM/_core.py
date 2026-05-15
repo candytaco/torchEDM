@@ -89,24 +89,31 @@ def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Opt
 
 
 @_promoteDimensions
-def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
+def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None,
+				center_in_place: bool = False):
 	"""
 	Correlation between target time series and batched predictions.
-	:param target:		[n_time, n_targets] tensor of true values
-	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
-	:param out:			[n_sources, n_targets] output tensor
+	:param target:			[n_time, n_targets] tensor of true values
+	:param predictions:		[n_sources, n_time, n_targets] tensor of predicted values
+	:param out:				[n_sources, n_targets] output tensor
+	:param center_in_place:	If True, center predictions in-place to avoid allocating a separate
+							centered copy. Caller must not use predictions after this call.
 	:return: out tensor with correlations
 	"""
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
 
 	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
-	targetStd = torch.sqrt(torch.sum(targetCentered ** 2, dim = 0))
+	targetStd = targetCentered.norm(dim = 0)
 
-	predictionsCentered = predictions - torch.mean(predictions, dim = 1, keepdim = True)
-	predictionsStd = torch.sqrt(torch.sum(predictionsCentered ** 2, dim = 1))
+	if center_in_place:
+		predictions.sub_(torch.mean(predictions, dim = 1, keepdim = True))
+		predictionsCentered = predictions
+	else:
+		predictionsCentered = predictions - torch.mean(predictions, dim = 1, keepdim = True)
+	predictionsStd = predictionsCentered.norm(dim = 1)
 
-	out[:] = torch.sum(targetCentered * predictionsCentered, dim = 1) / (targetStd * predictionsStd)
+	out[:] = torch.sum(targetCentered * predictionsCentered, dim = 1) / (targetStd * predictionsStd).clamp(min = 1e-8)
 
 	return out.squeeze()
 

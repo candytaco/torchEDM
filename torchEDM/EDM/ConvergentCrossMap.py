@@ -301,7 +301,8 @@ class ConvergentCrossMap:
 							del kthNeighborValues
 
 						Correlation(y_test[:, targetBatchStart:targetBatchEnd], predictions,
-									out = performanceBuffer[:, :actualTargetBatchSize])
+									out = performanceBuffer[:, :actualTargetBatchSize],
+									center_in_place = True)
 						performance[size_i, sample_i,
 									sourceBatchStart:sourceBatchEnd,
 									targetBatchStart:targetBatchEnd] = performanceBuffer[:, :actualTargetBatchSize].cpu().numpy()
