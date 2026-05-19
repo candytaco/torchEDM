@@ -85,6 +85,12 @@ class CCMFitter(EDMFitter):
 		XArray = fullData[:, xStart:xEnd + 1]
 		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
 
+		trainIndices = self.GetTrainIndices()
+		if XTest is not None:
+			testIndices = self.GetTestIndices()
+		else:
+			testIndices = trainIndices
+
 		self.CCM = ConvergentCrossMap(
 			X = XArray,
 			Y = YArray,
@@ -97,8 +103,8 @@ class CCMFitter(EDMFitter):
 			step = self.Step,
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,
-			trainIndices = self.GetTrainIndices(),
-			testIndices = self.GetTestIndices(),
+			trainIndices = trainIndices,
+			testIndices = testIndices,
 			device = self.device,
 			x_batch = self.x_batch,
 			y_batch = self.y_batch,
