@@ -171,7 +171,7 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 	:param train_indices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
 	:return:
 	"""
-	batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions, train_indices)
+	predictions = batch_simplex_predict(distanceMatrices, numNeighbors, train_y, predictions, train_indices)
 	return score_function(test_y, predictions, perf_out)
 
 

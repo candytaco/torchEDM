@@ -9,7 +9,6 @@ from .Results import MDEResult, SimplexResult
 from .SMap import SMap
 from .Simplex import Simplex
 from ._core import Correlation, R2, batch_simplex_predict_and_score, batch_simplex_predict
-from ..Scoring import Correlation
 
 
 class MDE:
@@ -268,10 +267,10 @@ class MDE:
 			current_best_distance_matrix[:, mask_tensor] = float('inf')
 
 		train_y_tensor = torch.tensor(self.data[trainIndices + self.predictionHorizon, :][:, self.targets],
-									  device = self.device, dtype = self.dtype).T  # shape [nTargets, nTrain]
+									  device = self.device, dtype = self.dtype)  # shape [nTrain, nTargets]
 
 		test_y_tensor = torch.tensor(self.data[testIndices + self.predictionHorizon, :][:, self.targets],
-									 device = self.device, dtype = self.dtype).T  # shape [nTargets, nTest]
+									 device = self.device, dtype = self.dtype)  # shape [nTest, nTargets]
 
 		batch_distances = torch.zeros([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
 		candidateDistances = torch.empty([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
@@ -311,9 +310,10 @@ class MDE:
 							  current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
-					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn, train_y_tensor,
-													test_y_tensor, self.ScoreFunction,
-													perfs[j, :numCandidates])
+					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn,
+													train_y_tensor[:, j], test_y_tensor[:, j],
+													self.ScoreFunction,
+													perf_out = perfs[j, :numCandidates])
 
 					perfs_numpy = perfs[j, :numCandidates].cpu().numpy()
 					for v, var in enumerate(theseCandidates):
