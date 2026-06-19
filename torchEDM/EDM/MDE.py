@@ -483,7 +483,7 @@ class MDE:
 								  device = self.device, dtype = self.dtype)
 			testY = torch.tensor(self.data[testIndices + self.predictionHorizon, target])
 			preds = batch_simplex_predict(distanceMatrix[j:j + 1, :, :], knn, trainY)
-			predictions[:, j] = preds.cpu().numpy()
+			predictions[:, j] = preds.cpu().numpy().squeeze()
 			scores[j] = scoring_function(testY, preds).cpu().numpy()
 
 		del distanceMatrix
