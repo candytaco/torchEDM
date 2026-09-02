@@ -67,6 +67,20 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	if Y is not None and len(Y.shape) < 2:
 		Y = Y[:, None]
 
+	# Pre-embedded data carries one column per variable, so a per-variable
+	# history-depth sweep has nothing to sweep; only the joint sweep over the
+	# supplied columns is meaningful for embedded input, and its depth is
+	# bounded by the number of supplied columns.
+	if embedded:
+		if Y is None or not joint:
+			raise RuntimeError('FindOptimalEmbeddingDimensionality: embedded input supports only the '
+							   'joint sweep over the supplied columns (Y provided and joint=True); '
+							   'per-variable dimension sweeps need unembedded input.')
+		if maxDims > X.shape[1]:
+			raise RuntimeError('FindOptimalEmbeddingDimensionality: embedded input supplies '
+							   f'{X.shape[1]} columns, so maxDims {maxDims} cannot be swept; '
+							   'maxDims is bounded by the number of supplied columns.')
+
 	# TODO: this needs to be refactored for some things because the sub-calls are growing too long
 	# we should be able to accomodate these options:
 	# parallel process all embedding dimensions vs sequentially process all embedding dimensions
@@ -378,7 +392,8 @@ def _ComputeJointEmbeddingDistances(trainEmbedding, testEmbedding, nTrain, nTest
 	# Embed() orders columns variable-first: [var0_lag0, var0_lag1, ..., var1_lag0, ...]
 	# Reorder to lag-first: [var0_lag0, var1_lag0, var0_lag1, var1_lag1, ...]
 	# so cumsum at position dim*nVars - 1 correctly accumulates all variables through lag depth dim.
-	if nVars > 1:
+	# Embedded input has no stacked history — its columns stay in the supplied order.
+	if nVars > 1 and not embedded:
 		perm = [c * maxDims + l for l in range(maxDims) for c in range(nVars)]
 		distances = distances[perm]
 
