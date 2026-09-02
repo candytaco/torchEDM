@@ -37,7 +37,7 @@ class MDEFitterCV(EDMFitter):
 				 Verbose: bool = False,
 				 UseSMap: bool = False,
 				 Theta: float = 0.0,
-				 stdThreshold: float = 1e-2,
+				 stdThreshold: float = 1e-3,
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,

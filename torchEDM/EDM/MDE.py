@@ -512,14 +512,26 @@ class MDE:
 		"""
 		nTargets = len(self.targets)
 
+		# A target whose pool emptied before anything was selected has no model:
+		# its predictions and score stay NaN instead of coming from an arbitrary
+		# neighbor (simplex) or an all-columns fallback (SMap).
 		if self.useSMap:
 			results = [self._fit_single_EDM_instance(self._selected_variables[j], self.targets[j])
+					   if len(self._selected_variables[j]) else None
 					   for j in range(nTargets)]
-			timeValues = results[0].time
+			firstResult = next((result for result in results if result is not None), None)
+			if firstResult is not None:
+				timeValues = firstResult.time
+			elif self.noTime:
+				timeValues = self._selectionTestIndices + self.predictionHorizon
+			else:
+				timeValues = self.data[self._selectionTestIndices + self.predictionHorizon, 0]
 			n = len(timeValues)
-			predictions = numpy.zeros([n, nTargets])
-			scores = numpy.zeros(nTargets)
+			predictions = numpy.full([n, nTargets], numpy.nan)
+			scores = numpy.full(nTargets, numpy.nan)
 			for j, result in enumerate(results):
+				if result is None:
+					continue
 				predictions[:, j] = result.projection[:, 2]
 				scores[j] = scoring_function(result.projection[:, 1], result.projection[:, 2])
 			return predictions, timeValues, scores
@@ -535,10 +547,12 @@ class MDE:
 
 		# Move stored squared-distance matrix back to device: shape [nTargets, nTrain, nTest]
 		distanceMatrix = self._finalDistanceMatrix.to(self.device)
-		predictions = numpy.zeros([nTest, nTargets])
-		scores = numpy.zeros(nTargets)
+		predictions = numpy.full([nTest, nTargets], numpy.nan)
+		scores = numpy.full(nTargets, numpy.nan)
 
 		for j, target in enumerate(self.targets):
+			if len(self._selected_variables[j]) == 0:
+				continue
 			knn = len(self._selected_variables[j]) + 1
 			trainY = torch.tensor(self.data[trainIndices + self.predictionHorizon, target],
 								  device = self.device, dtype = self.dtype)

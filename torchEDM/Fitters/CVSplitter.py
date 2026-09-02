@@ -176,7 +176,7 @@ class EDMCVSplitter:
 				continue
 
 			start, end = validRange
-			numSamples = end - start + 1
+			numSamples = end - start
 			foldSize = numSamples // self.nFolds
 			remainder = numSamples % self.nFolds
 
@@ -185,9 +185,9 @@ class EDMCVSplitter:
 			for foldIndex in range(self.nFolds):
 				size = foldSize + (1 if foldIndex < remainder else 0)
 				if size > 0:
-					foldEnd = currentPosition + size - 1
-					runFolds.append((currentPosition, foldEnd))
-					currentPosition = foldEnd + 1
+					foldStop = currentPosition + size
+					runFolds.append((currentPosition, foldStop))
+					currentPosition = foldStop
 				else:
 					runFolds.append(None)
 			foldRangesPerRun.append(runFolds)

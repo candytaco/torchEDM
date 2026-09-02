@@ -44,7 +44,7 @@ class MDECV:
 				 useSMap: bool = False,
 				 theta: float = 0.0,
 				 solver=None,
-				 stdThreshold = 1e-2,
+				 stdThreshold = 1e-3,
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5, ),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
@@ -314,7 +314,9 @@ class MDECV:
 			dtype = self.dtype,
 			columns = self.columns,
 			train = [(0, self.data.shape[0])],
-			test = [(self.data.shape[0] - 1, stackedData.shape[0])],
+			# The test window reaches back far enough that the first prediction
+			# input's horizon-shifted target is the first test row.
+			test = [(self.data.shape[0] - max(self.predictionHorizon, 0), stackedData.shape[0])],
 			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn,
