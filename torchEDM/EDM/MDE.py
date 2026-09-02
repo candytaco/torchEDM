@@ -244,6 +244,13 @@ class MDE:
 		trainIndices = numpy.array(dummy.trainIndices, dtype = int)
 		testIndices = numpy.array(dummy.testIndices, dtype = int)
 
+		# selection scores need observed targets: keep only test rows whose
+		# target index t + Tp is in bounds
+		if self.predictionHorizon >= 0:
+			testIndices = testIndices[testIndices + self.predictionHorizon < self.data.shape[0]]
+		else:
+			testIndices = testIndices[testIndices + self.predictionHorizon >= 0]
+
 		trainData = dummy.Embedding[trainIndices, :]
 		testData = dummy.Embedding[testIndices, :]
 		self.trainData = trainData
@@ -525,7 +532,7 @@ class MDE:
 		nTest = len(testIndices)
 
 		if self.noTime:
-			timeValues = testIndices + self.predictionHorizon + 1
+			timeValues = testIndices + self.predictionHorizon
 		else:
 			timeValues = self.data[testIndices + self.predictionHorizon, 0]
 

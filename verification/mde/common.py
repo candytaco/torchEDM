@@ -4,14 +4,17 @@ Setup (once):
     pip install pyEDM torch scikit-learn scipy pandas
     git clone https://github.com/pao-unit/MDE <somewhere>/MDE
     pip install -e <somewhere>/MDE
+    pip install -e <this repo>
     export MDE_REPO=<somewhere>/MDE
 
-Window equivalence used throughout (established in 01_crossmap_sweep.py):
-reference lib=[1,300], pred=[301,600] on an N-row frame is reproduced through
-the sklearn-like API by splitting the SAME series as XTrain=rows 0..300
-(301 rows), XTest=rows 301..600 (300 rows) and calling
-Fit(..., TrainStart=1, TestStart=0). Both then use train rows 0..298
-(Tp=1 trims the last library row) and test rows 300..599.
+Window equivalence used throughout (torchEDM windows are 0-based,
+end-inclusive; rows whose target index t+Tp is out of bounds are trimmed):
+reference lib=[a,b], pred=[c,d] with Tp=1 is reproduced by
+  - class API: train=[(a-1, b-1-Tp)], test=[(c-1, d-1)]
+  - sklearn API: XTrain = rows a-1..c-2, XTest = rows c-1..d, and
+    Fit(..., TrainStart=0, TrainEnd=Tp, TestStart=0, TestEnd=1)
+For the Fly runs (lib=[1,300], pred=[301,600]) both give train rows 0..298
+and test rows 300..599, matching the reference exactly (verified in 01).
 """
 import os
 
@@ -33,3 +36,15 @@ def load_fly():
 
 def ts_columns(df):
     return [c for c in df.columns if c.startswith('TS')]
+
+
+def fly_split(df, ts_cols):
+    """XTrain/YTrain/XTest/YTest reproducing reference lib=[1,300],
+    pred=[301,600] when passed with TrainStart=0, TrainEnd=1, TestStart=0,
+    TestEnd=1."""
+    X = df[ts_cols].values
+    y = df['FWD'].values
+    return X[0:300], y[0:300], X[300:601], y[300:601]
+
+
+FLY_FIT_KWARGS = dict(TrainStart=0, TrainEnd=1, TestStart=0, TestEnd=1)

@@ -7,9 +7,8 @@ and prediction set, per-candidate E from the reference, libSizes
 slopes stored by 03_ccm_gate.py, with library-sampling noise calibrated by
 rerunning pyEDM CCM under seeds 1..5 on a subset of columns.
 
-Windows are (1, N-1): torchEDM CCM raises IndexError when the test window
-includes the last row (Y[test_indices + Tp] is not trimmed for Tp; pyEDM drops
-rows without a valid t+Tp target).
+Windows are the 0-based full span (0, N-1); rows without a valid t+Tp target
+are trimmed by the engine.
 
 Run 03_ccm_gate.py first to create ref_ccm_all80.pkl.
 """
@@ -47,8 +46,8 @@ def main():
         ccm = ConvergentCrossMap(
             X=fwd, Y=df[c].values[:, None], trainSizes=libSizes, repeats=20,
             embedDimensions=ref[c]['E'], predictionHorizon=1, step=-1,
-            exclusionRadius=0, trainIndices=[(1, N - 1)],
-            testIndices=[(1, N - 1)], device='cpu', batchMode='sample',
+            exclusionRadius=0, trainIndices=[(0, N - 1)],
+            testIndices=[(0, N - 1)], device='cpu', batchMode='sample',
             dtype=torch.float64, seed=SEED, showProgress=False)
         rho = np.asarray(ccm.Run().forward_performance)
         tor_s.append(float(LinearRegression().fit(

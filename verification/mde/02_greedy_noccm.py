@@ -12,7 +12,7 @@ dim 1 has 4 candidates off by up to 3.9e-3, all tie cases (see 01).
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns
+from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
 
 D = 8
 
@@ -32,13 +32,11 @@ def main():
     ref_vars = list(mde_ref.MDEOut['variables'])
     ref_rho = list(mde_ref.MDEOut['rho'])
 
-    X = df[ts_cols].values
-    y = df['FWD'].values
+    XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=D, Convergent=False, PredictionHorizon=1,
                        MinPredictionThreshold=0.0, dtype=torch.float64,
                        progressBar=False)
-    result = fitter.Fit(X[0:301], y[0:301], X[301:601], y[301:601],
-                        TrainStart=1, TestStart=0)
+    result = fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
     torch_vars = [ts_cols[i] for i in result.selected_variables[0] if i >= 0]
     torch_rho = [r for r in result.performance[0] if not np.isnan(r)]
 

@@ -98,16 +98,16 @@ class CCM:
 		self.sequential = sequential
 		self.scoring_function = scoring_function
 
-		# Set train & test block indices
+		# Set train & test block indices (0-based, end-inclusive)
 		if trainBlockIndices is not None:
 			self.train = trainBlockIndices
 		else:
-			self.train = [(1, self.Data.shape[0])]
+			self.train = [(0, self.Data.shape[0] - 1)]
 
 		if testBlockIndices is not None:
 			self.test = testBlockIndices
 		else:
-			self.test = [(1, self.Data.shape[0])]
+			self.test = [(0, self.Data.shape[0] - 1)]
 
 		self.CrossMapList = None  # List of CrossMap results
 		self.libMeans = None  # DataFrame of CrossMap results

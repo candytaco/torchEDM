@@ -4,35 +4,32 @@ Reference: the package's own Fly FWD validation config (D=8, lib=[1,300],
 pred=[301,600], crossMapRhoMin=0.2, embedDimRhoMin=0.65, ccmSlope=0.01,
 ccmSeed=7777) — reproduces MDE_Fly_2_Valid.csv.
 
-torchEDM: MaxD=8, matched windows, MinPredictionThreshold=0.2
-(~crossMapRhoMin), CCM threshold/seed/samples/percentile grid matched;
-embedDimRhoMin has no torchEDM equivalent. Run with Convergent='post'
+torchEDM (post-alignment): MaxD=8, matched windows, MinPredictionThreshold=0.2
+(~crossMapRhoMin), MinCandidateCorrelation=0.65 (~embedDimRhoMin), CCM
+threshold/seed/samples/percentile grid matched. Run with Convergent='post'
 and Convergent='pre'.
 
-Expected: agreement at dim 1 (TS33) only; reference continues TS4, TS8, TS9,
-TS32, TS24, TS26, TS71; post picks TS5, TS32, TS72, TS71, TS73, TS61, TS57;
-pre a third path. Dim-2 split = gate disagreement on TS4 (reference slope
-+0.0349 pass, torch -0.0025 fail; see 03). Final rho comparable
-(0.871 / 0.870 / 0.898).
+Expected: reference path TS33, TS4, TS8, TS9, TS32, TS24, TS26, TS71; torch
+post and pre agree with each other and match the reference through dim 5,
+splitting at dim 6 (TS24 vs TS23) where the deliberately kept
+train/test-separation divergences flip TS24's marginal slope (see 03).
 """
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns
+from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
 
 
 def torch_run(df, ts_cols, convergent):
     from torchEDM.Fitters.MDEFitter import MDEFitter
-    X = df[ts_cols].values
-    y = df['FWD'].values
+    XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=8, Convergent=convergent, PredictionHorizon=1,
-                       MinPredictionThreshold=0.2,
+                       MinPredictionThreshold=0.2, MinCandidateCorrelation=0.65,
                        CCMLibraryPercentiles=np.array([10, 15, 85, 90]),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=7777, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    result = fitter.Fit(X[0:301], y[0:301], X[301:601], y[301:601],
-                        TrainStart=1, TestStart=0)
+    result = fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
     sel = [ts_cols[i] for i in result.selected_variables[0] if i >= 0]
     rho = [float(r) for r in result.performance[0] if not np.isnan(r)]
     return sel, rho

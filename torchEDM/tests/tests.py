@@ -286,7 +286,7 @@ class test_EDM( unittest.TestCase ):
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
         df = EDM.FitSimplex(data = df_.values, columns = [x], target = [x],
-                            train = [1,200], test = [1,200], embedDimensions = 2, predictionHorizon = 1,
+                            train = [0,198], test = [0,199], embedDimensions = 2, predictionHorizon = 1,
                             validLib = df_.eval('x > 0.5 | x < -0.5').values)
 
         dfv = self.ValidationFiles["Smplx_validLib_valid.csv"]
@@ -422,7 +422,7 @@ class test_EDM( unittest.TestCase ):
         target_index = df_.columns.get_loc('V5')
 
         df = EDM.FitSimplex(data = df_.values, columns= [col_index], target = target_index,
-                            train = [301,400], test = [350,355],
+                            train = [300,398], test = [349,354],
                             knn = 1, embedded = True, returnObject = True)
 
         knn = df._MapKNNIndicesToLibraryIndices(df.knn_neighbors)
@@ -440,7 +440,7 @@ class test_EDM( unittest.TestCase ):
         V1 = df_.columns.get_loc('V1')
 
         df = EDM.FitSimplex(data = df_.values, columns= [x], target = [V1],
-                            train = [1,100], test = [101,110],
+                            train = [0,98], test = [100,109],
                             embedDimensions = 5, exclusionRadius = 10, returnObject = True)
 
         knn = df._MapKNNIndicesToLibraryIndices(df.knn_neighbors[:,0])
@@ -491,7 +491,7 @@ class test_EDM( unittest.TestCase ):
         col_index2 = df_.columns.get_loc('y')
         target_index = df_.columns.get_loc('x')
         S = EDM.FitSMap(data = data, columns = [col_index1, col_index2], target = target_index,
-                        train = [1,200], test = [1,200], embedDimensions = 2, predictionHorizon = 1,
+                        train = [0,198], test = [0,199], embedDimensions = 2, predictionHorizon = 1,
                         knn = 0, step = -1, theta = 3., exclusionRadius = 0,
                         embedded = True, validLib = [], noTime = False, generateSteps = 0,
                         generateConcat = False, ignoreNan = True, verbose = False, returnObject = False)
@@ -782,7 +782,7 @@ class test_EDM( unittest.TestCase ):
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
                                                                              maxDims = 12,
-                                                                             train = [1, 500], test=[501, 800],
+                                                                             train = [0, 484], test=[500, 799],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
                                                                              ignoreNan = True)
@@ -803,7 +803,7 @@ class test_EDM( unittest.TestCase ):
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
                                                                              maxDims = 12,
-                                                                             train = [1, 500], test=[501, 800],
+                                                                             train = [0, 484], test=[500, 799],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
                                                                              ignoreNan = True, batched = True)
@@ -829,7 +829,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X, Y,
             maxDims = 12,
-            train = [1, 500], test = [501, 800],
+            train = [0, 484], test = [500, 799],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True, joint = False)
@@ -853,7 +853,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X,
             maxDims = 12,
-            train = [1, 500], test = [501, 800],
+            train = [0, 484], test = [500, 799],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True)
@@ -877,7 +877,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X, Y,
             maxDims = 12,
-            train = [1, 500], test = [501, 800],
+            train = [0, 484], test = [500, 799],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True)
@@ -1036,8 +1036,8 @@ class test_MDE( unittest.TestCase ):
 			embedded = True,
 			embedDimensions = 1,
 			noTime = True,
-			train = [1, 300],
-			test = [301, 600],
+			train = [0, 298],
+			test = [300, 599],
 			predictionHorizon = 1,
 			verbose = False
 		)
@@ -1076,8 +1076,8 @@ class test_MDE( unittest.TestCase ):
 			embedded = True,
 			embedDimensions = 1,
 			noTime = True,
-			train = [1, 300],
-			test = [301, 600],
+			train = [0, 298],
+			test = [300, 599],
 			predictionHorizon = 1,
 			verbose = False
 		)

@@ -213,6 +213,33 @@ Each divergence above was reviewed and resolved as follows.
 - (9) carries no decision — it is the measured compound effect, re-measured
   after implementation (see the re-verification section if present).
 
+## Re-verification after implementation
+
+The decisions above are implemented (commits following the ledger commit).
+Re-running the scripts against the reference:
+
+- Windows are now 0-based end-inclusive with bounds-only trimming; the
+  mapping in `common.py` reproduces the reference windows exactly, and the
+  simplex core [01] and CCM-off greedy path [02] results are unchanged.
+- Candidate E search [03]: torchEDM matches the reference's per-candidate E
+  80/80, peaks equal at 4 decimals; the solo-predictability gate
+  (`MinCandidateCorrelation=0.65`) agrees 80/80 at the reference threshold.
+- Full convergence gate [03]: decision agreement 52.5% → 97.5% (21 vs 21
+  passes); slope Pearson r 0.18 → 0.79. The residual is two candidates
+  (TS1, TS24) whose marginal slopes flip across the 0.01 threshold under
+  the deliberately kept train/test-separation divergences (3–5).
+- Full run [05]: selection matches the reference through dim 5 (TS33, TS4,
+  TS8, TS9, TS32), splitting at dim 6 on TS24 (the marginal-slope case);
+  `'pre'` and `'post'` now produce identical selections.
+- Lorenz5D [06]: identical selection and rho at all 4 dims, identical
+  per-candidate E; the fixed sample-mode exclusion makes radius=10 accuracy
+  drop below radius=0 (pre-fix it rose above, from self-match leakage).
+- torchEDM's own test suite: the 6 tests affected by the indexing change
+  pass after window translation; the 5 embed-dimension tests pass at their
+  original 1e-6 tolerance (all 11 crashed or failed beforehand); the
+  remaining failures predate this work (value drift in the legacy
+  simplex/smap/ccm tests and a CUDA-only test).
+
 ## Comparison-methodology notes
 
 - Reference quirk avoided in [06]: `removeTime=True` drops the Time column in

@@ -342,8 +342,8 @@ class Multiview:
         if self.trainLib :
             if not len( self.test ) and not len( self.train ) :
                 # Set train & test for ranking : train, test = 1/2 data
-                self.train = [(1, floor(self.Data.shape[0] / 2))]
-                self.test = [(floor(self.Data.shape[0] / 2) + 1, self.Data.shape[0])]
+                self.train = [(0, floor(self.Data.shape[0] / 2) - 1)]
+                self.test = [(floor(self.Data.shape[0] / 2), self.Data.shape[0] - 1)]
 
         # Establish state-space dimension D
         # default to number of input columns (not embedding columns)

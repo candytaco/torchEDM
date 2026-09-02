@@ -18,7 +18,7 @@ Expected output (torch 2.13 / pyEDM 2.5.7):
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns
+from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
 
 
 def manual_simplex_rho(x, y, tr, te, tiebreak, Tp=1, knn=2):
@@ -53,13 +53,11 @@ def main():
                       embedded=True, exclusionRadius=0, noTime=True, kdWorkers=1)
         ref_rho[c] = ComputeError(sdf['Observations'], sdf['Predictions'])['rho']
 
-    X = df[ts_cols].values
-    y = df['FWD'].values
+    XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=1, Convergent=False, PredictionHorizon=1,
                        MinPredictionThreshold=0.0, dtype=torch.float64,
                        progressBar=False)
-    fitter.Fit(X[0:301], y[0:301], X[301:601], y[301:601],
-               TrainStart=1, TestStart=0)
+    fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
     mde = fitter.MDE
     tr, te = mde._selectionTrainIndices, mde._selectionTestIndices
     print(f'torchEDM train rows: {tr[0]}..{tr[-1]} (n={len(tr)}) | '
@@ -72,6 +70,7 @@ def main():
           f'mean |diff| = {np.mean(np.abs(diffs)):.2e}')
 
     print('\ntie-resolution attribution for the 4 largest differences:')
+    y = df['FWD'].values
     for i in np.argsort(-np.abs(diffs))[:4]:
         c = ts_cols[i]
         r_py, p_py = manual_simplex_rho(df[c].values, y, tr, te, 'pyEDM')

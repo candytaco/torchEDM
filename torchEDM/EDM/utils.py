@@ -24,27 +24,32 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 	embedding_offset = abs(step) * (embedDimensions - 1)
 
 	train_indices = []
-	for i, (start, stop) in enumerate(train_start_stops):
+	for start, stop in train_start_stops:
 		if not is_embedded:
 			if step < 0:
 				start = start + embedding_offset
 			else:
 				stop = stop - embedding_offset
+		# trim exactly the rows whose target index t + Tp is out of bounds
 		if predictionHorizon < 0:
-			if not is_embedded:
-				start = max(start, start + abs(predictionHorizon) - 1)
-		elif i == len(train_start_stops) - 1:
-			stop = min(stop, nSamples - predictionHorizon)
-		these_indices = [i - 1 for i in range(start, stop + 1)]
+			start = max(start, -predictionHorizon)
+		else:
+			stop = min(stop, nSamples - 1 - predictionHorizon)
+		these_indices = [i for i in range(start, stop + 1)]
 		train_indices.append(numpy.array(these_indices, dtype = int))
 
 	train_indices = numpy.concatenate(train_indices)
 
 	test_indices = []
 	for start, stop in test_start_stops:
-		if start < 1 or stop < 1:
-			raise RuntimeError('test indices less than 1')
-		test_indices.extend([j - 1 for j in range(start, stop + 1)])
+		if start < 0 or stop < 0:
+			raise RuntimeError('test indices less than 0')
+		# trim exactly the rows whose target index t + Tp is out of bounds
+		if predictionHorizon < 0:
+			start = max(start, -predictionHorizon)
+		else:
+			stop = min(stop, nSamples - 1 - predictionHorizon)
+		test_indices.extend([j for j in range(start, stop + 1)])
 
 	test_indices = numpy.array(test_indices, dtype = int)
 

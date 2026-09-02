@@ -101,20 +101,20 @@ class ConvergentCrossMap:
 		if trainIndices is not None:
 			self.train = trainIndices
 		else:
-			self.train = [(1, self.X.shape[0])]
+			self.train = [(0, self.X.shape[0] - 1)]
 
 		if trainSizes is not None:
 			self.trainSizes = trainSizes
 		else:
 			numTrainSamples = 0
 			for start, stop in self.train:
-				numTrainSamples += (stop - start)
+				numTrainSamples += (stop - start + 1)
 			self.trainSizes = [int(p * numTrainSamples) for p in [0.1, 0.25, 0.5, 0.75, 0.9]]
 
 		if testIndices is not None:
 			self.test = testIndices
 		else:
-			self.test = [(1, self.X.shape[0])]
+			self.test = [(0, self.X.shape[0] - 1)]
 
 		self.forward_performance_ = None
 		self.selectedForwardEmbedDimensions = None

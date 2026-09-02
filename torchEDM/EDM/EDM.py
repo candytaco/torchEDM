@@ -743,8 +743,11 @@ class EDM:
 	# TODO: properly override these in inheritance
 	def CreateIndices(self):
 		"""
-		Populate array index vectors lib_i, pred_i
-		Indices specified as List[Tuple[int, int]] where each tuple is a (start, stop) span of data rows.
+		Populate array index vectors lib_i, pred_i.
+		Windows are List[Tuple[int, int]] of 0-based, end-inclusive (start, stop)
+		row spans. Every row in a span is used except rows whose target index
+		(t + predictionHorizon) or embedding history would be out of bounds;
+		exactly those rows are trimmed.
 		"""
 
 		libPairs = self.train  # List[Tuple[int, int]] of (start, stop) pairs
@@ -754,15 +757,10 @@ class EDM:
 			libStart, libEnd = libPair
 
 			if self.name in ['Simplex', 'SMap', 'Multiview']:
-				# Don't check if CCM since default of "1 1" is used.
+				# Don't check if CCM since default of "0 0" is used.
 				assert libStart < libEnd
 
-			# Disallow indices < 1, the user may have specified 0 start
-			# but why??
 			assert libStart >= 0 and libEnd >= 0
-			# for now, to prevent -1 indexing
-			if libStart > 1:
-				libStart = 1
 
 		# Loop over each train pair
 		# Add rows for library segments, disallowing vectors
@@ -780,14 +778,13 @@ class EDM:
 				else:
 					stop = stop - embedShift
 
+			# trim exactly the rows whose target index t + Tp is out of bounds
 			if self.predictionHorizon < 0:
-				if not self.isEmbedded:
-					start = max(start, start + abs(self.predictionHorizon) - 1)
+				start = max(start, -self.predictionHorizon)
 			else:
-				if (r == len(libPairs) - 1):
-					stop = stop - self.predictionHorizon
+				stop = min(stop, self.Data.shape[0] - 1 - self.predictionHorizon)
 
-			libPair_i = [i - 1 for i in range(start, stop + 1)]
+			libPair_i = [i for i in range(start, stop + 1)]
 
 			lib_i_list.append(array(libPair_i, dtype = int))
 
@@ -827,21 +824,15 @@ class EDM:
 					      f' {predStart} exceeds test end {predEnd}.'
 					raise RuntimeError(msg)
 
-			# Disallow indices < 1, the user may have specified 0 start
-			if predStart < 1 or predEnd < 1:
+			if predStart < 0 or predEnd < 0:
 				msg = f'{self.name}: CreateIndices() test indices ' + \
-				      ' less than 1 not allowed.'
+				      ' less than 0 not allowed.'
 				raise RuntimeError(msg)
 
-		# Create pred_i indices from predPairs
+		# Create pred_i indices from predPairs (0-based, end-inclusive)
 		for r in range(len(predPairs)):
 			start, stop = predPairs[r]
-			pred_i = zeros(stop - start + 1, dtype = int)
-
-			i = 0
-			for j in range(start, stop + 1):
-				pred_i[i] = j - 1  # apply zero-offset
-				i = i + 1
+			pred_i = array([j for j in range(start, stop + 1)], dtype = int)
 
 			self.predList.append(pred_i)  # Append disjoint segment(s)
 
