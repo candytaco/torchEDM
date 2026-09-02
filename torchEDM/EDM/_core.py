@@ -78,13 +78,22 @@ def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Opt
 	:return:
 	"""
 	def wrapper(target, predictions, out = None):
+		target = torch.as_tensor(target)
+		predictions = torch.as_tensor(predictions)
+		isSingleSeries = predictions.ndim == 1
 		if target.ndim < 2:
 			target = target[:, None]
-		if predictions.ndim < 3:
+		if isSingleSeries:
+			# A plain prediction vector is one source and one target series.
+			predictions = predictions[None, :, None]
+		elif predictions.ndim < 3:
 			predictions = predictions[:, :, None]
 		if out is not None and out.ndim < 2:
 			out = out.unsqueeze(-1)
-		return score_function(target, predictions, out)
+		result = score_function(target, predictions, out)
+		if isSingleSeries and isinstance(result, torch.Tensor):
+			return result.reshape(())
+		return result
 	return wrapper
 
 

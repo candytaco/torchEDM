@@ -222,10 +222,13 @@ class test_EDM( unittest.TestCase ):
         data = df_.values
         fitter = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1,
                                KNN = 0, Step = -1, Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:196, col_index:col_index + 1],
-                            YTest = data[101:196, target_index:target_index + 1])
+        # Stacked rows equal data rows 0..195; the extra test row 195 supplies
+        # the last prediction's target and is excluded from the test window.
+        result = fitter.Fit(XTrain = data[0:100, col_index:col_index + 1],
+                            YTrain = data[0:100, target_index:target_index + 1],
+                            XTest = data[100:196, col_index:col_index + 1],
+                            YTest = data[100:196, target_index:target_index + 1],
+                            TestEnd = 1)
         S3 = result.projection[1:95, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
@@ -252,11 +255,14 @@ class test_EDM( unittest.TestCase ):
         data = df_.values
         fitter = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1,
                                KNN = 0, Step = -1, Embedded = True)
+        # The test rows start one row before the train rows end so the test
+        # window matches the functional call; pre-embedded rows carry no
+        # history, so the duplicated seam row is inert.
         result = fitter.Fit(XTrain = data[0:100, [x, y, z]],
                             YTrain = data[0:100, x:x + 1],
-                            XTest = data[100:199, [x, y, z]],
-                            YTest = data[100:199, x:x + 1],
-                            TrainStart = 1, TrainEnd = 1)
+                            XTest = data[99:199, [x, y, z]],
+                            YTest = data[99:199, x:x + 1],
+                            TrainEnd = 1, TestEnd = 1)
         S3 = result.projection[1:98, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
@@ -317,7 +323,9 @@ class test_EDM( unittest.TestCase ):
     def test_simplex6( self ):
         """disjoint test w/ nan"""
         if self.verbose : print ( "--- disjoint test w/ nan ---" )
-        df_ = sampleDataFrames["Lorenz5D"]
+        # Copy: writing NaNs into the shared module-level frame would poison
+        # every later test that reads it.
+        df_ = sampleDataFrames["Lorenz5D"].copy()
         df_.iloc[ [8,50,501], [1,2] ] = nan
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V2')
@@ -444,7 +452,10 @@ class test_EDM( unittest.TestCase ):
                             embedDimensions = 5, exclusionRadius = 10, returnObject = True)
 
         knn = df._MapKNNIndicesToLibraryIndices(df.knn_neighbors[:,0])
-        knnValid = array( [89, 90, 91, 92, 93, 94, 95, 96, 97, 98] )
+        # Values from pyEDM 2.5.7 with the same configuration: the training
+        # window gives up its last row to the prediction horizon, so the two
+        # final test rows share row 97 as their nearest allowed neighbor.
+        knnValid = array( [89, 90, 91, 92, 93, 94, 95, 96, 97, 97] )
         self.assertTrue( array_equal( knn, knnValid ) )
 
     
@@ -470,14 +481,15 @@ class test_EDM( unittest.TestCase ):
         S2 = df[1:50, 2]  # Skip row 0 Nan
         self.assertTrue(numpy.allclose(S1, S2, atol = 1e-6))
 
-        # OOP API: include gap rows in XTest, skip via TestStart
+        # OOP API: include gap rows in XTest, skip via TestStart; the extra
+        # test row 160 supplies the last prediction's target.
         fitter = SMapFitter(EmbedDimensions = 4, PredictionHorizon = 1,
                             KNN = 0, Step = -1, Theta = 3., Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:161, col_index:col_index + 1],
-                            YTest = data[101:161, target_index:target_index + 1],
-                            TestStart = 9)
+        result = fitter.Fit(XTrain = data[0:100, col_index:col_index + 1],
+                            YTrain = data[0:100, target_index:target_index + 1],
+                            XTest = data[100:161, col_index:col_index + 1],
+                            YTest = data[100:161, target_index:target_index + 1],
+                            TestStart = 9, TestEnd = 1)
         S3 = result.projection[1:50, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
@@ -559,10 +571,13 @@ class test_EDM( unittest.TestCase ):
         # OOP API
         fitter = SMapFitter(EmbedDimensions = 2, PredictionHorizon = 1,
                             KNN = 0, Step = -1, Theta = 3., Embedded = False)
-        result = fitter.Fit(XTrain = data[0:101, col_index:col_index + 1],
-                            YTrain = data[0:101, target_index:target_index + 1],
-                            XTest = data[101:151, col_index:col_index + 1],
-                            YTest = data[101:151, target_index:target_index + 1])
+        # The extra test row 150 supplies the last prediction's target and is
+        # excluded from the test window.
+        result = fitter.Fit(XTrain = data[0:100, col_index:col_index + 1],
+                            YTrain = data[0:100, target_index:target_index + 1],
+                            XTest = data[100:151, col_index:col_index + 1],
+                            YTest = data[100:151, target_index:target_index + 1],
+                            TestEnd = 1)
         S3 = result.projection[1:50, 2]
         self.assertTrue(numpy.allclose(S1, S3, atol = 1e-6))
 
@@ -597,7 +612,15 @@ class test_EDM( unittest.TestCase ):
                            progressBar = False)
         result = fitter.Fit(XTrain = data[:, col_index:col_index + 1],
                             YTrain = data[:, target_index:target_index + 1])
-        self.assertTrue(numpy.allclose(result.libMeans, dfv, atol = 5e-2))
+        # A single source column comes back squeezed to one dimension
+        fwd = numpy.asarray(result.forward_performance).reshape(len(dfv), -1)
+        self.assertTrue(numpy.allclose(fwd[:, 0], dfv[:, 1], atol = 5e-2))
+
+        # Reverse direction: swap source and target
+        resultRev = fitter.Fit(XTrain = data[:, target_index:target_index + 1],
+                               YTrain = data[:, col_index:col_index + 1])
+        rev = numpy.asarray(resultRev.forward_performance).reshape(len(dfv), -1)
+        self.assertTrue(numpy.allclose(rev[:, 0], dfv[:, 2], atol = 5e-2))
 
 
     def test_ccm2( self ):
@@ -763,7 +786,7 @@ class test_EDM( unittest.TestCase ):
                                YTest      = YTestOOP,
                                TrainStart = 1,
                                TestStart  = 1)
-        testOOP = resultOOP.projection[:, 2]
+        testOOP = resultOOP.predictions
         self.assertEqual(testOOP.shape[0], predValid.shape[0])
         self.assertFalse(numpy.all(numpy.isnan(testOOP)))
 

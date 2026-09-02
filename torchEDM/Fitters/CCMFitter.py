@@ -99,7 +99,8 @@ class CCMFitter(EDMFitter):
 			embedDimensions = self.EmbedDimensions,
 			maxEmbedDimensions = self.MaxEmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
+			# 0 means default (dimensions + 1), which the batched class spells None
+			knn = self.KNN if self.KNN else None,
 			step = self.Step,
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,

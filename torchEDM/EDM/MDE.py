@@ -107,6 +107,20 @@ class MDE:
 		self.columns = columns
 		self.train = train
 		self.test = test
+		# The reference implementation trains on every row whose horizon-shifted
+		# target is inside the data, while the shared engine keeps training
+		# targets inside the training span by giving up the final window's last
+		# predictionHorizon rows. Padding the final window by the horizon
+		# restores the reference row set: the engine subtracts the horizon back
+		# and its absolute bounds guard clips at the data end. Only positive
+		# horizons need this; the padded copy is what MDE hands to the engine.
+		if train is not None and predictionHorizon > 0:
+			paddedTrain = list(train)
+			lastStart, lastStop = paddedTrain[-1]
+			paddedTrain[-1] = (lastStart, lastStop + predictionHorizon)
+			self._boundsOnlyTrain = paddedTrain
+		else:
+			self._boundsOnlyTrain = train
 		self.embedDimensions = embedDimensions
 		self.predictionHorizon = predictionHorizon
 		self.knn = knn
@@ -220,7 +234,7 @@ class MDE:
 			data = self.data,
 			columns = numpy.arange(self.data.shape[1]).tolist(),
 			target = self.targets[0],
-			train = self.train,
+			train = self._boundsOnlyTrain,
 			test = self.test,
 			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
@@ -461,7 +475,7 @@ class MDE:
 				data = self.data,
 				columns = variables,
 				target = target,
-				train = self.train,
+				train = self._boundsOnlyTrain,
 				test = self.test,
 				embedDimensions = self.embedDimensions,
 				predictionHorizon = self.predictionHorizon,
@@ -483,7 +497,7 @@ class MDE:
 				data = self.data,
 				columns = variables,
 				target = target,
-				train = self.train,
+				train = self._boundsOnlyTrain,
 				test = self.test,
 				embedDimensions = self.embedDimensions,
 				predictionHorizon = self.predictionHorizon,
@@ -589,7 +603,7 @@ class MDE:
 		scores = FindOptimalEmbeddingDimensionality(
 			self.data[:, sweepColumns], self.data[:, self.targets],
 			maxDims = self.CCMMaxEmbedDimensions,
-			train = self.train, test = self.test,
+			train = self._boundsOnlyTrain, test = self.test,
 			predictionHorizon = self.predictionHorizon,
 			step = self.step, exclusionRadius = self.exclusionRadius,
 			embedded = False, validLib = self.validLib,

@@ -507,6 +507,18 @@ def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
 	return scores
 
 
+def _ScoreFinitePairs(scoring_function, observations, predictions):
+	"""
+	Score only the rows where both series are finite. Unfilled prediction
+	rows (leading rows without enough history, or targets past the data end)
+	would otherwise turn the whole score into NaN.
+	"""
+	observations = numpy.asarray(observations, dtype = float)
+	predictions = numpy.asarray(predictions, dtype = float)
+	finitePairs = numpy.isfinite(observations) & numpy.isfinite(predictions)
+	return scoring_function(observations[finitePairs], predictions[finitePairs])
+
+
 def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 columns: List[int] = None,
 								 target: int = None,
@@ -583,7 +595,9 @@ def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 					noTime=noTime, ignoreNan=ignoreNan)
 
 		result = S.Run()
-		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
+		correlation = _ScoreFinitePairs(scoring_function,
+										result.projection[:, 1],
+										result.projection[:, 2])
 		correlations.append(correlation)
 
 	return correlations
@@ -646,7 +660,8 @@ def _FindOptimalPredictionHorizonBatched(data, columns, target, TpVals,
 		validObsIndices = observationIndices[observationIndices < len(S.targetVec)]
 		observations = S.targetVec[validObsIndices, 0]
 		nValid = len(validObsIndices)
-		correlation = scoring_function(observations[:nValid], predictionsNumpy[i, :nValid])
+		correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
+										predictionsNumpy[i, :nValid])
 		correlations.append(correlation)
 
 	del distances, neighbors, targetVector, weights, weightRowSum
@@ -807,7 +822,8 @@ def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test
 		predictions = coefficients[:, 0] + torch.sum(coefficients[:, 1:] * testEmbeddings, dim = 1)
 		predictionsNumpy = predictions.cpu().numpy()
 
-		correlation = scoring_function(observations[:nValid], predictionsNumpy[:nValid])
+		correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
+										predictionsNumpy[:nValid])
 		correlations.append(correlation)
 
 	# Clean up

@@ -328,4 +328,5 @@ def FitMultiview(data: numpy.ndarray,
 	if returnObject:
 		return M
 	else:
-		return {'Predictions': result.projection, 'View': result.view}
+		# M.Projection columns: [Time, Observations, ensemble Predictions]
+		return {'Predictions': M.Projection, 'View': result.view}

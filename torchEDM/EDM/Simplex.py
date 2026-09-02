@@ -162,23 +162,31 @@ class Simplex(EDM):
 			maskTensor = torch.tensor(exclusionMask, device=self.device, dtype=torch.bool)
 			distanceMatrix[maskTensor] = float('inf')
 
-		# topk on dim=0 finds k smallest distances per test point (columns)
-		# distanceMatrix is [nTrain x nTest], so dim=0 selects across train rows
-		topkDistances, topkIndices = torch.topk(distanceMatrix, self.knn, dim=0, largest=False)
+		# Select the knn smallest distances per test point (columns of the
+		# [nTrain x nTest] matrix) with deterministic tie handling: equal
+		# distances are ordered by temporal proximity |testRow - trainRow|,
+		# then by trainRow ascending, matching the reference selection.
+		distancesNumpy = distanceMatrix.cpu().numpy()
+		trainRows = numpy.asarray(self.trainIndices)
+		testRows = numpy.asarray(self.testIndices)
+		temporalOffsets = numpy.abs(testRows[None, :] - trainRows[:, None])
+
+		# Stable double argsort: rows start in trainRow-ascending order, the
+		# first stable sort settles the temporal tie key, the second settles
+		# distance while preserving both tie keys.
+		offsetOrder = numpy.argsort(temporalOffsets, axis = 0, kind = 'stable')
+		distancesByOffset = numpy.take_along_axis(distancesNumpy, offsetOrder, axis = 0)
+		distanceOrder = numpy.argsort(distancesByOffset, axis = 0, kind = 'stable')
+		selection = numpy.take_along_axis(offsetOrder, distanceOrder, axis = 0)[:self.knn, :]
 
 		# Transpose to [nTest x knn] to match expected shape
-		neighborDistances = topkDistances.t()
-		neighborIndices = topkIndices.t()
-
-		# Move results to CPU numpy
-		self.knn_distances = neighborDistances.cpu().numpy()
+		self.knn_distances = numpy.take_along_axis(distancesNumpy, selection, axis = 0).T
 		# We no long map the neighbor indices back to original data indices
 		# because for predictions, we also just mask the Y data to the same indices
-		self.knn_neighbors = neighborIndices.cpu().numpy()
+		self.knn_neighbors = selection.T
 
 		# Clean up GPU tensors
-		del trainTensor, testTensor, distanceMatrix, topkDistances, topkIndices
-		del neighborDistances, neighborIndices
+		del trainTensor, testTensor, distanceMatrix
 		if exclusionMask.any():
 			del maskTensor
 		if torch.cuda.is_available():
@@ -198,9 +206,11 @@ class Simplex(EDM):
 		neighbors = torch.tensor(self.knn_neighbors, device=self.device, dtype=torch.long)
 		y_train = torch.tensor(self.targetVec[self.trainIndices + self.predictionHorizon].squeeze(), device=self.device, dtype=self.dtype)
 
-		# Minimum distance per test row (first neighbor), floored at 1e-6
-		minDistances = distances[:, 0]
-		torch.clamp_min(minDistances, 1e-6, out=minDistances)
+		# Minimum distance per test row (first neighbor), floored at 1e-6.
+		# The floor must not write back into the distance matrix: distances[:, 0]
+		# is a view, and flooring it in place would turn a true zero-distance
+		# nearest neighbor's weight into exp(-1) instead of 1.
+		minDistances = torch.clamp_min(distances[:, 0], 1e-6)
 
 		# Scale distances and compute exponential weights
 		scaledDistances = distances / minDistances.unsqueeze(1)
@@ -252,7 +262,9 @@ class Simplex(EDM):
 			print(f'\tData shape: {self.Data.shape}')
 			print(f'\ttrain: {train}')
 
-		test = [train[-1] - 1, train[-1]]
+		# Predict one row at the end of the final training window
+		lastTrainStop = train[-1][1]
+		test = [(lastTrainStop - 1, lastTrainStop)]
 		if self.verbose:
 			print(f'\tGenerate(): test overriden to {test}')
 
@@ -275,8 +287,10 @@ class Simplex(EDM):
 				print(f'{self.name}: Generate(): step {step} {"=" * 50}')
 
 			G = Simplex(data=newData,
-						columns=[column],
-						target=target,
+						# newData is always [time, column], so the generated
+						# series sits at column 1 whatever its original index
+						columns=[1],
+						target=[1],
 						train=train,
 						test=test,
 						embedDimensions=self.embedDimensions,
@@ -311,7 +325,7 @@ class Simplex(EDM):
 			if self.verbose:
 				print(f'2) generated step {step}')
 
-			test = [p + 1 for p in test]
+			test = [(start + 1, stop + 1) for (start, stop) in test]
 
 			if self.verbose:
 				print(f'4) test {test}')
