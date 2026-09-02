@@ -13,6 +13,21 @@ from .Utils import IsNonStringIterable
 # TODO: these should all be cross-validated
 
 
+def _NormalizeWindowPairs(pairs):
+	"""
+	Accept train/test windows as either a flat [start, stop, start, stop, ...] list
+	or a list of (start, stop) pairs; return a list of (start, stop) pairs.
+	"""
+	if pairs is None:
+		return None
+	pairs = list(pairs)
+	if len(pairs) and not IsNonStringIterable(pairs[0]):
+		if len(pairs) % 2:
+			raise ValueError('Window list must contain an even number of start/stop values')
+		pairs = [(pairs[i], pairs[i + 1]) for i in range(0, len(pairs), 2)]
+	return pairs
+
+
 def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   Y: Optional[numpy.ndarray] = None,
 									   maxDims: int = 10,
@@ -24,7 +39,7 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   embedded: bool = False,
 									   validLib: List = [],
 									   ignoreNan: bool = True,
-									   batched: bool = True,
+									   batched: bool = False,
 									   scoring_function = Correlation,
 									   joint: bool = True,
 									   dtype: torch.dtype = torch.float32,
@@ -51,7 +66,9 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 	:param embedded: 			Whether data is already embedded
 	:param validLib: 			Valid library indices
 	:param ignoreNan: 			Whether to ignore NaN values
-	:param batched: 			Use shared maxE indices for all E (faster, slightly less accurate for low E)
+	:param batched: 			False (default): each E uses its own train/test indices (exact). True: shared
+								maxDims indices for all E — one pass, faster, but low dimensions lose the rows
+								the maxDims trim discards, which can shift scores and the argmax
 	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
 	:param joint:				when X is 2D, use all vars together to predict Y? If False, each X is used separately to predict Y
 	:param dtype:				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
@@ -64,6 +81,9 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 		X = X[:, None]
 	if Y is not None and len(Y.shape) < 2:
 		Y = Y[:, None]
+
+	train = _NormalizeWindowPairs(train)
+	test = _NormalizeWindowPairs(test)
 
 	# TODO: this needs to be refactored for some things because the sub-calls are growing too long
 	# we should be able to accomodate these options:
@@ -88,13 +108,15 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 		scores = _FindOptimalEmbeddingDimensionalityIterative(
 			X, Y, maxDims, train, test,
 			predictionHorizon, step, exclusionRadius, embedded,
-			validLib, ignoreNan, scoring_function, joint)
+			validLib, ignoreNan, scoring_function, joint,
+			dtype = dtype, batchSize = BatchSize)
 
-	# Squeeze the target axis only for single-target non-self-prediction calls
-	# so the original 1D return shape is preserved. Self-prediction returns
-	# [nVars, maxDims] regardless of nVars, so no squeezing is applied there.
-	if Y is not None and Y.shape[1] == 1:
-		return scores.squeeze(0)
+	# Squeeze a singleton leading (target) axis: single-target separate calls
+	# return [nVars, maxDims], joint single-target calls return [maxDims],
+	# single-variable self-prediction returns [1, maxDims]
+	scores = numpy.asarray(scores)
+	if scores.ndim >= 2 and scores.shape[0] == 1:
+		scores = scores[0]
 	return scores
 
 
@@ -253,34 +275,25 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 												 step, exclusionRadius, embedded,
 												 validLib, ignoreNan,
 												 scoring_function,
-												 joint):
+												 joint,
+												 dtype = torch.float32,
+												 batchSize = None):
 	"""
-	Evaluate each E with its own proper train/test indices.
-	Each E creates a Simplex and runs GPU-accelerated FindNeighbors/Project.
+	Evaluate each E with its own proper train/test indices: rows are trimmed only
+	by the lags that E actually uses, so low dimensions keep the rows the shared
+	maxDims trim would discard. Exact but ~(maxDims/2)x the work of the shared-index
+	variant: each E reruns the batched engine at depth E and keeps its last score.
 	"""
-	print('Iterative search will be deprecated soon and this is not updated')
-	if Y is not None:
-		combinedData = numpy.column_stack([X, Y])
-	else:
-		combinedData = X
-	columns = list(range(X.shape[1]))
-	target = X.shape[1]
-
-	scores = []
-
+	perDimensionScores = []
 	for E in range(1, maxDims + 1):
-		S = Simplex(data = combinedData, columns = columns, target = target,
-					train = train, test = test, embedDimensions = E,
-					predictionHorizon = predictionHorizon, knn = 0,
-					step = step, exclusionRadius = exclusionRadius,
-					embedded = embedded, validLib = validLib,
-					noTime = True, ignoreNan = ignoreNan)
+		scores = _FindOptimalEmbeddingDimensionalityBatched(
+			X, Y, E, train, test,
+			predictionHorizon, step, exclusionRadius, embedded,
+			validLib, ignoreNan, scoring_function, joint,
+			dtype = dtype, batchSize = batchSize)
+		perDimensionScores.append(scores[..., -1])
 
-		result = S.Run()
-		correlation = scoring_function(result.projection[:, 1], result.projection[:, 2])
-		scores.append(correlation)
-
-	return scores
+	return numpy.stack(perDimensionScores, axis = -1)
 
 
 def _FindOptimalEmbeddingDimensionalityBatched(X, Y, maxDims,
@@ -480,9 +493,12 @@ def _BatchedSeparatePrediction(Y, dummy, trainEmbedding, testEmbedding,
 		if hasMask:
 			embeddingDistances[:, maskTensor] = float('inf')
 
+		# matrix v*maxDims + e is variable v at depth E = e+1, predicted with its own knn = E + 1
+		knnPerMatrix = torch.arange(2, maxDims + 2, dtype = torch.long, device = device).repeat(batchNumVars)
+
 		out = torch.zeros(nTargets, batchNumVars * maxDims, device = device, dtype = dtype)
 		for targetIndex in range(nTargets):
-			predictions = batch_simplex_predict(embeddingDistances, maxDims + 1, y_train[targetIndex])
+			predictions = batch_simplex_predict(embeddingDistances, knnPerMatrix, y_train[targetIndex])
 			Correlation(y_test_all[targetIndex, :nTestValid], predictions[:, :nTestValid], out[targetIndex])
 		scores[:, varBatchStart:varBatchEnd, :] = out.cpu().numpy().reshape(nTargets, batchNumVars, maxDims)
 

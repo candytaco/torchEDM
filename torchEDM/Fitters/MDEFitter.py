@@ -28,13 +28,14 @@ class MDEFitter(EDMFitter):
 				 Verbose: bool = False,
 				 UseSMap: bool = False,
 				 Theta: float = 0.0,
-				 stdThreshold: float = 1e-2,
+				 stdThreshold: float = 1e-3,
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
+				 MinCandidateCorrelation: float = 0.5,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -82,6 +83,7 @@ class MDEFitter(EDMFitter):
 		self.CCMSeed = CCMSeed
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
+		self.MinCandidateCorrelation = MinCandidateCorrelation
 		self.TimeDelay = TimeDelay
 
 		self.MDE = None
@@ -130,6 +132,7 @@ class MDEFitter(EDMFitter):
 			CCMSeed = self.CCMSeed,
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidateCorrelation = self.MinCandidateCorrelation,
 			TimeDelay = self.TimeDelay
 		)
 

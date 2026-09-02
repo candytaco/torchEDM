@@ -88,6 +88,22 @@ class EDM:
 		
 		return self._knn
 
+	def _NormalizeWindows(self, windows, name):
+		"""
+		Accept windows as a whitespace string ('1 100'), a flat [start, stop, ...]
+		list, or a list of (start, stop) pairs; return a list of (start, stop) pairs.
+		"""
+		if not IsNonStringIterable(windows):
+			values = [int(i) for i in windows.split()]
+		elif len(windows) and not IsNonStringIterable(windows[0]):
+			values = [int(i) for i in windows]
+		else:
+			return windows
+		if len(values) % 2:
+			raise RuntimeError(f'Validate() {self.name}: {name} must contain '
+			                   'an even number of start/stop values.')
+		return [(values[i], values[i + 1]) for i in range(0, len(values), 2)]
+
 	def _BuildExclusionMask(self):
 		"""
 		Pre-compute boolean exclusion mask for neighbor queries.
@@ -962,15 +978,11 @@ class EDM:
 		if self.name != 'CCM':
 			if not len(self.train):
 				raise RuntimeError(f'Validate() {self.name}: train required.')
-			if not IsNonStringIterable(self.train):
-				trainInts = [int(i) for i in self.train.split()]
-				self.train = [(trainInts[i], trainInts[i + 1]) for i in range(0, len(trainInts), 2)]
+			self.train = self._NormalizeWindows(self.train, 'train')
 
 			if not len(self.test):
 				raise RuntimeError(f'Validate() {self.name}: test required.')
-			if not IsNonStringIterable(self.test):
-				testInts = [int(i) for i in self.test.split()]
-				self.test = [(testInts[i], testInts[i + 1]) for i in range(0, len(testInts), 2)]
+			self.test = self._NormalizeWindows(self.test, 'test')
 
 		# Set knn default based on E and train size, E embedded on num columns
 		if self.name in ['Simplex', 'CCM', 'Multiview']:

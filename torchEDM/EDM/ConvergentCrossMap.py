@@ -378,9 +378,14 @@ class ConvergentCrossMap:
 
 		del cumulativeSqDist
 
-		if self.exclusionRadius == 0:
-			diagIndices = torch.arange(N_libraryIndices, device = self.device)
-			fullDistances[:, :, diagIndices, diagIndices] = float('inf')
+		# the self-match is always excluded; a positive exclusionRadius
+		# additionally excludes all pairs within that many rows of each other
+		diagIndices = torch.arange(N_libraryIndices, device = self.device)
+		fullDistances[:, :, diagIndices, diagIndices] = float('inf')
+		if self.exclusionRadius > 0:
+			rowNumbers = torch.as_tensor(train_indices, dtype = torch.long, device = self.device)
+			excludedPairs = (rowNumbers.unsqueeze(0) - rowNumbers.unsqueeze(1)).abs() <= self.exclusionRadius
+			fullDistances[:, :, excludedPairs] = float('inf')
 
 		# kIndices reused per target loop: [1, 1, max_knn, 1]
 		kIndices = torch.arange(max_knn, device = self.device).view(1, 1, max_knn, 1)
