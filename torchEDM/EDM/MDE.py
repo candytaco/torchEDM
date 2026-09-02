@@ -572,13 +572,6 @@ class MDE:
 		if len(sweepColumns) == 0:
 			return
 
-		# Bound the distance block [batch * maxDimensions, nTrain, nTest] to ~1.5 GB
-		numTrainRows = sum(stop - start for start, stop in self.train)
-		numTestRows = sum(stop - start for start, stop in self.test)
-		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		bytesPerVariable = self.CCMMaxEmbedDimensions * numTrainRows * numTestRows * elementSize
-		batchSize = max(1, int(1.5e9 / max(bytesPerVariable, 1)))
-
 		scores = FindOptimalEmbeddingDimensionality(
 			self.data[:, sweepColumns], self.data[:, self.targets],
 			maxDims = self.CCMMaxEmbedDimensions,
@@ -587,7 +580,7 @@ class MDE:
 			step = self.step, exclusionRadius = self.exclusionRadius,
 			embedded = False, validLib = self.validLib,
 			ignoreNan = self.ignoreNan, batched = not self.iterativeDimensionSearch,
-			joint = False, dtype = self.dtype, BatchSize = batchSize)
+			joint = False, dtype = self.dtype)
 
 		scores = numpy.asarray(scores)
 		if scores.ndim == 2:  # single target squeezed to [nVars, maxDims]
@@ -657,7 +650,10 @@ class MDE:
 			torch.cuda.empty_cache()
 
 		x = torch.tensor(lib_sizes_normalized, dtype = torch.float32, device = self.device)
+		# The CCM result squeezes a single-candidate axis away; restore
+		# [nTrainSizes, nCandidates] so the slope math stays per candidate.
 		y = torch.tensor(result.forward_performance, dtype = torch.float32, device = self.device)
+		y = y.reshape(len(lib_sizes), -1)
 
 		x_mean = x.mean()
 		y_mean = y.mean(dim = 0)
@@ -680,8 +676,8 @@ class MDE:
 
 		# Slopes are cached per run: a candidate is tested once, a rejected
 		# candidate stays rejected across later dimensions. NaN means not yet
-		# computed (a computed NaN slope is never accepted, so it never needs
-		# to be distinguished from absent).
+		# computed; a computed slope that comes back NaN is stored as -inf so
+		# it stays cached as rejected instead of being re-tested.
 		if self._ccmSlopeCache is not None:
 			cachedSlope = self._ccmSlopeCache[targetPosition, candidate]
 			if not numpy.isnan(cachedSlope):
@@ -743,6 +739,8 @@ class MDE:
 		xy_mean = (x * y).mean()
 		x_var = (x ** 2).mean() - x_mean ** 2
 		slope = float((xy_mean - x_mean * y_mean) / x_var)
+		if numpy.isnan(slope):
+			slope = -numpy.inf
 
 		if self._ccmSlopeCache is not None:
 			self._ccmSlopeCache[targetPosition, candidate] = slope

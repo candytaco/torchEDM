@@ -315,7 +315,7 @@ class DataAdapterMultipleRuns(DataAdapter):
 
 	@property
 	def XIndices(self) -> Tuple[int, int]:
-		return (0 + int(self.hasTime), self.XTrain[0].shape[1] + int(self.hasTime) - 1)
+		return (0 + int(self.hasTime), self.XTrain[0].shape[1] + int(self.hasTime))
 
 	@property
 	def YIndex(self) -> List[int]:

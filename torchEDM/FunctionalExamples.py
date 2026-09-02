@@ -78,37 +78,37 @@ def FunctionalExamples():
 
 	embed_result = EmbedDimension(data = sampleData["TentMap"],
 	                              columns = [1], target = 1,
-	                              train = [(1, 101)], test = [(201, 501)])
+	                              train = [(0, 100)], test = [(200, 500)])
 	plot_embed_dimension(embed_result, "TentMap Embedding Dimension")
 
 	interval_result = PredictInterval(data = sampleData["TentMap"],
 	                                  columns = [1], target = 1,
-	                                  train = [(1, 101)], test = [(201, 501)], embedDimensions = 2)
+	                                  train = [(0, 100)], test = [(200, 500)], embedDimensions = 2)
 	plot_predict_interval(interval_result, "TentMap Prediction Interval")
 
 	nonlinear_result = PredictNonlinear(data = sampleData["TentMapNoise"],
 	                                    columns = [1], target = 1,
-	                                    train = [(1, 101)], test = [(201, 501)], embedDimensions = 2)
+	                                    train = [(0, 100)], test = [(200, 500)], embedDimensions = 2)
 	plot_predict_nonlinear(nonlinear_result, "TentMapNoise Nonlinearity (theta)")
 
 	# Tent map simplex : specify multivariable columns embedded = True
 	projection1 = Simplex(data = sampleData["block_3sp"],
 	                      columns = [1, 4, 7], target = 1,
-	                      train = [(1, 100)], test = [(100, 196)],
+	                      train = [(0, 99)], test = [(99, 195)],
 	                      embedDimensions = 3, embedded = True)
 	plot_prediction(projection1, "Simplex: block_3sp embedded", embedDimensions = 3)
 
 	# Tent map simplex : Embed column x_t to embedDimensions=3, embedded = False
 	projection2 = Simplex(data = sampleData["block_3sp"],
 	                      columns = [1], target = 1,
-	                      train = [(1, 100)], test = [(105, 191)],
+	                      train = [(0, 99)], test = [(104, 190)],
 	                      embedDimensions = 3)
 	plot_prediction(projection2, "Simplex: block_3sp", embedDimensions = 3)
 
 	# Multiview
 	mv_result = Multiview(data = sampleData["block_3sp"],
 	                      columns = [1, 4, 7], target = 1,
-	                      train = [(1, 101)], test = [(101, 199)],
+	                      train = [(0, 100)], test = [(100, 198)],
 	                      D = 0, embedDimensions = 3, predictionHorizon = 1, multiview = 0,
 	                      trainLib = False)
 	plot_prediction(mv_result['Predictions'], "Multiview: block_3sp", embedDimensions = 3)
@@ -116,7 +116,7 @@ def FunctionalExamples():
 	# S-map circle : specify multivariable columns embedded = True
 	smap_result = SMap(data = sampleData["circle"],
 	                   columns = [1, 2], target = 1,
-	                   train = [(1, 101)], test = [(110, 191)], theta = 4, embedDimensions = 2,
+	                   train = [(0, 100)], test = [(109, 190)], theta = 4, embedDimensions = 2,
 	                   verbose = False, embedded = True)
 	plot_prediction(smap_result['predictions'], "S-Map: circle", embedDimensions = 2)
 	plot_smap_coefficients(smap_result['coefficients'], "S-Map Coefficients", embedDimensions = 2)

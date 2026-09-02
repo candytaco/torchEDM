@@ -44,6 +44,8 @@ class MDEFitterCV(EDMFitter):
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
+				 MinCandidatePerformance: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -97,6 +99,8 @@ class MDEFitterCV(EDMFitter):
 		self.CCMSeed = CCMSeed
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
+		self.MinCandidatePerformance = MinCandidatePerformance
+		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
 		self.trainDataAdapter = None
@@ -245,6 +249,8 @@ class MDEFitterCV(EDMFitter):
 			CCMSeed = self.CCMSeed,
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidatePerformance = self.MinCandidatePerformance,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
 			TimeDelay = self.TimeDelay
 		)
 
