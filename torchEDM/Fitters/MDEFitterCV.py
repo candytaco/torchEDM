@@ -37,13 +37,15 @@ class MDEFitterCV(EDMFitter):
 				 Verbose: bool = False,
 				 UseSMap: bool = False,
 				 Theta: float = 0.0,
-				 stdThreshold: float = 1e-2,
+				 stdThreshold: float = 1e-3,
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
+				 MinCandidatePerformance: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -97,6 +99,8 @@ class MDEFitterCV(EDMFitter):
 		self.CCMSeed = CCMSeed
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
+		self.MinCandidatePerformance = MinCandidatePerformance
+		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
 		self.trainDataAdapter = None
@@ -154,7 +158,7 @@ class MDEFitterCV(EDMFitter):
 		nTargets = len(target)
 
 		xStart, xEnd = self.trainDataAdapter.XIndices
-		effectiveColumns = initialVariables if initialVariables is not None else list(range(xStart, xEnd + 1))
+		effectiveColumns = initialVariables if initialVariables is not None else list(range(xStart, xEnd))
 
 		self.foldResults = []
 		fold_accuracy_rows = []
@@ -183,7 +187,7 @@ class MDEFitterCV(EDMFitter):
 
 		foldSelectedVariables = numpy.stack([r.selected_variables for r in self.foldResults], axis = 0)
 		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)
-		foldStepwisePerformances = foldStepwisePerformances[:, :, :, xStart:xEnd + 1]
+		foldStepwisePerformances = foldStepwisePerformances[:, :, :, xStart:xEnd]
 
 		self.Result = MDECVResults(
 			fold_selected_variables = foldSelectedVariables,
@@ -245,6 +249,8 @@ class MDEFitterCV(EDMFitter):
 			CCMSeed = self.CCMSeed,
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidatePerformance = self.MinCandidatePerformance,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
 			TimeDelay = self.TimeDelay
 		)
 

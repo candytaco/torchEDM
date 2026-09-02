@@ -120,7 +120,7 @@ class SMap(EDM):
 
         if self.noTime :
             # Generate a time/index vector, store as ndarray
-            timeIndex = [ i for i in range( 1, self.Data.shape[0] + 1 ) ]
+            timeIndex = [ i for i in range( self.Data.shape[0] ) ]
             self.time = array( timeIndex, dtype = int )
         else :
             # 1st data column is time

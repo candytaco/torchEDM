@@ -6,7 +6,7 @@ from warnings import warn
 
 import numpy
 # package modules
-from numpy import any, concatenate, isnan
+from numpy import any, arange, concatenate, isnan
 from numpy import append, array, column_stack, empty, floating, full, integer, nan
 from numpy import delete, zeros, apply_along_axis
 from scipy.spatial import KDTree
@@ -727,30 +727,28 @@ class EDM:
 	# TODO: properly override these in inheritance
 	def CreateIndices(self):
 		"""
-		Populate array index vectors lib_i, pred_i
-		Indices specified as List[Tuple[int, int]] where each tuple is a (start, stop) span of data rows.
+		Populate array index vectors trainIndices, testIndices.
+		Windows are List[Tuple[int, int]] of 0-based, half-open [start, stop)
+		row spans. Every row in a span is used except rows whose target index
+		(row + predictionHorizon) or stacked history would be out of bounds;
+		exactly those rows are trimmed.
 		"""
 
-		libPairs = self.train  # List[Tuple[int, int]] of (start, stop) pairs
+		libPairs = self.train  # List[Tuple[int, int]] of half-open (start, stop) pairs
 
 		# Validate end > start
 		for libPair in libPairs:
 			libStart, libEnd = libPair
 
 			if self.name in ['Simplex', 'SMap', 'Multiview']:
-				# Don't check if CCM since default of "1 1" is used.
+				# Don't check if CCM since a degenerate default is used.
 				assert libStart < libEnd
 
-			# Disallow indices < 1, the user may have specified 0 start
-			# but why??
 			assert libStart >= 0 and libEnd >= 0
-			# for now, to prevent -1 indexing
-			if libStart > 1:
-				libStart = 1
 
 		# Loop over each train pair
 		# Add rows for library segments, disallowing vectors
-		# in disjoint library gap accommodating embedding and predictionHorizon
+		# in disjoint library gap accommodating stacked history and predictionHorizon
 		embedShift = abs(self.embedStep) * (self.embedDimensions - 1)
 		lib_i_list = list()
 
@@ -764,16 +762,21 @@ class EDM:
 				else:
 					stop = stop - embedShift
 
+			# Trim exactly the rows whose target index row + predictionHorizon
+			# is out of bounds. With a negative horizon the earliest rows have
+			# target positions before row 0, and numpy would silently wrap
+			# them to the END of the array: e.g. horizon -2 with rows [0..4]
+			# gives target positions [-2,-1,0,1,2], and targetVec[-1] is the
+			# LAST row — row 1 would be labeled with the final recorded value.
+			# The bound depends only on the target lookup, so it applies
+			# whether or not the data was passed pre-embedded (the old
+			# isEmbedded-guarded version left pre-embedded data wrapping).
 			if self.predictionHorizon < 0:
-				if not self.isEmbedded:
-					start = max(start, start + abs(self.predictionHorizon) - 1)
+				start = max(start, -self.predictionHorizon)
 			else:
-				if (r == len(libPairs) - 1):
-					stop = stop - self.predictionHorizon
+				stop = min(stop, self.Data.shape[0] - self.predictionHorizon)
 
-			libPair_i = [i - 1 for i in range(start, stop + 1)]
-
-			lib_i_list.append(array(libPair_i, dtype = int))
+			lib_i_list.append(arange(start, stop, dtype = int))
 
 		# Concatenate lib_i_list into lib_i
 		self.trainIndices = concatenate(lib_i_list)
@@ -796,7 +799,7 @@ class EDM:
 		# ------------------------------------------------
 		# pred_i from test
 		# ------------------------------------------------
-		predPairs = self.test  # List[Tuple[int, int]] of (start, stop) pairs
+		predPairs = self.test  # List[Tuple[int, int]] of half-open (start, stop) pairs
 
 		if len(predPairs) > 1: self.disjointPred = True
 
@@ -805,37 +808,23 @@ class EDM:
 			predStart, predEnd = predPair
 
 			if self.name in ['Simplex', 'SMap', 'Multiview']:
-				# Don't check CCM since default of "1 1" is used.
+				# Don't check CCM since a degenerate default is used.
 				if predStart >= predEnd:
 					msg = f'{self.name}: CreateIndices() test start ' + \
 					      f' {predStart} exceeds test end {predEnd}.'
 					raise RuntimeError(msg)
 
-			# Disallow indices < 1, the user may have specified 0 start
-			if predStart < 1 or predEnd < 1:
+			if predStart < 0 or predEnd < 0:
 				msg = f'{self.name}: CreateIndices() test indices ' + \
-				      ' less than 1 not allowed.'
+				      ' less than 0 not allowed.'
 				raise RuntimeError(msg)
 
-		# Create pred_i indices from predPairs
+		# Create test indices from predPairs (0-based, half-open)
 		for r in range(len(predPairs)):
 			start, stop = predPairs[r]
-			pred_i = zeros(stop - start + 1, dtype = int)
+			self.predList.append(arange(start, stop, dtype = int))
 
-			i = 0
-			for j in range(start, stop + 1):
-				pred_i[i] = j - 1  # apply zero-offset
-				i = i + 1
-
-			self.predList.append(pred_i)  # Append disjoint segment(s)
-
-		# flatten arrays in self.predList for single array self.pred_i
-		pred_i_ = []
-		for pred_i in self.predList:
-			i_ = [i for i in pred_i]
-			pred_i_ = pred_i_ + i_
-
-		self.testIndices = array(pred_i_, dtype = int)
+		self.testIndices = concatenate(self.predList) if self.predList else array([], dtype = int)
 
 		self.PredictionValid()
 
@@ -956,21 +945,15 @@ class EDM:
 				raise RuntimeError(f'Validate() {self.name}:' + \
 				                   ' step must be non-zero.')
 			if self.embedDimensions < 1:
-				raise RuntimeError(f'Validate() {self.name}:' + \
-				                   f' E = {self.embedDimensions} is invalid.')
+				raise RuntimeError(f'Validate() {self.name}: embedding dimensions ' + \
+				                   f'{self.embedDimensions} is invalid.')
 
 		if self.name != 'CCM':
 			if not len(self.train):
 				raise RuntimeError(f'Validate() {self.name}: train required.')
-			if not IsNonStringIterable(self.train):
-				trainInts = [int(i) for i in self.train.split()]
-				self.train = [(trainInts[i], trainInts[i + 1]) for i in range(0, len(trainInts), 2)]
 
 			if not len(self.test):
 				raise RuntimeError(f'Validate() {self.name}: test required.')
-			if not IsNonStringIterable(self.test):
-				testInts = [int(i) for i in self.test.split()]
-				self.test = [(testInts[i], testInts[i + 1]) for i in range(0, len(testInts), 2)]
 
 		# Set knn default based on E and train size, E embedded on num columns
 		if self.name in ['Simplex', 'CCM', 'Multiview']:

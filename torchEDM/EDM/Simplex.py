@@ -100,7 +100,7 @@ class Simplex(EDM):
 		self.targetVec = self.Data[:, [self.target[0]]]
 
 		if self.noTime:
-			timeIndex = [i for i in range(1, self.Data.shape[0] + 1)]
+			timeIndex = [i for i in range(self.Data.shape[0])]
 			self.time = array(timeIndex, dtype=int)
 		else:
 			self.time = self.Data[:, 0]

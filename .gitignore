@@ -5,3 +5,5 @@ __pycache__
 torchEDM/__pycache__
 torchEDM/tests/__pycache__
 .idea
+verification/mde/ref_ccm_all80.pkl
+

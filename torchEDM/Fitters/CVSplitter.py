@@ -56,7 +56,7 @@ class EDMCVSplitter:
 		"""
 		Compute the start and end indices for each run in the concatenated data.
 
-		:return: list of (start, end) tuples for each run (end is exclusive)
+		:return: list of (start, stop) tuples for each run, half-open [start, stop)
 		"""
 		boundaries = []
 		currentIndex = 0
@@ -70,13 +70,13 @@ class EDMCVSplitter:
 		Compute valid sample ranges for each run after applying exclusions.
 		Uses per-run trainStart and trainEnd values.
 
-		:return: list of (start, end) tuples with valid range for each run (end is inclusive for EDM)
+		:return: list of (start, stop) tuples with valid range for each run, half-open [start, stop)
 		"""
 		validRanges = []
 		for i, (start, end) in enumerate(self.runBoundaries):
 			runStart = start + self.trainStart[i]
-			runEnd = end - self.trainEnd[i] - 1
-			if runStart <= runEnd:
+			runEnd = end - self.trainEnd[i]
+			if runStart < runEnd:
 				validRanges.append((runStart, runEnd))
 			else:
 				validRanges.append(None)
@@ -97,20 +97,20 @@ class EDMCVSplitter:
 		"""
 		Convert list of (start, end) ranges to sklearn-style flat index array.
 
-		:param ranges: 	list of (start, end) tuples (end is inclusive)
+		:param ranges: 	list of (start, stop) tuples, half-open [start, stop)
 		:return: 		numpy array of all indices
 		"""
 		indices = []
 		for start, end in ranges:
-			indices.append(numpy.arange(start, end + 1))
+			indices.append(numpy.arange(start, end))
 		return numpy.concatenate(indices) if indices else numpy.array([], dtype = int)
 
 	def RangesToEDM(self, ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
 		"""
-		Convert list of (start, end) ranges to EDM-style flat list.
+		Convert list of (start, stop) ranges to EDM-style window pairs.
 
-		:param ranges: 	list of (start, end) tuples (end is inclusive)
-		:return: 		flat list [start1, end1, start2, end2, ...]
+		:param ranges: 	list of (start, stop) tuples, half-open [start, stop)
+		:return: 		list of (start, stop) pairs
 		"""
 		result = []
 		for start, end in ranges:
@@ -176,7 +176,7 @@ class EDMCVSplitter:
 				continue
 
 			start, end = validRange
-			numSamples = end - start + 1
+			numSamples = end - start
 			foldSize = numSamples // self.nFolds
 			remainder = numSamples % self.nFolds
 
@@ -185,9 +185,9 @@ class EDMCVSplitter:
 			for foldIndex in range(self.nFolds):
 				size = foldSize + (1 if foldIndex < remainder else 0)
 				if size > 0:
-					foldEnd = currentPosition + size - 1
-					runFolds.append((currentPosition, foldEnd))
-					currentPosition = foldEnd + 1
+					foldStop = currentPosition + size
+					runFolds.append((currentPosition, foldStop))
+					currentPosition = foldStop
 				else:
 					runFolds.append(None)
 			foldRangesPerRun.append(runFolds)

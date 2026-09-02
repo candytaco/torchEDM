@@ -64,7 +64,7 @@ class MultiviewFitter(EDMFitter):
 		YIndex = self.GetYIndex()
 
 		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd + 1))
+		Columns = list(range(XStart, XEnd))
 		Target = YIndex
 
 		self.Multiview = Multiview(

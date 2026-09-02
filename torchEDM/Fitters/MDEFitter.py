@@ -28,13 +28,15 @@ class MDEFitter(EDMFitter):
 				 Verbose: bool = False,
 				 UseSMap: bool = False,
 				 Theta: float = 0.0,
-				 stdThreshold: float = 1e-2,
+				 stdThreshold: float = 1e-3,
 				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5,),
 				 CCMNumSamples: int = 10,
 				 CCMConvergenceThreshold: float = 0.01,
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
+				 MinCandidatePerformance: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -82,12 +84,14 @@ class MDEFitter(EDMFitter):
 		self.CCMSeed = CCMSeed
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
+		self.MinCandidatePerformance = MinCandidatePerformance
+		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
 		self.MDE = None
 
 	def Fit(self, XTrain: numpy.ndarray, YTrain: numpy.ndarray, XTest: numpy.ndarray, YTest: numpy.ndarray,
-			TrainStart = 1, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
+			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
 			TestTime: Optional[numpy.ndarray] = None):
 		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
 
@@ -95,7 +99,7 @@ class MDEFitter(EDMFitter):
 		TrainIndices = self.GetTrainIndices()
 		TestIndices = self.GetTestIndices()
 		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd + 1))
+		Columns = list(range(XStart, XEnd))
 		Target = self.GetYIndex()
 		NoTime = not self.HasTime()
 
@@ -130,6 +134,8 @@ class MDEFitter(EDMFitter):
 			CCMSeed = self.CCMSeed,
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidatePerformance = self.MinCandidatePerformance,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
 			TimeDelay = self.TimeDelay
 		)
 

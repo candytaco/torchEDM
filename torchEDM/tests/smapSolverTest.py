@@ -37,7 +37,7 @@ def main():
     for solverName in lmSolvers.keys() :
         print( solverName )
         result = EDM.FitSMap(data = data, columns = [col_index1, col_index2], target = target_index,
-                             train = [1, 100], test = [101, 198],
+                             train = [(0, 100)], test = [(100, 198)],
                              embedded = True, embedDimensions = 2, predictionHorizon = 1, knn = 0, step = -1,
                              theta = 3.14, exclusionRadius = 0,
                              solver = lmSolvers[ solverName ], validLib = [], noTime = False, generateSteps = 0,

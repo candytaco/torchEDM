@@ -44,7 +44,16 @@ class MDECV:
 				 useSMap: bool = False,
 				 theta: float = 0.0,
 				 solver=None,
-				 stdThreshold = 1e-2):
+				 stdThreshold = 1e-3,
+				 CCMLibraryPercentiles = numpy.linspace(10, 90, 5, ),
+				 CCMNumSamples: int = 10,
+				 CCMConvergenceThreshold: float = 0.01,
+				 CCMSeed = None,
+				 CCMMaxEmbeddingDimensions: int = 15,
+				 MinPredictionThreshold: float = 0.0,
+				 MinCandidatePerformance: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
+				 TimeDelay: int = 0):
 		"""Initialize MDECV with data and parameters.
 
 		Parameters
@@ -108,6 +117,26 @@ class MDECV:
 		solver : object, optional
 			Solver to use for S-Map regression. If None, uses numpy.linalg.lstsq.
 			Can be any sklearn-compatible regressor.
+		CCMLibraryPercentiles : array-like, default=numpy.linspace(10, 90, 5)
+			Library sizes for the convergence check as percent of train data size
+		CCMNumSamples : int, default=10
+			Number of random samples per library size for the convergence check
+		CCMConvergenceThreshold : float, default=0.01
+			Minimum slope threshold for convergence
+		CCMSeed : int, optional
+			Random seed for reproducible convergence-check sampling
+		CCMMaxEmbeddingDimensions : int, default=15
+			Maximum embedding dimension for the per-variable dimension search
+		MinPredictionThreshold : float, default=0.0
+			Minimum performance threshold for candidate filtering
+		MinCandidatePerformance : float, default=0.5
+			Minimum performance a candidate alone must reach predicting the
+			target to stay in the candidate pool; 0 disables
+		IterativeDimensionSearch : bool, default=False
+			If True, the candidate dimension search evaluates each depth on
+			its own valid rows instead of one batched pass
+		TimeDelay : int, default=0
+			Time delay analysis depth. If 0, time delay analysis is disabled
 		"""
 		self.data = trainData
 		self.target = target
@@ -138,6 +167,16 @@ class MDECV:
 		self.solver = solver
 
 		self.stdThreshold = stdThreshold
+
+		self.CCMLibraryPercentiles = CCMLibraryPercentiles
+		self.CCMNumSamples = CCMNumSamples
+		self.CCMConvergenceThreshold = CCMConvergenceThreshold
+		self.CCMSeed = CCMSeed
+		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
+		self.MinPredictionThreshold = MinPredictionThreshold
+		self.MinCandidatePerformance = MinCandidatePerformance
+		self.IterativeDimensionSearch = IterativeDimensionSearch
+		self.TimeDelay = TimeDelay
 
 		# Cross-validation results
 		self.fold_results: List[MDEResult] = []
@@ -214,8 +253,8 @@ class MDECV:
 			batch_size = self.batch_size,
 			dtype = self.dtype,
 			columns = self.columns,
-			train = (0, len(train_data) - 1),
-			test = (len(train_data), len(fold_data) - 1),
+			train = [(0, len(train_data))],
+			test = [(len(train_data), len(fold_data))],
 			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn,
@@ -228,7 +267,16 @@ class MDECV:
 			verbose = self.verbose,
 			useSMap = self.useSMap,
 			theta = self.theta,
-			stdThreshold = self.stdThreshold
+			stdThreshold = self.stdThreshold,
+			CCMLibraryPercentiles = self.CCMLibraryPercentiles,
+			CCMNumSamples = self.CCMNumSamples,
+			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
+			CCMSeed = self.CCMSeed,
+			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
+			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidatePerformance = self.MinCandidatePerformance,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
+			TimeDelay = self.TimeDelay
 		)
 
 		return mde.Run(return_predictions = return_predictions, scoring_function = scoring_function)
@@ -265,8 +313,10 @@ class MDECV:
 			batch_size = self.batch_size,
 			dtype = self.dtype,
 			columns = self.columns,
-			train = (0, self.data.shape[0] - 1),
-			test = (self.data.shape[0] - 1, stackedData.shape[0] - 1),
+			train = [(0, self.data.shape[0])],
+			# The test window reaches back far enough that the first prediction
+			# input's horizon-shifted target is the first test row.
+			test = [(self.data.shape[0] - max(self.predictionHorizon, 0), stackedData.shape[0])],
 			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn,
@@ -279,6 +329,16 @@ class MDECV:
 			verbose = self.verbose,
 			useSMap = self.useSMap,
 			theta = self.theta,
+			stdThreshold = self.stdThreshold,
+			CCMLibraryPercentiles = self.CCMLibraryPercentiles,
+			CCMNumSamples = self.CCMNumSamples,
+			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
+			CCMSeed = self.CCMSeed,
+			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
+			MinPredictionThreshold = self.MinPredictionThreshold,
+			MinCandidatePerformance = self.MinCandidatePerformance,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
+			TimeDelay = self.TimeDelay
 		)
 
 		final_result = mde.Run()

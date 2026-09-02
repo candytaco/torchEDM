@@ -58,8 +58,8 @@ class ConvergentCrossMap:
 		:param embedded: 			Whether data is already embedded
 		:param validLib:			Boolean mask for valid library points
 		:param ignoreNan: 			Remove NaN values from embedding
-		:param trainIndices: 		Train block index range [start, end]. If None, uses all data.
-		:param testIndices: 		Test block index range [start, end]. If None, uses all data.
+		:param trainIndices: 		Train blocks as 0-based, half-open [start, stop) pairs. If None, uses all data.
+		:param testIndices: 		Test blocks as 0-based, half-open [start, stop) pairs. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param x_batch: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
 		:param y_batch:				Number of Y variables to predict per batch within each source batch
@@ -101,7 +101,7 @@ class ConvergentCrossMap:
 		if trainIndices is not None:
 			self.train = trainIndices
 		else:
-			self.train = [(1, self.X.shape[0])]
+			self.train = [(0, self.X.shape[0])]
 
 		if trainSizes is not None:
 			self.trainSizes = trainSizes
@@ -114,7 +114,7 @@ class ConvergentCrossMap:
 		if testIndices is not None:
 			self.test = testIndices
 		else:
-			self.test = [(1, self.X.shape[0])]
+			self.test = [(0, self.X.shape[0])]
 
 		self.forward_performance_ = None
 		self.selectedForwardEmbedDimensions = None
@@ -378,9 +378,14 @@ class ConvergentCrossMap:
 
 		del cumulativeSqDist
 
-		if self.exclusionRadius == 0:
-			diagIndices = torch.arange(N_libraryIndices, device = self.device)
-			fullDistances[:, :, diagIndices, diagIndices] = float('inf')
+		# the self-match is always excluded; a positive exclusionRadius
+		# additionally excludes all pairs within that many rows of each other
+		diagIndices = torch.arange(N_libraryIndices, device = self.device)
+		fullDistances[:, :, diagIndices, diagIndices] = float('inf')
+		if self.exclusionRadius > 0:
+			rowNumbers = torch.as_tensor(train_indices, dtype = torch.long, device = self.device)
+			excludedPairs = (rowNumbers.unsqueeze(0) - rowNumbers.unsqueeze(1)).abs() <= self.exclusionRadius
+			fullDistances[:, :, excludedPairs] = float('inf')
 
 		# kIndices reused per target loop: [1, 1, max_knn, 1]
 		kIndices = torch.arange(max_knn, device = self.device).view(1, 1, max_knn, 1)
