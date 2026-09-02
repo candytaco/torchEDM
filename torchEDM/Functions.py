@@ -32,7 +32,8 @@ def FitSimplex(data: numpy.ndarray,
 			   generateConcat: bool = False,
 			   verbose: bool = False,
 			   ignoreNan: bool = True,
-			   returnObject: bool = False) -> Union[numpy.ndarray, Simplex]:
+			   returnObject: bool = False,
+			   isTieBreakDeterministic: bool = False) -> Union[numpy.ndarray, Simplex]:
 	"""
 	Simplex prediction.
 
@@ -54,6 +55,9 @@ def FitSimplex(data: numpy.ndarray,
 	:param verbose: 		Print diagnostic messages
 	:param ignoreNan: 		Whether to ignore NaN values
 	:param returnObject: 	Whether to return Simplex object instead of projection
+	:param isTieBreakDeterministic: 	If True, equal neighbor distances are ordered by temporal
+		proximity then row order, matching the reference; False (default) keeps the faster
+		selection whose ordering of exact ties is unspecified
 	:return: Prediction projection array or Simplex object
 	"""
 
@@ -74,7 +78,8 @@ def FitSimplex(data: numpy.ndarray,
 				generateSteps = generateSteps,
 				generateConcat = generateConcat,
 				ignoreNan = ignoreNan,
-				verbose = verbose)
+				verbose = verbose,
+				isTieBreakDeterministic = isTieBreakDeterministic)
 
 	if generateSteps:
 		result = S.Generate()

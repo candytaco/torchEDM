@@ -33,6 +33,7 @@ class Simplex(EDM):
 				 verbose=False,
 				 generateSteps=0,
 				 generateConcat=False,
+				 isTieBreakDeterministic=False,
 				 device=None,
 				 dtype=None):
 		"""
@@ -55,6 +56,9 @@ class Simplex(EDM):
 		:param verbose: Print diagnostic messages
 		:param generateSteps: Number of iterative generation steps. If 0, uses standard prediction.
 		:param generateConcat: Whether to concatenate generated predictions
+		:param isTieBreakDeterministic: If True, equal neighbor distances are ordered by temporal
+			proximity then row order, matching the reference; False (default) keeps the faster
+			selection whose ordering of exact ties is unspecified
 		:param device: torch device to use (None for auto-detect)
 		:param dtype: torch dtype to use (None for float32)
 		"""
@@ -79,6 +83,7 @@ class Simplex(EDM):
 
 		self.generateSteps = generateSteps
 		self.generateConcat = generateConcat
+		self.isTieBreakDeterministic = isTieBreakDeterministic
 
 		self.embedStep         = self.step
 		self.isEmbedded        = self.embedded
@@ -162,28 +167,36 @@ class Simplex(EDM):
 			maskTensor = torch.tensor(exclusionMask, device=self.device, dtype=torch.bool)
 			distanceMatrix[maskTensor] = float('inf')
 
-		# Select the knn smallest distances per test point (columns of the
-		# [nTrain x nTest] matrix) with deterministic tie handling: equal
-		# distances are ordered by temporal proximity |testRow - trainRow|,
-		# then by trainRow ascending, matching the reference selection.
-		distancesNumpy = distanceMatrix.cpu().numpy()
-		trainRows = numpy.asarray(self.trainIndices)
-		testRows = numpy.asarray(self.testIndices)
-		temporalOffsets = numpy.abs(testRows[None, :] - trainRows[:, None])
+		if self.isTieBreakDeterministic:
+			# Select the knn smallest distances per test point (columns of the
+			# [nTrain x nTest] matrix) with deterministic tie handling: equal
+			# distances are ordered by temporal proximity |testRow - trainRow|,
+			# then by trainRow ascending, matching the reference selection.
+			distancesNumpy = distanceMatrix.cpu().numpy()
+			trainRows = numpy.asarray(self.trainIndices)
+			testRows = numpy.asarray(self.testIndices)
+			temporalOffsets = numpy.abs(testRows[None, :] - trainRows[:, None])
 
-		# Stable double argsort: rows start in trainRow-ascending order, the
-		# first stable sort settles the temporal tie key, the second settles
-		# distance while preserving both tie keys.
-		offsetOrder = numpy.argsort(temporalOffsets, axis = 0, kind = 'stable')
-		distancesByOffset = numpy.take_along_axis(distancesNumpy, offsetOrder, axis = 0)
-		distanceOrder = numpy.argsort(distancesByOffset, axis = 0, kind = 'stable')
-		selection = numpy.take_along_axis(offsetOrder, distanceOrder, axis = 0)[:self.knn, :]
+			# Stable double argsort: rows start in trainRow-ascending order, the
+			# first stable sort settles the temporal tie key, the second settles
+			# distance while preserving both tie keys.
+			offsetOrder = numpy.argsort(temporalOffsets, axis = 0, kind = 'stable')
+			distancesByOffset = numpy.take_along_axis(distancesNumpy, offsetOrder, axis = 0)
+			distanceOrder = numpy.argsort(distancesByOffset, axis = 0, kind = 'stable')
+			selection = numpy.take_along_axis(offsetOrder, distanceOrder, axis = 0)[:self.knn, :]
 
-		# Transpose to [nTest x knn] to match expected shape
-		self.knn_distances = numpy.take_along_axis(distancesNumpy, selection, axis = 0).T
-		# We no long map the neighbor indices back to original data indices
-		# because for predictions, we also just mask the Y data to the same indices
-		self.knn_neighbors = selection.T
+			# Transpose to [nTest x knn] to match expected shape
+			self.knn_distances = numpy.take_along_axis(distancesNumpy, selection, axis = 0).T
+			# We no long map the neighbor indices back to original data indices
+			# because for predictions, we also just mask the Y data to the same indices
+			self.knn_neighbors = selection.T
+		else:
+			# topk on dim=0 finds k smallest distances per test point (columns);
+			# the ordering of exactly tied distances is unspecified
+			topkDistances, topkIndices = torch.topk(distanceMatrix, self.knn, dim=0, largest=False)
+
+			self.knn_distances = topkDistances.t().cpu().numpy()
+			self.knn_neighbors = topkIndices.t().cpu().numpy()
 
 		# Clean up GPU tensors
 		del trainTensor, testTensor, distanceMatrix
@@ -305,6 +318,7 @@ class Simplex(EDM):
 						generateConcat=self.generateConcat,
 						ignoreNan=self.ignoreNan,
 						verbose=self.verbose,
+						isTieBreakDeterministic=self.isTieBreakDeterministic,
 						device=self.device,
 						dtype=self.dtype)
 

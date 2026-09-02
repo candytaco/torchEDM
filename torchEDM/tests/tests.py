@@ -409,9 +409,12 @@ class test_EDM( unittest.TestCase ):
         time = numpy.array([datetime.strptime(t, '%Y-%m-%d').timestamp() for t in df_['Date']])
         data = numpy.column_stack([time, df_.values[:, 1]]).astype(numpy.float64)
 
+        # The flow data holds long runs of repeated values, so the recorded
+        # reference predictions depend on its deterministic tie ordering
         df = EDM.FitSimplex(data = data,
                             columns = [col_index], target = [target_index],
-                            train = [(0, 800)], test = [(800, 1001)], embedDimensions = 3, predictionHorizon = 1)
+                            train = [(0, 800)], test = [(800, 1001)], embedDimensions = 3, predictionHorizon = 1,
+                            isTieBreakDeterministic = True)
 
         #self.assertTrue( isinstance( df['Time'][0],  datetime ) )
 

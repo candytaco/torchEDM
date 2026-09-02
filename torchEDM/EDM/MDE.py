@@ -108,12 +108,13 @@ class MDE:
 		self.train = train
 		self.test = test
 		# The reference implementation trains on every row whose horizon-shifted
-		# target is inside the data, while the shared engine keeps training
+		# target is inside the data, while EDM.CreateIndices keeps training
 		# targets inside the training span by giving up the final window's last
 		# predictionHorizon rows. Padding the final window by the horizon
-		# restores the reference row set: the engine subtracts the horizon back
-		# and its absolute bounds guard clips at the data end. Only positive
-		# horizons need this; the padded copy is what MDE hands to the engine.
+		# restores the reference row set: CreateIndices subtracts the horizon
+		# back and its absolute bounds guard clips at the data end. Only
+		# positive horizons need this; the padded copy is what MDE passes to
+		# Simplex, SMap, and FindOptimalEmbeddingDimensionality.
 		if train is not None and predictionHorizon > 0:
 			paddedTrain = list(train)
 			lastStart, lastStop = paddedTrain[-1]

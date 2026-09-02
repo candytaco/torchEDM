@@ -277,8 +277,9 @@ def _FindOptimalEmbeddingDimensionalityIterative(X, Y, maxDims,
 	Evaluate each dimension with its own proper train/test indices: rows are
 	trimmed only by the lags that dimension actually uses, so low dimensions keep
 	the rows the shared maxDims trim would discard. Exact but ~(maxDims/2)x the
-	work of the shared-index variant: each dimension reruns the batched engine at
-	that depth and keeps its last score.
+	work of the shared-index variant: each dimension reruns
+	_FindOptimalEmbeddingDimensionalityBatched at that depth and keeps its last
+	score.
 	"""
 	print('Iterative search will be deprecated soon')
 	perDimensionScores = []
