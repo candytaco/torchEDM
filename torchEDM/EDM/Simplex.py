@@ -187,7 +187,7 @@ class Simplex(EDM):
 
 			# Transpose to [nTest x knn] to match expected shape
 			self.knn_distances = numpy.take_along_axis(distancesNumpy, selection, axis = 0).T
-			# We no long map the neighbor indices back to original data indices
+			# We no longer map the neighbor indices back to original data indices
 			# because for predictions, we also just mask the Y data to the same indices
 			self.knn_neighbors = selection.T
 		else:
