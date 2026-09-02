@@ -9,14 +9,14 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 
 	:param nSamples: number of total samples
 	:param nVariables: number of variables
-	:param train_start_stops: Training blocks start/stop index pairs
-	:param test_start_stops: Test block start/stop indes pairs
-	:param embedDimensions: Embedding dimension E used when computing index offsets; ignore with is_embedded == True
-	:param predictionHorizon: Prediction horizon Tp applied to library bounds.
-	:param step: Embedding step (tau), where negative values indicate lagging.
+	:param train_start_stops: Training blocks as 0-based, half-open [start, stop) pairs
+	:param test_start_stops: Test blocks as 0-based, half-open [start, stop) pairs
+	:param embedDimensions: Embedding dimensions used when computing index offsets; ignored with is_embedded == True
+	:param predictionHorizon: Prediction horizon applied to window bounds.
+	:param step: Embedding step, where negative values indicate lagging.
 	:param is_embedded: If True, skip the lag-shift offset when computing train start/stop.
 	:param valid_train_samples : Optional boolean mask selecting valid library rows.
-	:returns: Tuple (trainIndices, testIndices, exclusionMask).
+	:returns: Tuple (trainIndices, testIndices).
 	"""
 	if is_embedded:
 		embedDimensions = nVariables
@@ -30,13 +30,12 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 				start = start + embedding_offset
 			else:
 				stop = stop - embedding_offset
-		# trim exactly the rows whose target index t + Tp is out of bounds
+		# trim exactly the rows whose target index row + predictionHorizon is out of bounds
 		if predictionHorizon < 0:
 			start = max(start, -predictionHorizon)
 		else:
-			stop = min(stop, nSamples - 1 - predictionHorizon)
-		these_indices = [i for i in range(start, stop + 1)]
-		train_indices.append(numpy.array(these_indices, dtype = int))
+			stop = min(stop, nSamples - predictionHorizon)
+		train_indices.append(numpy.arange(start, stop, dtype = int))
 
 	train_indices = numpy.concatenate(train_indices)
 
@@ -44,14 +43,14 @@ def BuildEmbeddingIndices(nSamples: int, nVariables: int,
 	for start, stop in test_start_stops:
 		if start < 0 or stop < 0:
 			raise RuntimeError('test indices less than 0')
-		# trim exactly the rows whose target index t + Tp is out of bounds
+		# trim exactly the rows whose target index row + predictionHorizon is out of bounds
 		if predictionHorizon < 0:
 			start = max(start, -predictionHorizon)
 		else:
-			stop = min(stop, nSamples - 1 - predictionHorizon)
-		test_indices.extend([j for j in range(start, stop + 1)])
+			stop = min(stop, nSamples - predictionHorizon)
+		test_indices.append(numpy.arange(start, stop, dtype = int))
 
-	test_indices = numpy.array(test_indices, dtype = int)
+	test_indices = numpy.concatenate(test_indices)
 
 	if len(train_indices) == 0 or len(test_indices) == 0:
 		raise ValueError('no valid train or test indices.')

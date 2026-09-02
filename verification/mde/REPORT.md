@@ -12,11 +12,13 @@ from the divergence list.
 
 ## Window mapping (used by every comparison)
 
-Reference `lib=[a,b], pred=[c,d]` (1-offset inclusive; Tp trims the last
-library row) is reproduced through `MDEFitter.Fit` by splitting the series at
-`c`: `XTrain = rows 0..c-1`, `XTest = rows c..d-1`, `TrainStart=1,
-TestStart=0`. Verified: both sides use train rows 0..298, test rows 300..599.
-[01]
+torchEDM windows are 0-based, half-open `[start, stop)` pairs — flat lists
+and strings are rejected. Reference `lib=[a,b], pred=[c,d]` (1-offset
+inclusive; the horizon trims the last library row) is reproduced by the class
+API as `train=[(a-1, b-1)], test=[(c-1, d)]`, and through `MDEFitter.Fit` by
+splitting the series at `c-1`: `XTrain = rows a-1..c-2`, `XTest = rows
+c-1..d`, `Fit(..., TrainEnd=1, TestEnd=1)`. Verified: both sides use train
+rows 0..298, test rows 300..599 on the Fly windows. [01]
 
 ## Components verified equivalent
 
@@ -172,12 +174,17 @@ Each divergence above was reviewed and resolved as follows.
 
 **Align with the reference:**
 - (1) Embedding dimension: per-candidate E, tuned on candidate→target
-  prediction and consumed for the target→candidate reconstruction — copied
-  verbatim (the tune/consume pairing is deliberate reference design,
-  obfuscated by its CCM API taking a single E). Implemented as one upfront
-  batched sweep (`FindOptimalEmbeddingDimensionality(candidates, target,
-  joint=False)`), argmax per candidate (scores rounded to 4 decimals, first
-  max on ties, as the reference does).
+  prediction and consumed for the target→candidate reconstruction — the
+  tune/consume pairing copied as deliberate reference design (obfuscated by
+  its CCM API taking a single E). Implemented as one upfront batched sweep
+  (`FindOptimalEmbeddingDimensionality(candidates, target, joint=False)`),
+  argmax per candidate on raw scores (torchEDM does not round; the
+  reference's 4-decimal tie-rounding is not copied). Two search modes: the
+  default shares the most restrictive (maxDims) row set across all depths in
+  one fully batched pass — a deliberate torch-parallel divergence that
+  changes some chosen dimensions; `IterativeDimensionSearch=True` gives each
+  depth its own valid rows, reproduces the reference, and is what these
+  verification scripts use.
 - (2) Solo-predictability pre-screen: adopted, as an upfront pass over all
   candidates (cheap under batching) — new threshold parameter mirroring the
   reference's `embedDimRhoMin`, fed by the same sweep's per-candidate peak.
@@ -218,7 +225,8 @@ Each divergence above was reviewed and resolved as follows.
 The decisions above are implemented (commits following the ledger commit).
 Re-running the scripts against the reference:
 
-- Windows are now 0-based end-inclusive with bounds-only trimming; the
+- Windows are now 0-based half-open `[start, stop)` pairs with bounds-only
+  trimming; the
   mapping in `common.py` reproduces the reference windows exactly, and the
   simplex core [01] and CCM-off greedy path [02] results are unchanged.
 - Candidate E search [03]: torchEDM matches the reference's per-candidate E

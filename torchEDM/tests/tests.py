@@ -103,7 +103,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V5')
         df  = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                             train = [1, 300], test = [301, 310], embedDimensions = 5)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5)
 
     def test_API_2( self ):
         """API 2"""
@@ -113,7 +113,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V5')
         df  = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                             train = [1, 300], test = [301, 310], embedDimensions = 5)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5)
 
     def test_API_3( self ):
         """API 3"""
@@ -124,7 +124,7 @@ class test_EDM( unittest.TestCase ):
         col_index2 = df_.columns.get_loc('V3')
         target_index = df_.columns.get_loc('V5')
         df  = EDM.FitSimplex(data = data, columns = [col_index1, col_index2], target = target_index,
-                             train = [1, 300], test = [301, 310], embedDimensions = 5)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5)
 
     def test_API_4( self ):
         """API 4"""
@@ -137,7 +137,7 @@ class test_EDM( unittest.TestCase ):
         target_index2 = df_.columns.get_loc('V2')
         df  = EDM.FitSimplex(data = data,
                              columns = [col_index1, col_index2], target = [target_index1, target_index2],
-                             train = [1, 300], test = [301, 310], embedDimensions = 5)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5)
 
     def test_API_5( self ):
         """API 5"""
@@ -147,7 +147,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V5')
         df  = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                             train = [1, 300], test = [301, 310], embedDimensions = 5, knn = 0)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5, knn = 0)
 
     def test_API_6( self ):
         """API 6"""
@@ -157,7 +157,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V5')
         df  = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                             train = [1, 300], test = [301, 310], embedDimensions = 5, step = -2)
+                             train = [(1, 301)], test = [(301, 311)], embedDimensions = 5, step = -2)
 
     def test_API_7( self ):
         """API 7"""
@@ -168,7 +168,7 @@ class test_EDM( unittest.TestCase ):
         col_index2 = df_.columns.get_loc('Var 2')
         target_index = df_.columns.get_loc('Var 5 1')
         df = EDM.FitSimplex(data = data, columns = [col_index1, col_index2], target = target_index,
-                            train = [1, 80], test = [81, 85], embedDimensions = 5, predictionHorizon = 1,
+                            train = [(1, 81)], test = [(81, 86)], embedDimensions = 5, predictionHorizon = 1,
                             knn = 0, step = -1, exclusionRadius = 0,
                             embedded = False, validLib = [], noTime = False, generateSteps = 0,
                             generateConcat = False, verbose = False, ignoreNan = True, returnObject = False)
@@ -286,7 +286,7 @@ class test_EDM( unittest.TestCase ):
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
         df = EDM.FitSimplex(data = df_.values, columns = [x], target = [x],
-                            train = [0,198], test = [0,199], embedDimensions = 2, predictionHorizon = 1,
+                            train = [(0, 199)], test = [(0, 200)], embedDimensions = 2, predictionHorizon = 1,
                             validLib = df_.eval('x > 0.5 | x < -0.5').values)
 
         dfv = self.ValidationFiles["Smplx_validLib_valid.csv"]
@@ -304,7 +304,7 @@ class test_EDM( unittest.TestCase ):
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
         df = EDM.FitSimplex(data = df_.values, columns = [x], target = [x],
-                            train = [1,40, 50,130], test = [80,170],
+                            train = [(1, 41), (50, 131)], test = [(80, 171)],
                             embedDimensions = 2, predictionHorizon = 1, step = -3)
 
         dfv = self.ValidationFiles["Smplx_disjointLib_valid.csv"]
@@ -322,8 +322,8 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V2')
         df = EDM.FitSimplex(data = df_.values, columns= [col_index], target = [target_index],
-                            embedDimensions = 5, predictionHorizon = 2, train = [1,50,101,200,251,500],
-                            test = [1,10,151,155,551,555,881,885,991,1000])
+                            embedDimensions = 5, predictionHorizon = 2, train = [(1, 51), (101, 201), (251, 501)],
+                            test = [(1, 11), (151, 156), (551, 556), (881, 886), (991, 1001)])
 
         dfv = self.ValidationFiles["Smplx_disjointPred_nan_valid.csv"]
 
@@ -340,7 +340,7 @@ class test_EDM( unittest.TestCase ):
         x = df_.columns.get_loc('x')
         y = df_.columns.get_loc('y')
         df = EDM.FitSimplex(data = df_.values, columns = [x], target = y,
-                            train = [1,100], test = [21,81], embedDimensions = 2, predictionHorizon = 1,
+                            train = [(1, 101)], test = [(21, 82)], embedDimensions = 2, predictionHorizon = 1,
                             exclusionRadius = 5)
 
         dfv = self.ValidationFiles["Smplx_exclRadius_valid.csv"]
@@ -361,7 +361,7 @@ class test_EDM( unittest.TestCase ):
         y = df_.columns.get_loc('y')
 
         df = EDM.FitSimplex(dfn.values, columns = [x], target = [y],
-                            train = [1,100], test = [1,95], embedDimensions = 2, predictionHorizon = 1)
+                            train = [(1, 101)], test = [(1, 96)], embedDimensions = 2, predictionHorizon = 1)
 
         dfv = self.ValidationFiles["Smplx_nan_valid.csv"]
 
@@ -381,7 +381,7 @@ class test_EDM( unittest.TestCase ):
         y = df_.columns.get_loc('y')
 
         df = EDM.FitSimplex(dfn.values, columns = [y], target = [x],
-                            train = [1,200], test = [1,195], embedDimensions = 2, predictionHorizon = 1)
+                            train = [(1, 201)], test = [(1, 196)], embedDimensions = 2, predictionHorizon = 1)
 
         dfv = self.ValidationFiles["Smplx_nan2_valid.csv"]
 
@@ -403,7 +403,7 @@ class test_EDM( unittest.TestCase ):
 
         df = EDM.FitSimplex(data = data,
                             columns = [col_index], target = [target_index],
-                            train = [1,800], test = [801,1001], embedDimensions = 3, predictionHorizon = 1)
+                            train = [(1, 801)], test = [(801, 1002)], embedDimensions = 3, predictionHorizon = 1)
 
         #self.assertTrue( isinstance( df['Time'][0],  datetime ) )
 
@@ -422,7 +422,7 @@ class test_EDM( unittest.TestCase ):
         target_index = df_.columns.get_loc('V5')
 
         df = EDM.FitSimplex(data = df_.values, columns= [col_index], target = target_index,
-                            train = [300,398], test = [349,354],
+                            train = [(300, 399)], test = [(349, 355)],
                             knn = 1, embedded = True, returnObject = True)
 
         knn = df._MapKNNIndicesToLibraryIndices(df.knn_neighbors)
@@ -440,7 +440,7 @@ class test_EDM( unittest.TestCase ):
         V1 = df_.columns.get_loc('V1')
 
         df = EDM.FitSimplex(data = df_.values, columns= [x], target = [V1],
-                            train = [0,98], test = [100,109],
+                            train = [(0, 99)], test = [(100, 110)],
                             embedDimensions = 5, exclusionRadius = 10, returnObject = True)
 
         knn = df._MapKNNIndicesToLibraryIndices(df.knn_neighbors[:,0])
@@ -458,7 +458,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('x')
         target_index = df_.columns.get_loc('x')
         S = EDM.FitSMap(data = data, columns = [col_index], target = target_index,
-                        train = [1,100], test = [110,160], embedDimensions = 4, predictionHorizon = 1,
+                        train = [(1, 101)], test = [(110, 161)], embedDimensions = 4, predictionHorizon = 1,
                         knn = 0, step = -1, theta = 3., exclusionRadius = 0,
                         embedded = False, validLib = [], noTime = False, generateSteps = 0,
                         generateConcat = False, ignoreNan = True, verbose = False, returnObject = False)
@@ -491,7 +491,7 @@ class test_EDM( unittest.TestCase ):
         col_index2 = df_.columns.get_loc('y')
         target_index = df_.columns.get_loc('x')
         S = EDM.FitSMap(data = data, columns = [col_index1, col_index2], target = target_index,
-                        train = [0,198], test = [0,199], embedDimensions = 2, predictionHorizon = 1,
+                        train = [(0, 199)], test = [(0, 200)], embedDimensions = 2, predictionHorizon = 1,
                         knn = 0, step = -1, theta = 3., exclusionRadius = 0,
                         embedded = True, validLib = [], noTime = False, generateSteps = 0,
                         generateConcat = False, ignoreNan = True, verbose = False, returnObject = False)
@@ -523,7 +523,7 @@ class test_EDM( unittest.TestCase ):
         col_index = dfn.columns.get_loc('x')
         target_index = dfn.columns.get_loc('y')
         S = EDM.FitSMap(data = data, columns = [col_index], target = target_index,
-                        train = [1,50], test = [1,50], embedDimensions = 2, predictionHorizon = 1,
+                        train = [(1, 51)], test = [(1, 51)], embedDimensions = 2, predictionHorizon = 1,
                         knn = 0, step = -1, theta = 3., exclusionRadius = 0,
                         embedded = False, validLib = [], noTime = False, generateSteps = 0,
                         generateConcat = False, ignoreNan = True, verbose = False, returnObject = False)
@@ -544,7 +544,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('x')
         target_index = df_.columns.get_loc('y')
         S = EDM.FitSMap(data = data, columns = [col_index], target = target_index,
-                        train = [1,100], test = [101,150], embedDimensions = 2,
+                        train = [(1, 101)], test = [(101, 151)], embedDimensions = 2,
                         knn = 0, step = -1, theta = 3., exclusionRadius = 0,
                         embedded = False, validLib = [], noTime = True, generateSteps = 0,
                         generateConcat = False, ignoreNan = True, verbose = False, returnObject = False)
@@ -713,7 +713,7 @@ class test_EDM( unittest.TestCase ):
         target_index = df_.columns.get_loc('x_t')
         M = EDM.FitMultiview(data = data,
                              columns = [col_index1, col_index2, col_index3], target = target_index,
-                             train = [1, 100], test = [101, 198],
+                             train = [(1, 101)], test = [(101, 199)],
                              D = 0, embedDimensions = 3, predictionHorizon = 1, knn = 0, step = -1,
                              multiview = 0, exclusionRadius = 0,
                              trainLib = False, excludeTarget = False,
@@ -782,10 +782,10 @@ class test_EDM( unittest.TestCase ):
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
                                                                              maxDims = 12,
-                                                                             train = [0, 484], test=[500, 799],
+                                                                             train = [(0, 485)], test=[(500, 800)],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
-                                                                             ignoreNan = True)
+                                                                             ignoreNan = True, batched = False)
 
         dfv = self.ValidationFiles["EmbedDim_valid.csv"].values[:, 1]
 
@@ -803,7 +803,7 @@ class test_EDM( unittest.TestCase ):
             target_index = df_.columns.get_loc('V1')
             df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data[:, col_index], data[:, target_index],
                                                                              maxDims = 12,
-                                                                             train = [0, 484], test=[500, 799],
+                                                                             train = [(0, 485)], test=[(500, 800)],
                                                                              predictionHorizon = 15, step = -5, exclusionRadius = 20,
                                                                              embedded = False, validLib = [],
                                                                              ignoreNan = True, batched = True)
@@ -829,7 +829,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X, Y,
             maxDims = 12,
-            train = [0, 484], test = [500, 799],
+            train = [(0, 485)], test = [(500, 800)],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True, joint = False)
@@ -853,7 +853,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X,
             maxDims = 12,
-            train = [0, 484], test = [500, 799],
+            train = [(0, 485)], test = [(500, 800)],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True)
@@ -877,7 +877,7 @@ class test_EDM( unittest.TestCase ):
         scores = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(
             X, Y,
             maxDims = 12,
-            train = [0, 484], test = [500, 799],
+            train = [(0, 485)], test = [(500, 800)],
             predictionHorizon = 15, step = -5, exclusionRadius = 20,
             embedded = False, validLib = [],
             ignoreNan = True, batched = True)
@@ -902,7 +902,7 @@ class test_EDM( unittest.TestCase ):
             col_index = df_.columns.get_loc('x_t')
             target_index = df_.columns.get_loc('x_t')
             df = torchEDM.Hyperparameters.FindOptimalPredictionHorizon(data = data, columns = [col_index], target = target_index,
-                                                                       maxTp = 15, train = [1, 150], test = [151, 198],
+                                                                       maxTp = 15, train = [(1, 151)], test = [(151, 199)],
                                                                        embedDimensions = 3, step = -1,
                                                                        embedded = False, validLib = [], noTime = False,
                                                                        ignoreNan = True)
@@ -927,7 +927,7 @@ class test_EDM( unittest.TestCase ):
             df = torchEDM.Hyperparameters.FindSMapNeighborhood(data = data, columns = [col_index], target = target_index,
                                                                theta = [0.01,0.1,0.3,0.5,0.75,1,1.5,
                                                 2,3,4,5,6,7,8,9,10,15,20 ],
-                                                               train = [1, 500], test = [501,800], embedDimensions = 4,
+                                                               train = [(1, 501)], test = [(501, 801)], embedDimensions = 4,
                                                                predictionHorizon = 1, knn = 0, step = -1,
                                                                solver = None, embedded = False, validLib = [], noTime = False,
                                                                ignoreNan = True, numProcess = 10, mpMethod = None,
@@ -948,7 +948,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('x')
         target_index = df_.columns.get_loc('x')
         df = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                            train = [1,200], test = [1,2], embedDimensions = 2, predictionHorizon = 1,
+                            train = [(1, 201)], test = [(1, 3)], embedDimensions = 2, predictionHorizon = 1,
                             knn = 0, step = -1, exclusionRadius = 0,
                             embedded = False, validLib = [], noTime = False, generateSteps = 100,
                             generateConcat = True, verbose = False, ignoreNan = True, returnObject = False)
@@ -964,7 +964,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('V1')
         target_index = df_.columns.get_loc('V1')
         df = EDM.FitSimplex(data = data, columns = [col_index], target = target_index,
-                            train = [1, 1000], test = [1, 2], embedDimensions = 5, predictionHorizon = 1,
+                            train = [(1, 1001)], test = [(1, 3)], embedDimensions = 5, predictionHorizon = 1,
                             knn = 0, step = -1, exclusionRadius = 0,
                             embedded = False, validLib = [], noTime = False, generateSteps = 100,
                             generateConcat = False, verbose = False, ignoreNan = True, returnObject = False)
@@ -980,7 +980,7 @@ class test_EDM( unittest.TestCase ):
         col_index = df_.columns.get_loc('x')
         target_index = df_.columns.get_loc('x')
         S = EDM.FitSMap(data = data, columns = [col_index], target = target_index, theta = 3.,
-                        train = [1,200], test = [1,2], embedDimensions = 2, predictionHorizon = 1,
+                        train = [(1, 201)], test = [(1, 3)], embedDimensions = 2, predictionHorizon = 1,
                         knn = 0, step = -1, exclusionRadius = 0,
                         embedded = False, validLib = [], noTime = False, generateSteps = 100,
                         generateConcat = True, ignoreNan = True, verbose = False, returnObject = False)
@@ -1036,8 +1036,8 @@ class test_MDE( unittest.TestCase ):
 			embedded = True,
 			embedDimensions = 1,
 			noTime = True,
-			train = [0, 298],
-			test = [300, 599],
+			train = [(0, 299)],
+			test = [(300, 600)],
 			predictionHorizon = 1,
 			verbose = False
 		)
@@ -1076,8 +1076,8 @@ class test_MDE( unittest.TestCase ):
 			embedded = True,
 			embedDimensions = 1,
 			noTime = True,
-			train = [0, 298],
-			test = [300, 599],
+			train = [(0, 299)],
+			test = [(300, 600)],
 			predictionHorizon = 1,
 			verbose = False
 		)

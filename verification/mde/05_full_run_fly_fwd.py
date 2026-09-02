@@ -25,6 +25,7 @@ def torch_run(df, ts_cols, convergent):
     XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=8, Convergent=convergent, PredictionHorizon=1,
                        MinPredictionThreshold=0.2, MinCandidateCorrelation=0.65,
+                       IterativeDimensionSearch=True,
                        CCMLibraryPercentiles=np.array([10, 15, 85, 90]),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=7777, CCMMaxEmbeddingDimensions=15,

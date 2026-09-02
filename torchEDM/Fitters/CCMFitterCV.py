@@ -129,7 +129,7 @@ class CCMFitterCV(EDMFitter):
 		xStart, xEnd = self.trainDataAdapter.XIndices
 		yColumnIndices = self.trainDataAdapter.YIndex
 
-		XArray = fullData[:, xStart:xEnd + 1]
+		XArray = fullData[:, xStart:xEnd]
 		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
 
 		self.foldResults = []

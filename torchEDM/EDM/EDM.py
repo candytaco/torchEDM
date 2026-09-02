@@ -6,7 +6,7 @@ from warnings import warn
 
 import numpy
 # package modules
-from numpy import any, concatenate, isnan
+from numpy import any, arange, concatenate, isnan
 from numpy import append, array, column_stack, empty, floating, full, integer, nan
 from numpy import delete, zeros, apply_along_axis
 from scipy.spatial import KDTree
@@ -88,21 +88,20 @@ class EDM:
 		
 		return self._knn
 
-	def _NormalizeWindows(self, windows, name):
+	def _ValidateWindowPairs(self, windows, name):
 		"""
-		Accept windows as a whitespace string ('1 100'), a flat [start, stop, ...]
-		list, or a list of (start, stop) pairs; return a list of (start, stop) pairs.
+		Require windows to be a list of (start, stop) pairs, half-open
+		[start, stop). Flat lists and strings are not accepted.
 		"""
 		if not IsNonStringIterable(windows):
-			values = [int(i) for i in windows.split()]
-		elif len(windows) and not IsNonStringIterable(windows[0]):
-			values = [int(i) for i in windows]
-		else:
-			return windows
-		if len(values) % 2:
-			raise RuntimeError(f'Validate() {self.name}: {name} must contain '
-			                   'an even number of start/stop values.')
-		return [(values[i], values[i + 1]) for i in range(0, len(values), 2)]
+			raise TypeError(f'{self.name}: {name} must be a list of '
+			                '(start, stop) pairs, half-open [start, stop).')
+		for window in windows:
+			if not IsNonStringIterable(window) or len(window) != 2:
+				raise TypeError(f'{self.name}: {name} must be a list of '
+				                '(start, stop) pairs, half-open [start, stop); '
+				                f'got {window!r}.')
+		return windows
 
 	def _BuildExclusionMask(self):
 		"""
@@ -743,28 +742,28 @@ class EDM:
 	# TODO: properly override these in inheritance
 	def CreateIndices(self):
 		"""
-		Populate array index vectors lib_i, pred_i.
-		Windows are List[Tuple[int, int]] of 0-based, end-inclusive (start, stop)
+		Populate array index vectors trainIndices, testIndices.
+		Windows are List[Tuple[int, int]] of 0-based, half-open [start, stop)
 		row spans. Every row in a span is used except rows whose target index
-		(t + predictionHorizon) or embedding history would be out of bounds;
+		(row + predictionHorizon) or stacked history would be out of bounds;
 		exactly those rows are trimmed.
 		"""
 
-		libPairs = self.train  # List[Tuple[int, int]] of (start, stop) pairs
+		libPairs = self.train  # List[Tuple[int, int]] of half-open (start, stop) pairs
 
 		# Validate end > start
 		for libPair in libPairs:
 			libStart, libEnd = libPair
 
 			if self.name in ['Simplex', 'SMap', 'Multiview']:
-				# Don't check if CCM since default of "0 0" is used.
+				# Don't check if CCM since a degenerate default is used.
 				assert libStart < libEnd
 
 			assert libStart >= 0 and libEnd >= 0
 
 		# Loop over each train pair
 		# Add rows for library segments, disallowing vectors
-		# in disjoint library gap accommodating embedding and predictionHorizon
+		# in disjoint library gap accommodating stacked history and predictionHorizon
 		embedShift = abs(self.embedStep) * (self.embedDimensions - 1)
 		lib_i_list = list()
 
@@ -778,15 +777,21 @@ class EDM:
 				else:
 					stop = stop - embedShift
 
-			# trim exactly the rows whose target index t + Tp is out of bounds
+			# Trim exactly the rows whose target index row + predictionHorizon
+			# is out of bounds. With a negative horizon the earliest rows have
+			# target positions before row 0, and numpy would silently wrap
+			# them to the END of the array: e.g. horizon -2 with rows [0..4]
+			# gives target positions [-2,-1,0,1,2], and targetVec[-1] is the
+			# LAST row — row 1 would be labeled with the final recorded value.
+			# The bound depends only on the target lookup, so it applies
+			# whether or not the data was passed pre-embedded (the old
+			# isEmbedded-guarded version left pre-embedded data wrapping).
 			if self.predictionHorizon < 0:
 				start = max(start, -self.predictionHorizon)
 			else:
-				stop = min(stop, self.Data.shape[0] - 1 - self.predictionHorizon)
+				stop = min(stop, self.Data.shape[0] - self.predictionHorizon)
 
-			libPair_i = [i for i in range(start, stop + 1)]
-
-			lib_i_list.append(array(libPair_i, dtype = int))
+			lib_i_list.append(arange(start, stop, dtype = int))
 
 		# Concatenate lib_i_list into lib_i
 		self.trainIndices = concatenate(lib_i_list)
@@ -809,7 +814,7 @@ class EDM:
 		# ------------------------------------------------
 		# pred_i from test
 		# ------------------------------------------------
-		predPairs = self.test  # List[Tuple[int, int]] of (start, stop) pairs
+		predPairs = self.test  # List[Tuple[int, int]] of half-open (start, stop) pairs
 
 		if len(predPairs) > 1: self.disjointPred = True
 
@@ -818,7 +823,7 @@ class EDM:
 			predStart, predEnd = predPair
 
 			if self.name in ['Simplex', 'SMap', 'Multiview']:
-				# Don't check CCM since default of "1 1" is used.
+				# Don't check CCM since a degenerate default is used.
 				if predStart >= predEnd:
 					msg = f'{self.name}: CreateIndices() test start ' + \
 					      f' {predStart} exceeds test end {predEnd}.'
@@ -829,20 +834,12 @@ class EDM:
 				      ' less than 0 not allowed.'
 				raise RuntimeError(msg)
 
-		# Create pred_i indices from predPairs (0-based, end-inclusive)
+		# Create test indices from predPairs (0-based, half-open)
 		for r in range(len(predPairs)):
 			start, stop = predPairs[r]
-			pred_i = array([j for j in range(start, stop + 1)], dtype = int)
+			self.predList.append(arange(start, stop, dtype = int))
 
-			self.predList.append(pred_i)  # Append disjoint segment(s)
-
-		# flatten arrays in self.predList for single array self.pred_i
-		pred_i_ = []
-		for pred_i in self.predList:
-			i_ = [i for i in pred_i]
-			pred_i_ = pred_i_ + i_
-
-		self.testIndices = array(pred_i_, dtype = int)
+		self.testIndices = concatenate(self.predList) if self.predList else array([], dtype = int)
 
 		self.PredictionValid()
 
@@ -963,17 +960,17 @@ class EDM:
 				raise RuntimeError(f'Validate() {self.name}:' + \
 				                   ' step must be non-zero.')
 			if self.embedDimensions < 1:
-				raise RuntimeError(f'Validate() {self.name}:' + \
-				                   f' E = {self.embedDimensions} is invalid.')
+				raise RuntimeError(f'Validate() {self.name}: embedding dimensions ' + \
+				                   f'{self.embedDimensions} is invalid.')
 
 		if self.name != 'CCM':
 			if not len(self.train):
 				raise RuntimeError(f'Validate() {self.name}: train required.')
-			self.train = self._NormalizeWindows(self.train, 'train')
+			self.train = self._ValidateWindowPairs(self.train, 'train')
 
 			if not len(self.test):
 				raise RuntimeError(f'Validate() {self.name}: test required.')
-			self.test = self._NormalizeWindows(self.test, 'test')
+			self.test = self._ValidateWindowPairs(self.test, 'test')
 
 		# Set knn default based on E and train size, E embedded on num columns
 		if self.name in ['Simplex', 'CCM', 'Multiview']:

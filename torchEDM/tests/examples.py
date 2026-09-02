@@ -15,7 +15,7 @@ def main():
     target_index = df_.columns.get_loc('TentMap')
     df = torchEDM.Hyperparameters.FindOptimalEmbeddingDimensionality(data = data,
                                                                      columns = [col_index], target = target_index,
-                                                                     train = [1, 100], test = [201, 500], maxDims = 10,
+                                                                     train = [(1, 101)], test = [(201, 501)], maxDims = 10,
                                                                      predictionHorizon = 1, step = -1, exclusionRadius = 0,
                                                                      embedded = False, validLib = [], noTime = False,
                                                                      ignoreNan = True)
@@ -26,7 +26,7 @@ def main():
     target_index = df_.columns.get_loc('TentMap')
     df = torchEDM.Hyperparameters.FindOptimalPredictionHorizon(data = data,
                                                                columns = [col_index], target = target_index,
-                                                               train = [1, 100], test = [201, 500], maxTp = 10,
+                                                               train = [(1, 101)], test = [(201, 501)], maxTp = 10,
                                                                embedDimensions = 2, step = -1, exclusionRadius = 0,
                                                                embedded = False, validLib = [], noTime = False,
                                                                ignoreNan = True);
@@ -37,7 +37,7 @@ def main():
     target_index = df_.columns.get_loc('TentMap')
     df = torchEDM.Hyperparameters.FindSMapNeighborhood(data = data,
                                                        columns = [col_index], target = target_index,
-                                                       train = [1, 100], test = [201, 500], embedDimensions = 2,
+                                                       train = [(1, 101)], test = [(201, 501)], embedDimensions = 2,
                                                        predictionHorizon = 1, knn = 0, step = -1,
                                                        solver = None, embedded = False, validLib = [], noTime = False,
                                                        ignoreNan = True, numProcess = 4, mpMethod = None,
@@ -52,7 +52,7 @@ def main():
     target_index = df_.columns.get_loc('x_t')
     S = EDM.FitSimplex(data = data,
                        columns = [col_index1, col_index2, col_index3], target = target_index,
-                       train = [1, 99], test = [100, 198], embedDimensions = 3, predictionHorizon = 1,
+                       train = [(1, 100)], test = [(100, 199)], embedDimensions = 3, predictionHorizon = 1,
                        knn = 0, step = -1, exclusionRadius = 0,
                        embedded = True, validLib = [], noTime = False, generateSteps = 0,
                        generateConcat = False, verbose = False, ignoreNan = True, returnObject = False)
@@ -64,7 +64,7 @@ def main():
     target_index = df_.columns.get_loc('x_t')
     S = EDM.FitSimplex(data = data,
                        columns = [col_index], target = target_index,
-                       train = [1, 99], test = [100, 198], embedDimensions = 3, predictionHorizon = 1,
+                       train = [(1, 100)], test = [(100, 199)], embedDimensions = 3, predictionHorizon = 1,
                        knn = 0, step = -1, exclusionRadius = 0,
                        embedded = False, validLib = [], noTime = False, generateSteps = 0,
                        generateConcat = False, verbose = False, ignoreNan = True, returnObject = False)
@@ -78,7 +78,7 @@ def main():
     # target_index = df_.columns.get_loc('x_t')
     # M = EDM.FitMultiview(data = data,
     #                      columns = [col_index1, col_index2, col_index3], target = target_index,
-    #                      train = [1, 100], test = [101, 198],
+    #                      train = [(1, 101)], test = [(101, 199)],
     #                      D = 0, embedDimensions = 3, predictionHorizon = 1, knn = 0, step = -1,
     #                      multiview = 0, exclusionRadius = 0,
     #                      trainLib = False, excludeTarget = False,
@@ -93,7 +93,7 @@ def main():
     target_index = df_.columns.get_loc('x')
     S = EDM.FitSMap(data = data,
                     columns = [col_index1, col_index2], target = target_index,
-                    train = [1, 100], test = [101, 198],
+                    train = [(1, 101)], test = [(101, 199)],
                     embedDimensions = 2, predictionHorizon = 1, knn = 0, step = -1,
                     theta = 4, exclusionRadius = 0,
                     embedded = True,

@@ -3,7 +3,7 @@ Data adapter for handling separate X/Y and train/test arrays.
 
 Provides bridge from SKLearn style to EDM single-array style.
 
-Note: the EDM-style API, when given indices along the time dimension, are stop-inclusive
+All index ranges are 0-based, half-open [start, stop) pairs.
 """
 from typing import Optional, Tuple, List, Union
 
@@ -144,9 +144,9 @@ class DataAdapter:
 	@property
 	def XIndices(self) -> Tuple[int, int]:
 		"""
-		Indices for X variables. The end is Inclusive!
+		Indices for X variables, half-open [start, stop).
 
-		:return: X indices [start, end]
+		:return: X indices (start, stop)
 		"""
 		raise NotImplementedError
 
@@ -216,18 +216,18 @@ class DataAdapterSingleRun(DataAdapter):
 
 	@property
 	def TrainIndices(self) -> List[Tuple[int, int]]:
-		return [(self.trainOffset, self.XTrain.shape[0] - 1 - self.TrainEnd)]
+		return [(self.trainOffset, self.XTrain.shape[0] - self.TrainEnd)]
 
 	@property
 	def TestIndices(self) -> List[Tuple[int, int]]:
 		if self.YTest is not None:
-			return [(self.testOffset, self.fullData.shape[0] - 1 - self.TestEnd)]
+			return [(self.testOffset, self.fullData.shape[0] - self.TestEnd)]
 		else:
 			raise ValueError('No test data')
 
 	@property
 	def XIndices(self) -> Tuple[int, int]:
-		return (0 + int(self.hasTime), self.XTrain.shape[1] + int(self.hasTime) - 1)
+		return (0 + int(self.hasTime), self.XTrain.shape[1] + int(self.hasTime))
 
 	@property
 	def YIndex(self) -> List[int]:
@@ -274,7 +274,7 @@ class DataAdapterMultipleRuns(DataAdapter):
 		n = 0
 		for i, run in enumerate(trainRuns):
 			start = n + self.TrainStart[i]
-			end = n + run.shape[0] - self.TrainEnd[i] - 1 # -1 beacuse EDM expected end-inclusive indices
+			end = n + run.shape[0] - self.TrainEnd[i]
 			self.trainIndices.append((start, end))
 			n += run.shape[0]
 
@@ -289,7 +289,7 @@ class DataAdapterMultipleRuns(DataAdapter):
 			data = numpy.vstack([data, test])
 
 			start = n + self.TestStart
-			end = n + self.XTest.shape[0] - self.TestEnd - 1
+			end = n + self.XTest.shape[0] - self.TestEnd
 			self.testIndices = (start, end)
 
 		# add time if needed

@@ -50,6 +50,7 @@ def main():
     fitter = MDEFitter(MaxD=4, Convergent='post', PredictionHorizon=1,
                        Step=-5, ExclusionRadius=10,
                        MinPredictionThreshold=0.3, MinCandidateCorrelation=0.4,
+                       IterativeDimensionSearch=True,
                        CCMLibraryPercentiles=np.array([10, 15, 85, 90]),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=7777, CCMMaxEmbeddingDimensions=15,
@@ -60,16 +61,16 @@ def main():
     rho = [round(float(r), 6) for r in result.performance[0] if not np.isnan(r)]
     ccm = [round(float(r), 5) for r in result.ccm_values[0] if not np.isnan(r)]
     print(f'\ntorchEDM post: vars={sel} rho={rho} ccm_slopes={ccm}')
-    print('torch E per candidate:',
-          {cols[k]: v for k, v in fitter.MDE.candidateEmbedDimensions[0].items()})
+    print('torch dimensions per candidate:',
+          {c: int(fitter.MDE.candidateEmbedDimensions[0, k]) for k, c in enumerate(cols)})
 
     print('\nsample-mode CCM exclusionRadius handling (V5 manifold -> V1):')
     for radius in [0, 10]:
         ccm2 = ConvergentCrossMap(
             X=y, Y=data[['V1']].values, trainSizes=[50, 75, 425, 450],
             repeats=20, embedDimensions=5, predictionHorizon=1, step=-5,
-            exclusionRadius=radius, trainIndices=[(0, 499)],
-            testIndices=[(500, 998)], device='cpu', batchMode='sample',
+            exclusionRadius=radius, trainIndices=[(0, 500)],
+            testIndices=[(500, 999)], device='cpu', batchMode='sample',
             dtype=torch.float64, seed=7777, showProgress=False)
         r = np.asarray(ccm2.Run().forward_performance)
         print(f'  exclusionRadius={radius}: rho by libSize = {np.round(r, 4)}')

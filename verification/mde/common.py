@@ -7,12 +7,12 @@ Setup (once):
     pip install -e <this repo>
     export MDE_REPO=<somewhere>/MDE
 
-Window equivalence used throughout (torchEDM windows are 0-based,
-end-inclusive; rows whose target index t+Tp is out of bounds are trimmed):
-reference lib=[a,b], pred=[c,d] with Tp=1 is reproduced by
-  - class API: train=[(a-1, b-1-Tp)], test=[(c-1, d-1)]
+Window equivalence used throughout (torchEDM windows are 0-based, half-open
+[start, stop) pairs; rows whose target index is out of bounds are trimmed):
+reference lib=[a,b], pred=[c,d] with horizon 1 is reproduced by
+  - class API: train=[(a-1, b-1)], test=[(c-1, d)]
   - sklearn API: XTrain = rows a-1..c-2, XTest = rows c-1..d, and
-    Fit(..., TrainStart=0, TrainEnd=Tp, TestStart=0, TestEnd=1)
+    Fit(..., TrainStart=0, TrainEnd=1, TestStart=0, TestEnd=1)
 For the Fly runs (lib=[1,300], pred=[301,600]) both give train rows 0..298
 and test rows 300..599, matching the reference exactly (verified in 01).
 """

@@ -11,16 +11,15 @@ from .Simplex import Simplex
 from ._core import Correlation, R2, batch_simplex_predict_and_score, batch_simplex_predict
 
 
-def _normalize_windows(windows):
-	"""Accept train/test windows as None, a flat [start, stop, ...] list, or a
-	list of (start, stop) pairs; return a list of (start, stop) pairs."""
+def _validate_window_pairs(windows):
+	"""Require windows to be None or a list of (start, stop) pairs,
+	half-open [start, stop)."""
 	if windows is None:
 		return None
-	windows = list(windows)
-	if len(windows) and not hasattr(windows[0], '__len__'):
-		if len(windows) % 2:
-			raise ValueError('Window list must contain an even number of start/stop values')
-		windows = [(int(windows[i]), int(windows[i + 1])) for i in range(0, len(windows), 2)]
+	for window in windows:
+		if not hasattr(window, '__len__') or len(window) != 2:
+			raise TypeError('Windows must be a list of (start, stop) pairs, '
+							'half-open [start, stop); got {!r}.'.format(window))
 	return windows
 
 
@@ -67,6 +66,7 @@ class MDE:
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidateCorrelation: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0):
 		"""Initialize MDE with data and parameters.
 
@@ -100,9 +100,13 @@ class MDE:
 		:param CCMSeed: 	Random seed for reproducible CCM sampling (None for non-reproducible)
 		:param CCMMaxEmbeddingDimensions: 	Maximum embedding dimension for per-variable E search in CCM convergence check
 		:param MinPredictionThreshold: 	Minimum correlation threshold for candidate filtering
-		:param MinCandidateCorrelation: 	Minimum correlation a candidate alone (delay-embedded, best E in
-			1..CCMMaxEmbeddingDimensions) must reach predicting the target for it to stay in the candidate pool.
-			Applied only when convergence checking is on and embedDimensions is auto-searched. 0 disables.
+		:param MinCandidateCorrelation: 	Minimum correlation a candidate alone (stacked at its best history
+			depth up to CCMMaxEmbeddingDimensions) must reach predicting the target for it to stay in the
+			candidate pool. Applied only when convergence checking is on and embedDimensions is auto-searched.
+			0 disables.
+		:param IterativeDimensionSearch: 	If True, the candidate dimension search evaluates each depth on its
+			own valid rows (slower; reproduces the reference implementation). If False (default), all depths
+			share the most restrictive row set in one batched pass.
 		:param TimeDelay: 	Time delay analysis depth. If 0, time delay analysis is disabled
 		"""
 		self.data = data
@@ -113,8 +117,8 @@ class MDE:
 		self.metric = metric
 		self.batch_size = batch_size
 		self.columns = columns
-		self.train = _normalize_windows(train)
-		self.test = _normalize_windows(test)
+		self.train = _validate_window_pairs(train)
+		self.test = _validate_window_pairs(test)
 		self.embedDimensions = embedDimensions
 		self.predictionHorizon = predictionHorizon
 		self.knn = knn
@@ -133,17 +137,18 @@ class MDE:
 		self.CCMNumSamples = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
 		self.CCMSeed = CCMSeed
-		self.CCMMaxE = CCMMaxEmbeddingDimensions
+		self.CCMMaxEmbedDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidateCorrelation = MinCandidateCorrelation
+		self.iterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
-		# Per-run candidate E-search results: {target position: {column: value}}
+		# Per-run candidate dimension-search results, arrays [nTargets, nColumns]
 		self.candidateEmbedDimensions = None
 		self.candidatePeakCorrelations = None
 		self._ccmSlopeCache = None
 
-		self._userProvidedE = embedDimensions != 0
+		self._userProvidedEmbedDimensions = embedDimensions != 0
 
 		if torch.cuda.is_available():
 			self.device = torch.device('cuda')
@@ -278,22 +283,26 @@ class MDE:
 			pool = [c for c in all_columns if c not in excluded_j]
 			remaining_variables.append(pool)
 
-		self._ccmSlopeCache = {}
+		# Per-candidate growth-slope cache, indexed [targetPosition, column].
+		# NaN is the flag: not yet computed, and a computed NaN slope is never
+		# accepted, so it needs no separate presence mask.
+		self._ccmSlopeCache = numpy.full([nTargets, nVars], numpy.nan)
 
-		# Per-candidate embedding dimension search + solo-predictability gate.
-		# One batched sweep: each candidate (delay-embedded at E = 1..CCMMaxE)
-		# predicts each target; per (target, candidate) keep argmax E and its
-		# peak correlation. Candidates whose peak falls below
-		# MinCandidateCorrelation leave the pool before any convergence check.
-		self.candidateEmbedDimensions = [dict() for _ in range(nTargets)]
-		self.candidatePeakCorrelations = [dict() for _ in range(nTargets)]
-		if self.convergent is not False and not self._userProvidedE:
+		# Per-candidate embedding-dimension search + solo-predictability gate.
+		# One batched sweep: each candidate, delay-embedded at every dimension
+		# up to CCMMaxEmbedDimensions, predicts each target; per (target,
+		# candidate) keep the best dimension and its peak correlation.
+		# Candidates whose peak falls below MinCandidateCorrelation leave the
+		# pool before any convergence check.
+		self.candidateEmbedDimensions = numpy.full([nTargets, nVars], -1, dtype = int)
+		self.candidatePeakCorrelations = numpy.full([nTargets, nVars], numpy.nan)
+		remaining_variables = [numpy.array(pool, dtype = int) for pool in remaining_variables]
+		if self.convergent is not False and not self._userProvidedEmbedDimensions:
 			self._search_candidate_embedding_dimensions(remaining_variables)
 			if self.MinCandidateCorrelation > 0:
-				for j in range(nTargets):
-					remaining_variables[j] = [
-						c for c in remaining_variables[j]
-						if self.candidatePeakCorrelations[j][c] >= self.MinCandidateCorrelation]
+				passesCandidateGate = self.candidatePeakCorrelations >= self.MinCandidateCorrelation
+				remaining_variables = [pool[passesCandidateGate[j, pool]]
+									   for j, pool in enumerate(remaining_variables)]
 
 		# Filter convergent variables before selection if convergent='pre'
 		if self.convergent == 'pre':
@@ -326,7 +335,7 @@ class MDE:
 		progressBar = ProgressBar(total = self.maxD, desc = 'Selecting variables', leave = False)
 
 		# a target that selects nothing in a round can never select anything in a
-		# later round (scores unchanged, gate verdicts cached), so it is done
+		# later round (scores unchanged, gate results cached), so it is done
 		activeTargets = [True] * nTargets
 
 		for i in range(self.maxD):
@@ -410,7 +419,7 @@ class MDE:
 
 				if best_var is not None:
 					self._selected_variables[j].append(best_var)
-					remaining_variables[j].remove(best_var)
+					remaining_variables[j] = remaining_variables[j][remaining_variables[j] != best_var]
 					self._accuracy[j].append(best_score)
 
 					train_col = trainData_tensor[:, best_var]
@@ -556,53 +565,50 @@ class MDE:
 
 		return predictions, timeValues, scores
 
-	def _search_candidate_embedding_dimensions(self, remaining_variables: List[List[int]]) -> None:
+	def _search_candidate_embedding_dimensions(self, remaining_variables) -> None:
 		"""Batched per-candidate embedding-dimension search.
 
-		Each candidate column, delay-embedded at E = 1..CCMMaxE with its own
-		per-E valid rows, predicts each target over the train/test windows.
-		Scores are rounded to 4 decimals; per (target, candidate) the argmax E
-		(first maximum on ties) and the peak correlation are stored in
-		candidateEmbedDimensions / candidatePeakCorrelations. The E is later
-		consumed by the convergence check, where the target's history
-		reconstructs the candidate.
+		Each candidate column, stacked at every history depth up to
+		CCMMaxEmbedDimensions, predicts each target over the train/test
+		windows. Per (target, candidate) the best-scoring depth and its peak
+		correlation are stored in candidateEmbedDimensions /
+		candidatePeakCorrelations. The chosen depth is later consumed by the
+		convergence check, where the target's history reconstructs the
+		candidate.
 
-		:param remaining_variables: per-target candidate column pools
+		:param remaining_variables: per-target candidate column index arrays
 		"""
 		from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
 
-		nTargets = len(self.targets)
-		sweep_cols = sorted(set().union(*[set(pool) for pool in remaining_variables]))
-		if len(sweep_cols) == 0:
+		sweepColumns = numpy.unique(numpy.concatenate(remaining_variables))
+		if len(sweepColumns) == 0:
 			return
 
-		# Bound the per-round distance block [batch * maxE, nTrain, nTest] to ~1.5 GB
-		nTrain = sum(stop - start + 1 for start, stop in self.train)
-		nTest = sum(stop - start + 1 for start, stop in self.test)
+		# Bound the distance block [batch * maxDimensions, nTrain, nTest] to ~1.5 GB
+		numTrainRows = sum(stop - start for start, stop in self.train)
+		numTestRows = sum(stop - start for start, stop in self.test)
 		elementSize = torch.zeros(1, dtype = self.dtype).element_size()
-		perVarBytes = self.CCMMaxE * nTrain * nTest * elementSize
-		batchSize = max(1, int(1.5e9 / max(perVarBytes, 1)))
+		bytesPerVariable = self.CCMMaxEmbedDimensions * numTrainRows * numTestRows * elementSize
+		batchSize = max(1, int(1.5e9 / max(bytesPerVariable, 1)))
 
 		scores = FindOptimalEmbeddingDimensionality(
-			self.data[:, sweep_cols], self.data[:, self.targets],
-			maxDims = self.CCMMaxE,
+			self.data[:, sweepColumns], self.data[:, self.targets],
+			maxDims = self.CCMMaxEmbedDimensions,
 			train = self.train, test = self.test,
 			predictionHorizon = self.predictionHorizon,
 			step = self.step, exclusionRadius = self.exclusionRadius,
 			embedded = False, validLib = self.validLib,
-			ignoreNan = self.ignoreNan, batched = False, joint = False,
-			dtype = self.dtype, BatchSize = batchSize)
+			ignoreNan = self.ignoreNan, batched = not self.iterativeDimensionSearch,
+			joint = False, dtype = self.dtype, BatchSize = batchSize)
 
 		scores = numpy.asarray(scores)
 		if scores.ndim == 2:  # single target squeezed to [nVars, maxDims]
 			scores = scores[None, :, :]
-		scores = numpy.round(scores, 4)
 
-		for j in range(nTargets):
-			for v, col in enumerate(sweep_cols):
-				bestE = int(numpy.argmax(scores[j, v])) + 1
-				self.candidateEmbedDimensions[j][col] = bestE
-				self.candidatePeakCorrelations[j][col] = float(scores[j, v, bestE - 1])
+		bestDimensions = numpy.argmax(scores, axis = 2)  # [nTargets, nSweepColumns]
+		peaks = numpy.take_along_axis(scores, bestDimensions[:, :, None], axis = 2)[:, :, 0]
+		self.candidateEmbedDimensions[:, sweepColumns] = bestDimensions + 1
+		self.candidatePeakCorrelations[:, sweepColumns] = peaks
 
 	def _filter_convergent_variables(self, candidate_columns: List[int], target: int) -> List[int]:
 		"""Filter candidate variables to only include convergent ones using BatchedCCM.
@@ -610,10 +616,9 @@ class MDE:
 		:param candidate_columns: Column indices to check for convergence
 		:param target: Target column index
 		:return: Convergent column indices
-		:rtype: List[int]
 		"""
 		if len(candidate_columns) == 0:
-			return []
+			return numpy.asarray(candidate_columns, dtype = int)
 
 		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
@@ -628,20 +633,20 @@ class MDE:
 		X = self.data[:, candidate_columns]
 		Y = self.data[:, target]
 
-		if self._userProvidedE:
-			embedDims = self.embedDimensions
+		if self._userProvidedEmbedDimensions:
+			embeddingDimensions = self.embedDimensions
 		else:
-			j = self.targets.index(target)
-			embedDims = numpy.array([[self.candidateEmbedDimensions[j][c]
-									  for c in candidate_columns]])
+			targetPosition = self.targets.index(target)
+			candidateColumnArray = numpy.asarray(candidate_columns, dtype = int)
+			embeddingDimensions = self.candidateEmbedDimensions[targetPosition, candidateColumnArray][None, :]
 
 		batchedCCM = ConvergentCrossMap(
 			X = Y,
 			Y = X,
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
-			embedDimensions = embedDims,
-			maxEmbedDimensions = self.CCMMaxE,
+			embedDimensions = embeddingDimensions,
+			maxEmbedDimensions = self.CCMMaxEmbedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else None,
 			step = self.step,
@@ -672,23 +677,27 @@ class MDE:
 		x_var = (x ** 2).mean() - x_mean ** 2
 		slopes = (xy_mean - x_mean * y_mean) / x_var
 
-		convergent_mask = slopes > self.CCMConvergenceThreshold
-		convergent_indices = torch.where(convergent_mask)[0].cpu().tolist()
-		convergent_vars = [candidate_columns[i] for i in convergent_indices]
+		isConvergent = (slopes > self.CCMConvergenceThreshold).cpu().numpy()
 
-		return convergent_vars
+		return numpy.asarray(candidate_columns, dtype = int)[isConvergent]
 
 	def _check_single_candidate_convergence(self, candidate: int, target: int) -> Tuple[bool, float]:
 		"""Check CCM convergence for a candidate variable predicting a given target.
 
 		:param candidate: candidate variable to check
 		:param target: Target column index
-		:return: (convergent, ccm_slope) tuple
+		:return: (isConvergent, slope) tuple
 		"""
-		# verdicts are cached per run: a candidate is tested once, a rejected
-		# candidate stays rejected across later dimensions
-		if self._ccmSlopeCache is not None and (target, candidate) in self._ccmSlopeCache:
-			return self._ccmSlopeCache[(target, candidate)]
+		targetPosition = self.targets.index(target)
+
+		# Slopes are cached per run: a candidate is tested once, a rejected
+		# candidate stays rejected across later dimensions. NaN means not yet
+		# computed (a computed NaN slope is never accepted, so it never needs
+		# to be distinguished from absent).
+		if self._ccmSlopeCache is not None:
+			cachedSlope = self._ccmSlopeCache[targetPosition, candidate]
+			if not numpy.isnan(cachedSlope):
+				return (cachedSlope > self.CCMConvergenceThreshold, float(cachedSlope))
 
 		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
@@ -702,18 +711,20 @@ class MDE:
 		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
 		lib_sizes_normalized = lib_sizes_normalized / self.trainData.shape[0]
 
-		if self._userProvidedE:
-			embedDims = self.embedDimensions
+		if self._userProvidedEmbedDimensions:
+			embeddingDimensions = self.embedDimensions
 		else:
-			embedDims = self.candidateEmbedDimensions[self.targets.index(target)].get(candidate)
+			embeddingDimensions = int(self.candidateEmbedDimensions[targetPosition, candidate])
+			if embeddingDimensions < 1:
+				embeddingDimensions = None
 
 		batchedCCM = ConvergentCrossMap(
 			X = self.data[:, target],
 			Y = self.data[:, [candidate]],
 			trainSizes = lib_sizes,
 			repeats = self.CCMNumSamples,
-			embedDimensions = embedDims,
-			maxEmbedDimensions = self.CCMMaxE,
+			embedDimensions = embeddingDimensions,
+			maxEmbedDimensions = self.CCMMaxEmbedDimensions,
 			predictionHorizon = self.predictionHorizon,
 			knn = self.knn if self.knn > 0 else None,
 			step = self.step,
@@ -745,7 +756,7 @@ class MDE:
 		x_var = (x ** 2).mean() - x_mean ** 2
 		slope = float((xy_mean - x_mean * y_mean) / x_var)
 
-		verdict = (slope > self.CCMConvergenceThreshold, slope)
 		if self._ccmSlopeCache is not None:
-			self._ccmSlopeCache[(target, candidate)] = verdict
-		return verdict
+			self._ccmSlopeCache[targetPosition, candidate] = slope
+		isConvergent = slope > self.CCMConvergenceThreshold
+		return (isConvergent, slope)

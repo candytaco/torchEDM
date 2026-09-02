@@ -85,6 +85,7 @@ def main():
     XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=1, Convergent='post', PredictionHorizon=1,
                        MinPredictionThreshold=0.2, MinCandidateCorrelation=0.65,
+                       IterativeDimensionSearch=True,
                        CCMLibraryPercentiles=np.array(PCTS),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=SEED, CCMMaxEmbeddingDimensions=15,
@@ -93,15 +94,15 @@ def main():
     mde = fitter.MDE
 
     E_match = sum(1 for i, c in enumerate(ts_cols)
-                  if mde.candidateEmbedDimensions[0].get(i) == ref[c]['E'])
-    peak_diff = max(abs(mde.candidatePeakCorrelations[0][i] - ref[c]['maxRhoE'])
+                  if mde.candidateEmbedDimensions[0, i] == ref[c]['E'])
+    peak_diff = max(abs(mde.candidatePeakCorrelations[0, i] - ref[c]['maxRhoE'])
                     for i, c in enumerate(ts_cols))
     print(f'E matches: {E_match}/80; max peak diff: {peak_diff:.4f}')
 
     ref_full, tor_full, ref_slopes, tor_slopes = [], [], [], []
     for i, c in enumerate(ts_cols):
         ok, slope = mde._check_single_candidate_convergence(i, mde.targets[0])
-        peak_ok = mde.candidatePeakCorrelations[0][i] >= 0.65
+        peak_ok = mde.candidatePeakCorrelations[0, i] >= 0.65
         tor_full.append(bool(ok) and peak_ok)
         ref_full.append((ref[c]['slope'] > 0.01) and (ref[c]['maxRhoE'] >= 0.65))
         ref_slopes.append(ref[c]['slope'])
@@ -116,7 +117,7 @@ def main():
         if ref_full[i] != tor_full[i]:
             print(f'  {c}: ref slope={ref_slopes[i]:+.4f} peak={ref[c]["maxRhoE"]:.3f} '
                   f'| torch slope={tor_slopes[i]:+.4f} '
-                  f'peak={mde.candidatePeakCorrelations[0][i]:.3f}')
+                  f'peak={mde.candidatePeakCorrelations[0, i]:.3f}')
 
 
 if __name__ == '__main__':

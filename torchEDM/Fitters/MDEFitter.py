@@ -36,6 +36,7 @@ class MDEFitter(EDMFitter):
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidateCorrelation: float = 0.5,
+				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
 		"""
@@ -84,6 +85,7 @@ class MDEFitter(EDMFitter):
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidateCorrelation = MinCandidateCorrelation
+		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
 		self.MDE = None
@@ -97,7 +99,7 @@ class MDEFitter(EDMFitter):
 		TrainIndices = self.GetTrainIndices()
 		TestIndices = self.GetTestIndices()
 		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd + 1))
+		Columns = list(range(XStart, XEnd))
 		Target = self.GetYIndex()
 		NoTime = not self.HasTime()
 
@@ -133,6 +135,7 @@ class MDEFitter(EDMFitter):
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
 			MinCandidateCorrelation = self.MinCandidateCorrelation,
+			IterativeDimensionSearch = self.IterativeDimensionSearch,
 			TimeDelay = self.TimeDelay
 		)
 

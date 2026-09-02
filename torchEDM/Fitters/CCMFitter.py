@@ -82,7 +82,7 @@ class CCMFitter(EDMFitter):
 		xStart, xEnd = self.DataAdapter.XIndices
 		yColumnIndices = self.DataAdapter.YIndex
 
-		XArray = fullData[:, xStart:xEnd + 1]
+		XArray = fullData[:, xStart:xEnd]
 		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
 
 		trainIndices = self.GetTrainIndices()

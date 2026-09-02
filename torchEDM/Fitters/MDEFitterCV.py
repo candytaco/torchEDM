@@ -154,7 +154,7 @@ class MDEFitterCV(EDMFitter):
 		nTargets = len(target)
 
 		xStart, xEnd = self.trainDataAdapter.XIndices
-		effectiveColumns = initialVariables if initialVariables is not None else list(range(xStart, xEnd + 1))
+		effectiveColumns = initialVariables if initialVariables is not None else list(range(xStart, xEnd))
 
 		self.foldResults = []
 		fold_accuracy_rows = []
@@ -183,7 +183,7 @@ class MDEFitterCV(EDMFitter):
 
 		foldSelectedVariables = numpy.stack([r.selected_variables for r in self.foldResults], axis = 0)
 		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)
-		foldStepwisePerformances = foldStepwisePerformances[:, :, :, xStart:xEnd + 1]
+		foldStepwisePerformances = foldStepwisePerformances[:, :, :, xStart:xEnd]
 
 		self.Result = MDECVResults(
 			fold_selected_variables = foldSelectedVariables,

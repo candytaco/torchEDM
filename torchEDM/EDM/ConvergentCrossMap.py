@@ -58,8 +58,8 @@ class ConvergentCrossMap:
 		:param embedded: 			Whether data is already embedded
 		:param validLib:			Boolean mask for valid library points
 		:param ignoreNan: 			Remove NaN values from embedding
-		:param trainIndices: 		Train block index range [start, end]. If None, uses all data.
-		:param testIndices: 		Test block index range [start, end]. If None, uses all data.
+		:param trainIndices: 		Train blocks as 0-based, half-open [start, stop) pairs. If None, uses all data.
+		:param testIndices: 		Test blocks as 0-based, half-open [start, stop) pairs. If None, uses all data.
 		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
 		:param x_batch: 			Max number of source variables to process per batch (auto-reduced to fit VRAM)
 		:param y_batch:				Number of Y variables to predict per batch within each source batch
@@ -101,20 +101,20 @@ class ConvergentCrossMap:
 		if trainIndices is not None:
 			self.train = trainIndices
 		else:
-			self.train = [(0, self.X.shape[0] - 1)]
+			self.train = [(0, self.X.shape[0])]
 
 		if trainSizes is not None:
 			self.trainSizes = trainSizes
 		else:
 			numTrainSamples = 0
 			for start, stop in self.train:
-				numTrainSamples += (stop - start + 1)
+				numTrainSamples += (stop - start)
 			self.trainSizes = [int(p * numTrainSamples) for p in [0.1, 0.25, 0.5, 0.75, 0.9]]
 
 		if testIndices is not None:
 			self.test = testIndices
 		else:
-			self.test = [(0, self.X.shape[0] - 1)]
+			self.test = [(0, self.X.shape[0])]
 
 		self.forward_performance_ = None
 		self.selectedForwardEmbedDimensions = None
