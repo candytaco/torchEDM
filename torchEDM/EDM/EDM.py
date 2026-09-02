@@ -88,21 +88,6 @@ class EDM:
 		
 		return self._knn
 
-	def _ValidateWindowPairs(self, windows, name):
-		"""
-		Require windows to be a list of (start, stop) pairs, half-open
-		[start, stop). Flat lists and strings are not accepted.
-		"""
-		if not IsNonStringIterable(windows):
-			raise TypeError(f'{self.name}: {name} must be a list of '
-			                '(start, stop) pairs, half-open [start, stop).')
-		for window in windows:
-			if not IsNonStringIterable(window) or len(window) != 2:
-				raise TypeError(f'{self.name}: {name} must be a list of '
-				                '(start, stop) pairs, half-open [start, stop); '
-				                f'got {window!r}.')
-		return windows
-
 	def _BuildExclusionMask(self):
 		"""
 		Pre-compute boolean exclusion mask for neighbor queries.
@@ -966,11 +951,9 @@ class EDM:
 		if self.name != 'CCM':
 			if not len(self.train):
 				raise RuntimeError(f'Validate() {self.name}: train required.')
-			self.train = self._ValidateWindowPairs(self.train, 'train')
 
 			if not len(self.test):
 				raise RuntimeError(f'Validate() {self.name}: test required.')
-			self.test = self._ValidateWindowPairs(self.test, 'test')
 
 		# Set knn default based on E and train size, E embedded on num columns
 		if self.name in ['Simplex', 'CCM', 'Multiview']:

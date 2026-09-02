@@ -13,18 +13,6 @@ from .Utils import IsNonStringIterable
 # TODO: these should all be cross-validated
 
 
-def _ValidateWindowPairs(pairs):
-	"""Require windows to be None or a list of (start, stop) pairs,
-	half-open [start, stop)."""
-	if pairs is None:
-		return None
-	for pair in pairs:
-		if not IsNonStringIterable(pair) or len(pair) != 2:
-			raise TypeError('Windows must be a list of (start, stop) pairs, '
-							'half-open [start, stop); got {!r}.'.format(pair))
-	return pairs
-
-
 def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 									   Y: Optional[numpy.ndarray] = None,
 									   maxDims: int = 10,
@@ -78,9 +66,6 @@ def FindOptimalEmbeddingDimensionality(X: numpy.ndarray,
 		X = X[:, None]
 	if Y is not None and len(Y.shape) < 2:
 		Y = Y[:, None]
-
-	train = _ValidateWindowPairs(train)
-	test = _ValidateWindowPairs(test)
 
 	# TODO: this needs to be refactored for some things because the sub-calls are growing too long
 	# we should be able to accomodate these options:

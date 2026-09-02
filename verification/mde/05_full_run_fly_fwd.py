@@ -5,7 +5,7 @@ pred=[301,600], crossMapRhoMin=0.2, embedDimRhoMin=0.65, ccmSlope=0.01,
 ccmSeed=7777) — reproduces MDE_Fly_2_Valid.csv.
 
 torchEDM (post-alignment): MaxD=8, matched windows, MinPredictionThreshold=0.2
-(~crossMapRhoMin), MinCandidateCorrelation=0.65 (~embedDimRhoMin), CCM
+(~crossMapRhoMin), MinCandidatePerformance=0.65 (~embedDimRhoMin), CCM
 threshold/seed/samples/percentile grid matched. Run with Convergent='post'
 and Convergent='pre'.
 
@@ -24,7 +24,7 @@ def torch_run(df, ts_cols, convergent):
     from torchEDM.Fitters.MDEFitter import MDEFitter
     XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
     fitter = MDEFitter(MaxD=8, Convergent=convergent, PredictionHorizon=1,
-                       MinPredictionThreshold=0.2, MinCandidateCorrelation=0.65,
+                       MinPredictionThreshold=0.2, MinCandidatePerformance=0.65,
                        IterativeDimensionSearch=True,
                        CCMLibraryPercentiles=np.array([10, 15, 85, 90]),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,

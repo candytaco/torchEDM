@@ -231,7 +231,7 @@ Re-running the scripts against the reference:
   simplex core [01] and CCM-off greedy path [02] results are unchanged.
 - Candidate E search [03]: torchEDM matches the reference's per-candidate E
   80/80, peaks equal at 4 decimals; the solo-predictability gate
-  (`MinCandidateCorrelation=0.65`) agrees 80/80 at the reference threshold.
+  (`MinCandidatePerformance=0.65`) agrees 80/80 at the reference threshold.
 - Full convergence gate [03]: decision agreement 52.5% → 97.5% (21 vs 21
   passes); slope Pearson r 0.18 → 0.79. The residual is two candidates
   (TS1, TS24) whose marginal slopes flip across the 0.01 threshold under

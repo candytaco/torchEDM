@@ -49,7 +49,7 @@ def main():
     y = data['V5'].values
     fitter = MDEFitter(MaxD=4, Convergent='post', PredictionHorizon=1,
                        Step=-5, ExclusionRadius=10,
-                       MinPredictionThreshold=0.3, MinCandidateCorrelation=0.4,
+                       MinPredictionThreshold=0.3, MinCandidatePerformance=0.4,
                        IterativeDimensionSearch=True,
                        CCMLibraryPercentiles=np.array([10, 15, 85, 90]),
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,

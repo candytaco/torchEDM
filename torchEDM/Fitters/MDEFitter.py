@@ -35,7 +35,7 @@ class MDEFitter(EDMFitter):
 				 CCMSeed = None,
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
-				 MinCandidateCorrelation: float = 0.5,
+				 MinCandidatePerformance: float = 0.5,
 				 IterativeDimensionSearch: bool = False,
 				 TimeDelay: int = 0,
 				 progressBar: bool = True):
@@ -84,7 +84,7 @@ class MDEFitter(EDMFitter):
 		self.CCMSeed = CCMSeed
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
-		self.MinCandidateCorrelation = MinCandidateCorrelation
+		self.MinCandidatePerformance = MinCandidatePerformance
 		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
@@ -134,7 +134,7 @@ class MDEFitter(EDMFitter):
 			CCMSeed = self.CCMSeed,
 			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
 			MinPredictionThreshold = self.MinPredictionThreshold,
-			MinCandidateCorrelation = self.MinCandidateCorrelation,
+			MinCandidatePerformance = self.MinCandidatePerformance,
 			IterativeDimensionSearch = self.IterativeDimensionSearch,
 			TimeDelay = self.TimeDelay
 		)
