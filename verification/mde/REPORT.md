@@ -166,6 +166,53 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
 | lazy per-dimension gate | `Convergent` 'pre'/'post' | fitter default 'pre'; 'pre' and 'post' use different CCM prediction sets (see 4) |
 | — | `stdThreshold` 1e-2 | torch-only filter (see 13); MDE-class default is 1e-3 |
 
+## Decisions
+
+Each divergence above was reviewed and resolved as follows.
+
+**Align with the reference:**
+- (1) Embedding dimension: per-candidate E, tuned on candidate→target
+  prediction and consumed for the target→candidate reconstruction — copied
+  verbatim (the tune/consume pairing is deliberate reference design,
+  obfuscated by its CCM API taking a single E). Implemented as one upfront
+  batched sweep (`FindOptimalEmbeddingDimensionality(candidates, target,
+  joint=False)`), argmax per candidate (scores rounded to 4 decimals, first
+  max on ties, as the reference does).
+- (2) Solo-predictability pre-screen: adopted, as an upfront pass over all
+  candidates (cheap under batching) — new threshold parameter mirroring the
+  reference's `embedDimRhoMin`, fed by the same sweep's per-candidate peak.
+- (6) Sample-mode exclusion: fixed — self-match always masked; radius > 0
+  additionally masks |t_i−t_j| ≤ radius.
+- (7) Growth-test verdicts cached per candidate per run.
+- (8) Expansion terminates (per target) on a barren round.
+
+**Deliberately diverge (train/test separation):**
+- (3) Growth-test sample sizes remain percentages of the training window,
+  not of the full recording.
+- (4) The screen samples from and measures on the training window only;
+  `'pre'` mode is fixed to match `'post'` (it measured on the test window).
+  The reference's screen — which draws on and scores against all rows,
+  including held-out data — is rejected.
+- (5) The growth slope is regressed on sample size ÷ training-window length
+  (grid-invariant units), not the reference's ÷ recording length.
+- (12) NaN handling stays: upfront any-column row filtering; NaN score
+  disqualifies a candidate.
+- (13) The low-variance candidate filter stays (no reference counterpart);
+  default unified to 1e-3 across the wrapper and the class.
+
+**torchEDM-internal (not reference alignment):**
+- (10, 11) 0-based indexing enforced end-to-end (the engine's 1-offset
+  convention, inherited from pyEDM's mixed 0/1 indexing, is removed rather
+  than compensated for). Every row passed is usable except rows whose
+  target index (t+Tp) or history stack would be out of bounds — those are
+  trimmed, never crash. Consequences accepted: `TrainStart=0` means row 0;
+  `TestStart=0` means the first prediction input is XTest row 0 (the first
+  Tp test targets are unpredicted unless overlap is passed explicitly); the
+  training-window end uses the bounds-only clamp, keeping one row the
+  reference's unconditional Tp-subtraction drops mid-data.
+- (9) carries no decision — it is the measured compound effect, re-measured
+  after implementation (see the re-verification section if present).
+
 ## Comparison-methodology notes
 
 - Reference quirk avoided in [06]: `removeTime=True` drops the Time column in
