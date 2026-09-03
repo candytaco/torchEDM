@@ -771,10 +771,15 @@ class EDM:
 			# training span: the final window gives up its last
 			# predictionHorizon rows (a row at the window edge would otherwise
 			# train on a value from the test window), and with a negative
-			# horizon each window start moves up by |horizon| - 1 rows.
+			# horizon each window start moves up. For unembedded input the
+			# start moves by |horizon| - 1 rows, reproducing the reference
+			# index math exactly; pre-embedded input has no stacked-history
+			# shift, so the full |horizon| bound applies to the window start.
 			if self.predictionHorizon < 0:
 				if not self.isEmbedded:
 					start = start + (-self.predictionHorizon) - 1
+				else:
+					start = start + (-self.predictionHorizon)
 			elif r == len(libPairs) - 1:
 				stop = stop - self.predictionHorizon
 
