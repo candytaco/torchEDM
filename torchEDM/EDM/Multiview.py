@@ -10,7 +10,7 @@ from numpy import argsort, array, column_stack, mean
 # local modules
 from .utils import MakeDelays
 from .. import Functions
-from ..Scoring import Correlation, MaxError, SumAbsoluteError, RootMeanSquareError
+from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 from ..Utils import IsNonStringIterable
 from .Results import MultiviewResult
 
@@ -238,7 +238,7 @@ class Multiview:
             proj = self.topRankProjections[combo]
             # proj columns: 0=Time, 1=Observations, 2=Predictions, 3=Variance
             metrics = [Correlation(proj[:, 1], proj[:, 2]),
-                       MaxError(proj[:, 1], proj[:, 2]),
+                       MaxAbsoluteError(proj[:, 1], proj[:, 2]),
                        SumAbsoluteError(proj[:, 1], proj[:, 2]),
                        RootMeanSquareError(proj[:, 1], proj[:, 2])]
             topRankStats[combo] = metrics

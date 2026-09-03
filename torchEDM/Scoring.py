@@ -46,14 +46,6 @@ def MaxAbsoluteError(actual, predicted):
 
 
 @_CheckLength
-def MaxError(actual, predicted):
-	# The reference package reports the maximum of the signed error
-	# under its MAE label; this reproduces that statistic.
-	error = actual - predicted
-	return numpy.max(error)
-
-
-@_CheckLength
 def SumAbsoluteError(actual, predicted):
 	error = actual - predicted
 	return numpy.absolute(error).sum()

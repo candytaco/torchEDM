@@ -534,7 +534,8 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 								 noTime: bool = False,
 								 ignoreNan: bool = True,
 								 batched: bool = False,
-								 scoring_function = Correlation) -> numpy.ndarray:
+								 scoring_function = Correlation,
+								 isScoringFinitePairsOnly: bool = False) -> numpy.ndarray:
 	"""
 	Estimate optimal prediction interval [1:maxTp] using GPU-accelerated Simplex.
 
@@ -558,6 +559,8 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 	:param ignoreNan: 		Whether to ignore NaN values
 	:param batched: 		Use shared maxTp library for all Tp (faster, slightly less accurate for low Tp)
 	:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
+	:param isScoringFinitePairsOnly: If True, rows where either the observed or the predicted
+		value is not finite are dropped before scoring; False (default) scores every row
 	:return: Array with columns [predictionHorizon, correlation]
 	"""
 
@@ -567,12 +570,14 @@ def FindOptimalPredictionHorizon(data: numpy.ndarray,
 		correlations = _FindOptimalPredictionHorizonBatched(
 			data, columns, target, TpVals, train, test,
 			embedDimensions, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan, scoring_function)
+			validLib, noTime, ignoreNan, scoring_function,
+			isScoringFinitePairsOnly)
 	else:
 		correlations = _FindOptimalPredictionHorizonIterative(
 			data, columns, target, TpVals, train, test,
 			embedDimensions, step, exclusionRadius, embedded,
-			validLib, noTime, ignoreNan, scoring_function)
+			validLib, noTime, ignoreNan, scoring_function,
+			isScoringFinitePairsOnly)
 
 	return numpy.column_stack([TpVals, correlations])
 
@@ -581,7 +586,8 @@ def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 										   train, test, embedDimensions,
 										   step, exclusionRadius, embedded,
 										   validLib, noTime, ignoreNan,
-										   scoring_function):
+										   scoring_function,
+										   isScoringFinitePairsOnly = False):
 	"""
 	Evaluate each Tp with its own proper train library.
 	"""
@@ -596,9 +602,13 @@ def _FindOptimalPredictionHorizonIterative(data, columns, target, TpVals,
 					noTime=noTime, ignoreNan=ignoreNan)
 
 		result = S.Run()
-		correlation = _ScoreFinitePairs(scoring_function,
-										result.projection[:, 1],
-										result.projection[:, 2])
+		if isScoringFinitePairsOnly:
+			correlation = _ScoreFinitePairs(scoring_function,
+											result.projection[:, 1],
+											result.projection[:, 2])
+		else:
+			correlation = scoring_function(result.projection[:, 1],
+										   result.projection[:, 2])
 		correlations.append(correlation)
 
 	return correlations
@@ -608,7 +618,8 @@ def _FindOptimalPredictionHorizonBatched(data, columns, target, TpVals,
 										 train, test, embedDimensions,
 										 step, exclusionRadius, embedded,
 										 validLib, noTime, ignoreNan,
-										 scoring_function):
+										 scoring_function,
+										 isScoringFinitePairsOnly = False):
 	"""
 	Evaluate all Tp values using shared maxTp library. Distances and neighbors
 	are computed once (using the most restrictive library from maxTp), then
@@ -661,8 +672,11 @@ def _FindOptimalPredictionHorizonBatched(data, columns, target, TpVals,
 		validObsIndices = observationIndices[observationIndices < len(S.targetVec)]
 		observations = S.targetVec[validObsIndices, 0]
 		nValid = len(validObsIndices)
-		correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
-										predictionsNumpy[i, :nValid])
+		if isScoringFinitePairsOnly:
+			correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
+											predictionsNumpy[i, :nValid])
+		else:
+			correlation = scoring_function(observations[:nValid], predictionsNumpy[i, :nValid])
 		correlations.append(correlation)
 
 	del distances, neighbors, targetVector, weights, weightRowSum
@@ -692,7 +706,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 						 numProcess: int = 4,
 						 mpMethod: Any = None,
 						 chunksize: int = 1,
-						 scoring_function = Correlation) -> numpy.ndarray:
+						 scoring_function = Correlation,
+						 isScoringFinitePairsOnly: bool = False) -> numpy.ndarray:
 	"""
 	Estimate the best neighborhood size for SMap, i.e. the
 	exponential decay factor for weighing neighbors by distance.
@@ -717,6 +732,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 	:param mpMethod: 			Unused, kept for API compatibility
 	:param chunksize: 			Unused, kept for API compatibility
 	:param scoring_function: 	Scoring function taking (actual, predicted) and returning a scalar
+	:param isScoringFinitePairsOnly: If True, rows where either the observed or the predicted
+		value is not finite are dropped before scoring; False (default) scores every row
 	:return: Array with columns [theta, correlation]
 	"""
 
@@ -729,7 +746,8 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 	correlations = _FindSMapNeighborhoodBatched(
 		data, columns, target, theta, train, test,
 		embedDimensions, predictionHorizon, knn, step,
-		exclusionRadius, embedded, validLib, noTime, ignoreNan, scoring_function)
+		exclusionRadius, embedded, validLib, noTime, ignoreNan, scoring_function,
+		isScoringFinitePairsOnly)
 
 	return numpy.column_stack([theta, correlations])
 
@@ -737,7 +755,7 @@ def FindSMapNeighborhood(data: numpy.ndarray,
 def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test,
 								 embedDimensions, predictionHorizon, knn, step,
 								 exclusionRadius, embedded, validLib, noTime, ignoreNan,
-								 scoring_function):
+								 scoring_function, isScoringFinitePairsOnly = False):
 	"""
 	Evaluate all theta values using shared neighbor computation.
 	Neighbors are found once, then projections for all theta values
@@ -823,8 +841,11 @@ def _FindSMapNeighborhoodBatched(data, columns, target, thetaValues, train, test
 		predictions = coefficients[:, 0] + torch.sum(coefficients[:, 1:] * testEmbeddings, dim = 1)
 		predictionsNumpy = predictions.cpu().numpy()
 
-		correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
-										predictionsNumpy[:nValid])
+		if isScoringFinitePairsOnly:
+			correlation = _ScoreFinitePairs(scoring_function, observations[:nValid],
+											predictionsNumpy[:nValid])
+		else:
+			correlation = scoring_function(observations[:nValid], predictionsNumpy[:nValid])
 		correlations.append(correlation)
 
 	# Clean up

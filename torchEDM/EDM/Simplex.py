@@ -172,24 +172,23 @@ class Simplex(EDM):
 			# [nTrain x nTest] matrix) with deterministic tie handling: equal
 			# distances are ordered by temporal proximity |testRow - trainRow|,
 			# then by trainRow ascending, matching the reference selection.
-			distancesNumpy = distanceMatrix.cpu().numpy()
-			trainRows = numpy.asarray(self.trainIndices)
-			testRows = numpy.asarray(self.testIndices)
-			temporalOffsets = numpy.abs(testRows[None, :] - trainRows[:, None])
+			trainRows = torch.tensor(numpy.asarray(self.trainIndices), device=self.device, dtype=torch.long)
+			testRows = torch.tensor(numpy.asarray(self.testIndices), device=self.device, dtype=torch.long)
+			temporalOffsets = (testRows[None, :] - trainRows[:, None]).abs()
 
 			# Stable double argsort: rows start in trainRow-ascending order, the
 			# first stable sort settles the temporal tie key, the second settles
 			# distance while preserving both tie keys.
-			offsetOrder = numpy.argsort(temporalOffsets, axis = 0, kind = 'stable')
-			distancesByOffset = numpy.take_along_axis(distancesNumpy, offsetOrder, axis = 0)
-			distanceOrder = numpy.argsort(distancesByOffset, axis = 0, kind = 'stable')
-			selection = numpy.take_along_axis(offsetOrder, distanceOrder, axis = 0)[:self.knn, :]
+			offsetOrder = torch.argsort(temporalOffsets, dim=0, stable=True)
+			distancesByOffset = torch.gather(distanceMatrix, 0, offsetOrder)
+			distanceOrder = torch.argsort(distancesByOffset, dim=0, stable=True)
+			selection = torch.gather(offsetOrder, 0, distanceOrder)[:self.knn, :]
 
 			# Transpose to [nTest x knn] to match expected shape
-			self.knn_distances = numpy.take_along_axis(distancesNumpy, selection, axis = 0).T
+			self.knn_distances = torch.gather(distanceMatrix, 0, selection).t().cpu().numpy()
 			# We no longer map the neighbor indices back to original data indices
 			# because for predictions, we also just mask the Y data to the same indices
-			self.knn_neighbors = selection.T
+			self.knn_neighbors = selection.t().cpu().numpy()
 		else:
 			# topk on dim=0 finds k smallest distances per test point (columns);
 			# the ordering of exactly tied distances is unspecified

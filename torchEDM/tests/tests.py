@@ -756,18 +756,17 @@ class test_EDM( unittest.TestCase ):
         test = predictions[:, 2]
         self.assertTrue(numpy.allclose(predValid, test, atol = 1e-4, equal_nan = True))
 
-        # Validate combinations (View is list of [combo_str, correlation, MAE, CAE, RMSE])
+        # Validate combinations (View is list of [combo_str, correlation, maxAbsErr, CAE, RMSE]).
+        # The validation file's MAE column records a statistic the package does
+        # not provide, so only correlation and RMSE are compared.
         dfvc = self.ValidationFiles['Multiview_combos_valid.csv']
         validCorr = dfvc['correlation'].values
-        validMAE = dfvc['MAE'].values
         validRMSE = dfvc['RMSE'].values
 
         testCorr = numpy.array([row[1] for row in viewList])
-        testMAE = numpy.array([row[2] for row in viewList])
         testRMSE = numpy.array([row[4] for row in viewList])
 
         self.assertTrue(numpy.allclose(validCorr, testCorr, atol = 1e-4, equal_nan = True))
-        self.assertTrue(numpy.allclose(validMAE, testMAE, atol = 1e-4, equal_nan = True))
         self.assertTrue(numpy.allclose(validRMSE, testRMSE, atol = 1e-4, equal_nan = True))
 
         # OOP API: verify shape and non-trivial predictions
@@ -931,7 +930,7 @@ class test_EDM( unittest.TestCase ):
                                                                        maxTp = 15, train = [(0, 150)], test = [(150, 198)],
                                                                        embedDimensions = 3, step = -1,
                                                                        embedded = False, validLib = [], noTime = False,
-                                                                       ignoreNan = True)
+                                                                       ignoreNan = True, isScoringFinitePairsOnly = True)
 
         dfv = self.ValidationFiles["PredictInterval_valid.csv"].values
 
@@ -957,7 +956,7 @@ class test_EDM( unittest.TestCase ):
                                                                predictionHorizon = 1, knn = 0, step = -1,
                                                                solver = None, embedded = False, validLib = [], noTime = False,
                                                                ignoreNan = True, numProcess = 10, mpMethod = None,
-                                                               chunksize = 1)
+                                                               chunksize = 1, isScoringFinitePairsOnly = True)
 
         dfv = self.ValidationFiles["PredictNonlinear_valid.csv"].values
 
