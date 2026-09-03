@@ -94,11 +94,10 @@ class ConvergentCrossMap:
 		self.sample = repeats
 		self.seed = seed
 
-		if isinstance(device, str):
+		device = torch.device(device) if isinstance(device, str) else device
+		if device.type == 'cuda' and not torch.cuda.is_available():
 			# The default asks for cuda; fall back to cpu on machines without it.
-			if device == 'cuda' and not torch.cuda.is_available():
-				device = 'cpu'
-			device = torch.device(device)
+			device = torch.device('cpu')
 		self.device = device
 		self.dtype = dtype
 		self.showProgress = showProgress

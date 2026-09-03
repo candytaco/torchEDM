@@ -381,6 +381,17 @@ class Multiview:
         # Column v of comboCols occupies stacked columns
         # [v * embedDimensions, (v + 1) * embedDimensions).
         n_embed_cols = stackedHistory.shape[1]
+        if n_embed_cols == 0 :
+            raise RuntimeError( f'Setup() {self.name}: excludeTarget leaves' +\
+                                ' no candidate columns.' )
+        # The earlier D check ran against all input columns; excludeTarget can
+        # shrink the candidate pool below that, leaving no D-sized combinations.
+        if self.D > n_embed_cols :
+            msg = f'Setup() {self.name}: D = {self.D} exceeds the'    +\
+                f' {n_embed_cols} candidate columns after excludeTarget.' +\
+                f' D set to {n_embed_cols}'
+            warn( msg )
+            self.D = n_embed_cols
         embed_col_indices = list(range(n_embed_cols))
         self.combos = list( combinations( embed_col_indices, self.D ) )
 

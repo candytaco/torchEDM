@@ -80,6 +80,11 @@ def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Opt
 	def wrapper(target, predictions, out = None):
 		target = torch.as_tensor(target)
 		predictions = torch.as_tensor(predictions)
+		# Integer input would reach torch.mean, which rejects integer dtypes
+		if not target.is_floating_point():
+			target = target.to(torch.get_default_dtype())
+		if not predictions.is_floating_point():
+			predictions = predictions.to(torch.get_default_dtype())
 		isSingleSeries = predictions.ndim == 1
 		if target.ndim < 2:
 			target = target[:, None]
