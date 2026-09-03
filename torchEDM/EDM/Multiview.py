@@ -366,24 +366,32 @@ class Multiview:
         else :
             comboCols = self.columns
 
-        # Embed Data - returns numpy array
-        self.Embedding = MakeDelays(self.Data, num_delays = self.embedDimensions, stepSize = self.step)
+        # Stack delayed copies of only the candidate columns; the time column
+        # and unselected columns must not enter the candidate pool. The raw
+        # target series is appended as the final column so predictions always
+        # score against the actual target, and that appended column is never
+        # itself a candidate.
+        stackedHistory = MakeDelays(self.Data[:, comboCols],
+                                    num_delays = self.embedDimensions,
+                                    stepSize = self.step)
+        self.Embedding = column_stack([stackedHistory, self.Data[:, self.target[0]]])
+        self.target = [stackedHistory.shape[1]]
 
-        # Map target from original column index to embedded column index
-        # Target in embedded space is the first lag (t-0) of the target variable
-        # Find which position the target column is in comboCols
-        if self.target[0] in comboCols:
-            target_pos = comboCols.index(self.target[0])
-            # In embedding, this variable's t-0 lag is at index: target_pos * E
-            self.target = [target_pos * self.embedDimensions]
-        else:
-            # Target was excluded, use first embedded column
-            self.target = [0]
-
-        # Combinations of possible embedding vectors (column indices), D at-a-time
-        # For E=1, columns are 0, 1, 2, ... (one per original column)
-        # For E>1, columns are interleaved (col1_t0, col1_t-1, ..., col2_t0, col2_t-1, ...)
-        n_embed_cols = self.Embedding.shape[1]
+        # Combinations of possible stacked columns, D at-a-time.
+        # Column v of comboCols occupies stacked columns
+        # [v * embedDimensions, (v + 1) * embedDimensions).
+        n_embed_cols = stackedHistory.shape[1]
+        if n_embed_cols == 0 :
+            raise RuntimeError( f'Setup() {self.name}: excludeTarget leaves' +\
+                                ' no candidate columns.' )
+        # The earlier D check ran against all input columns; excludeTarget can
+        # shrink the candidate pool below that, leaving no D-sized combinations.
+        if self.D > n_embed_cols :
+            msg = f'Setup() {self.name}: D = {self.D} exceeds the'    +\
+                f' {n_embed_cols} candidate columns after excludeTarget.' +\
+                f' D set to {n_embed_cols}'
+            warn( msg )
+            self.D = n_embed_cols
         embed_col_indices = list(range(n_embed_cols))
         self.combos = list( combinations( embed_col_indices, self.D ) )
 

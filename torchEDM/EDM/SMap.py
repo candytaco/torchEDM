@@ -344,8 +344,9 @@ class SMap(EDM):
         target = self.target[0]
         train    = self.train
 
-        # Override test for single prediction at end of train
-        test = [ train[-1] - 1, train[-1] ]
+        # Override test for single prediction at end of the final training window
+        lastTrainStop = train[-1][1]
+        test = [(lastTrainStop - 1, lastTrainStop)]
         if self.verbose:
             print(f'{self.name}: Generate(): test overriden to {test}')
 
@@ -391,8 +392,10 @@ class SMap(EDM):
 
             # Local SMapClass for generation
             G = SMap(data = newData,
-                     columns = [column],
-                     target = target,
+                     # newData is always [time, column], so the generated
+                     # series sits at column 1 whatever its original index
+                     columns = [1],
+                     target = [1],
                      train = train,
                      test = test,
                      embedDimensions = self.embedDimensions,
@@ -440,7 +443,7 @@ class SMap(EDM):
             # Dynamic library not implemented
 
             # 4) Increment prediction indices --------------------------
-            test = [ p + 1 for p in test ]
+            test = [(start + 1, stop + 1) for (start, stop) in test]
 
             if self.verbose:
                 print(f'4) test {test}')

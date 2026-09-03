@@ -682,7 +682,10 @@ class EDM:
 		"""
 
 		if not self.isEmbedded:
-			self.Embedding = MakeDelays(data = self.Data, num_delays = self.embedDimensions,
+			# Only the selected columns form the state space; the time column,
+			# the target, and unselected data columns must not enter it.
+			self.Embedding = MakeDelays(data = self.Data[:, self.columns],
+										num_delays = self.embedDimensions,
 										stepSize = self.embedStep)
 		else:
 			self.Embedding = self.Data[:, self.columns]  # Already an embedding
@@ -729,9 +732,11 @@ class EDM:
 		"""
 		Populate array index vectors trainIndices, testIndices.
 		Windows are List[Tuple[int, int]] of 0-based, half-open [start, stop)
-		row spans. Every row in a span is used except rows whose target index
-		(row + predictionHorizon) or stacked history would be out of bounds;
-		exactly those rows are trimmed.
+		row spans. A training row must find both its stacked history and its
+		horizon-shifted target inside its own window: each window start moves
+		past the rows whose history reaches back across the window edge, and
+		the final window gives up its last predictionHorizon rows so no
+		training target is read from beyond the requested training span.
 		"""
 
 		libPairs = self.train  # List[Tuple[int, int]] of half-open (start, stop) pairs
@@ -762,15 +767,25 @@ class EDM:
 				else:
 					stop = stop - embedShift
 
-			# Trim exactly the rows whose target index row + predictionHorizon
-			# is out of bounds. With a negative horizon the earliest rows have
-			# target positions before row 0, and numpy would silently wrap
-			# them to the END of the array: e.g. horizon -2 with rows [0..4]
-			# gives target positions [-2,-1,0,1,2], and targetVec[-1] is the
-			# LAST row — row 1 would be labeled with the final recorded value.
-			# The bound depends only on the target lookup, so it applies
-			# whether or not the data was passed pre-embedded (the old
-			# isEmbedded-guarded version left pre-embedded data wrapping).
+			# A training row's horizon-shifted target must stay inside the
+			# training span: the final window gives up its last
+			# predictionHorizon rows (a row at the window edge would otherwise
+			# train on a value from the test window), and with a negative
+			# horizon each window start moves up. For unembedded input the
+			# start moves by |horizon| - 1 rows, reproducing the reference
+			# index math exactly; pre-embedded input has no stacked-history
+			# shift, so the full |horizon| bound applies to the window start.
+			if self.predictionHorizon < 0:
+				if not self.isEmbedded:
+					start = start + (-self.predictionHorizon) - 1
+				else:
+					start = start + (-self.predictionHorizon)
+			elif r == len(libPairs) - 1:
+				stop = stop - self.predictionHorizon
+
+			# Absolute bounds guard: a target index outside the data would
+			# make numpy silently wrap a negative position to the END of the
+			# array, labeling an early row with the final recorded value.
 			if self.predictionHorizon < 0:
 				start = max(start, -self.predictionHorizon)
 			else:

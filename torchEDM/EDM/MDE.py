@@ -107,6 +107,31 @@ class MDE:
 		self.columns = columns
 		self.train = train
 		self.test = test
+		# The reference implementation trains on every row whose horizon-shifted
+		# target is inside the data, while EDM.CreateIndices keeps training
+		# targets inside the training span: a positive horizon costs the final
+		# window its last predictionHorizon rows, and a negative horizon moves
+		# each window start up — by |horizon| for pre-embedded input and by
+		# |horizon| - 1 for unembedded input. Padding the windows by the same
+		# amounts restores the reference row set: CreateIndices takes the shift
+		# back out and its absolute bounds guards clip at the data edges.
+		# _boundsOnlyTrain is what MDE passes to its pre-embedded Simplex and
+		# SMap calls; _boundsOnlyTrainUnembedded goes to the unembedded
+		# dimension sweep in FindOptimalEmbeddingDimensionality.
+		if train is not None and predictionHorizon > 0:
+			paddedTrain = list(train)
+			lastStart, lastStop = paddedTrain[-1]
+			paddedTrain[-1] = (lastStart, lastStop + predictionHorizon)
+			self._boundsOnlyTrain = paddedTrain
+			self._boundsOnlyTrainUnembedded = paddedTrain
+		elif train is not None and predictionHorizon < 0:
+			self._boundsOnlyTrain = [(max(windowStart + predictionHorizon, 0), windowStop)
+									 for (windowStart, windowStop) in train]
+			self._boundsOnlyTrainUnembedded = [(max(windowStart + predictionHorizon + 1, 0), windowStop)
+											   for (windowStart, windowStop) in train]
+		else:
+			self._boundsOnlyTrain = train
+			self._boundsOnlyTrainUnembedded = train
 		self.embedDimensions = embedDimensions
 		self.predictionHorizon = predictionHorizon
 		self.knn = knn
@@ -220,7 +245,7 @@ class MDE:
 			data = self.data,
 			columns = numpy.arange(self.data.shape[1]).tolist(),
 			target = self.targets[0],
-			train = self.train,
+			train = self._boundsOnlyTrain,
 			test = self.test,
 			embedDimensions = self.embedDimensions,
 			predictionHorizon = self.predictionHorizon,
@@ -461,7 +486,7 @@ class MDE:
 				data = self.data,
 				columns = variables,
 				target = target,
-				train = self.train,
+				train = self._boundsOnlyTrain,
 				test = self.test,
 				embedDimensions = self.embedDimensions,
 				predictionHorizon = self.predictionHorizon,
@@ -483,7 +508,7 @@ class MDE:
 				data = self.data,
 				columns = variables,
 				target = target,
-				train = self.train,
+				train = self._boundsOnlyTrain,
 				test = self.test,
 				embedDimensions = self.embedDimensions,
 				predictionHorizon = self.predictionHorizon,
@@ -589,7 +614,7 @@ class MDE:
 		scores = FindOptimalEmbeddingDimensionality(
 			self.data[:, sweepColumns], self.data[:, self.targets],
 			maxDims = self.CCMMaxEmbedDimensions,
-			train = self.train, test = self.test,
+			train = self._boundsOnlyTrainUnembedded, test = self.test,
 			predictionHorizon = self.predictionHorizon,
 			step = self.step, exclusionRadius = self.exclusionRadius,
 			embedded = False, validLib = self.validLib,

@@ -94,7 +94,11 @@ class ConvergentCrossMap:
 		self.sample = repeats
 		self.seed = seed
 
-		self.device = torch.device(device) if isinstance(device, str) else device
+		device = torch.device(device) if isinstance(device, str) else device
+		if device.type == 'cuda' and not torch.cuda.is_available():
+			# The default asks for cuda; fall back to cpu on machines without it.
+			device = torch.device('cpu')
+		self.device = device
 		self.dtype = dtype
 		self.showProgress = showProgress
 
@@ -201,6 +205,9 @@ class ConvergentCrossMap:
 		numTargets = y_train.shape[1]
 		maxEmbeddingDims = int(numpy.max(embedDims))
 		embedDimsArray = numpy.asarray(embedDims)
+		if embedDimsArray.ndim == 0:
+			# A scalar applies to every source column
+			embedDimsArray = numpy.full(numSources, int(embedDimsArray))
 
 		# If targetVRAM is given, the budget fully controls batch sizes: source batch is set to fill
 		# the budget; if sources are exhausted before the budget, remaining VRAM goes to targets.
