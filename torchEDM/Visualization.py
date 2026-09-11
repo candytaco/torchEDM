@@ -104,12 +104,12 @@ def _plot_sweep(result: np.ndarray, xlabel: str, title: str, block: bool):
 
 def plot_embed_dimension(result: np.ndarray, title: str = "", block: bool = True):
 	"""
-	:param result:	[maxDims] scores from FindOptimalEmbeddingDimensionality, or [maxDims, 1 + nTargets] with depth in column 0
+	:param result:	[maxDims] scores from FindOptimalEmbeddingDimensionality, or [maxDims, 1 + nTargets] with the embedding dimensions in column 0
 	"""
 	result = np.asarray(result)
 	if result.ndim == 1:
 		result = np.column_stack([np.arange(1, len(result) + 1), result])
-	_plot_sweep(result, 'History depth (embedDimensions)', title or "History depth", block)
+	_plot_sweep(result, 'Embedding dimensions', title or "Embedding dimensions", block)
 
 
 def plot_predict_interval(result: np.ndarray, title: str = "", block: bool = True):

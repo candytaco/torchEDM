@@ -1,5 +1,5 @@
 """
-Stacking shifted copies of columns, and reading a per-pair history depth out of the shapes
+Stacking shifted copies of columns, and reading a per-pair embedding dimension out of the shapes
 ConvergentCrossMap accepts.
 """
 import numpy

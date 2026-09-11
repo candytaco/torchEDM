@@ -30,8 +30,8 @@ class CCMFitter(EDMFitter):
 		"""
 		:param TrainSizes:	training-subset sizes; None uses 10, 25, 50, 75 and 90 percent of the training rows
 		:param numRepeats:	random subsets per size
-		:param EmbedDimensions:	history depth per source; None searches up to MaxEmbedDimensions
-		:param KNN:			neighbors; None means depth + 1
+		:param EmbedDimensions:	embedding dimensions per source; None searches up to MaxEmbedDimensions
+		:param KNN:			neighbors; None means embedding dimensions + 1
 		Other parameters as in ConvergentCrossMap.
 		"""
 		super().__init__(progressBar)
@@ -65,7 +65,7 @@ class CCMFitter(EDMFitter):
 			embedDimensions = self.EmbedDimensions,
 			maxEmbedDimensions = self.MaxEmbedDimensions,
 			predictionHorizon = self.PredictionHorizon,
-			# 0 means the default (depth + 1), which ConvergentCrossMap spells None
+			# 0 means the default (embedding dimensions + 1), which ConvergentCrossMap spells None
 			knn = self.KNN if self.KNN else None,
 			step = self.Step,
 			exclusionRadius = self.ExclusionRadius,

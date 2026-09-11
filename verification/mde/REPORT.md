@@ -3,7 +3,7 @@
 Compared: torchEDM MDE through the sklearn-like `MDEFitter` API vs
 [pao-unit/MDE](https://github.com/pao-unit/MDE) (`dimx`, pyEDM 2.5.7; torch
 2.13 CPU, float64). Data: the reference package's own test data
-(`Fly80XY_norm_1061.csv`, target FWD, lib=[1,300]/pred=[301,600]; pyEDM
+(`Fly80XY_norm_1061.csv`, target FWD, training window [1,300], test window [301,600]; pyEDM
 `Lorenz5D`). The reference reproduces its shipped validation CSVs here.
 Parameters matched wherever both APIs expose them; each finding names the
 script in this directory that replicates it. Accepted differences
@@ -16,91 +16,91 @@ torchEDM takes `X_train/Y_train/X_test/Y_test` arrays. A training state is
 any row whose history is complete and whose horizon-shifted target lies inside
 the array; `Y_pred` has `Y_test`'s shape with NaN where no complete state
 predicts the row, and a NaN entry of `Y_test` is predicted but never scored.
-Reference `lib=[a,b], pred=[c,d]` (1-offset inclusive) is reproduced by
+A reference training window `[a,b]` and test window `[c,d]` (1-offset inclusive) are reproduced by
 `X_train = rows a-1..b-1` and `X_test = rows c-1-h..d`, where `h` is the
-deepest history span, with the `Y_test` entries before row `c` set to NaN.
+longest history span, with the `Y_test` entries before row `c` set to NaN.
 Verified: both sides use training states 0..298 and scored test states
 300..599 on the Fly windows. [01]
 
 ## Components verified equivalent
 
-- **Simplex cross-map core** (candidate scoring). 80-candidate dimension-1
-  sweep: max |Δrho| = 3.9e-3, nonzero only for 4 candidates that each have one
+- **Neighbor-averaging cross-map core** (candidate scoring). 80-candidate dimension-1
+  sweep: max |Δcorrelation| = 3.9e-3, nonzero only for 4 candidates that each have one
   test row with an exact distance tie at the knn boundary. Recomputing with
-  pyEDM's tie order (distance, |predRow−libRow|, libRow) reproduces pyEDM
+  pyEDM's tie order (distance, |testRow−trainRow|, trainRow) reproduces pyEDM
   exactly; plain argsort order reproduces torchEDM exactly. Same distance
-  metric (Euclidean), weights exp(−d/d_min), knn = |columns|+1, Tp target
+  metric (Euclidean), weights exp(−d/d_min), knn = |columns|+1, prediction-horizon target
   alignment. Residual = accepted tie handling. [01]
-- **Greedy selection, CCM disabled** (`noCCM=True` vs `Convergent=False`):
-  identical 8-variable sequence (TS33→TS76) and rho to 6 decimals;
+- **Greedy selection, convergence check disabled** (`noCCM=True` vs `Convergent=False`):
+  identical 8-variable sequence (TS33→TS76) and correlations to 6 decimals;
   per-dimension candidate spectra for dims 2–8 agree to 5e-7 (reference stores
   float32). [02]
-- **CCM engine under a matched design**: imposing the reference design on
-  torchEDM's `ConvergentCrossMap` (full-data pool, per-candidate E, libSizes
-  [106,159,901,954], slope on L/N) gives slope Pearson r = 0.998 over 80
+- **ConvergentCrossMap under a matched design**: imposing the reference design on
+  torchEDM's `ConvergentCrossMap` (full-data pool, per-candidate embedding dimensions, subset sizes
+  [106,159,901,954], slope on subset size / N) gives slope Pearson r = 0.998 over 80
   candidates, rms difference 0.0051 vs pyEDM's own seed-to-seed slope sd
   0.0036 (max |d| = 0.0137 ≈ 3.8 sd; 6 of 80 columns exceed 3 sd, consistent
-  with the differing RNG streams). The CCM computation itself is equivalent;
+  with the differing RNG streams). The growth-test computation itself is equivalent;
   the gate divergence comes from the surrounding design, itemized below. [04]
-- **Lorenz5D full run** (tau=−5, exclusionRadius=10, seed matched): identical
-  selection and rho at every dimension (V3 0.398759, V4 0.806760, V2 0.946372,
+- **Lorenz5D full run** (step −5, exclusionRadius=10, seed matched): identical
+  selection and correlation at every dimension (V3 0.398759, V4 0.806760, V2 0.946372,
   V1 0.976646) — slope values differ (V1: +0.084 vs +0.139) but no decision
   flips. [06]
 
-## Divergences in the CCM convergence gate
+## Divergences in the convergence gate
 
 Net effect on Fly/FWD (80 candidates, every shared parameter matched):
 slope Pearson r = 0.18, Spearman = 0.31; decision agreement 62.5% against the
 reference's slope gate, 52.5% against its full gate; passes: torchEDM 41/80,
 reference 59/80 (slope gate) and 21/80 (full gate). [03]
 
-1. **Embedding dimension.** Reference: per-candidate E = argmax-rho of pyEDM
-   `EmbedDimension` (candidate embedding cross-predicting the target, E in
+1. **Embedding dimension.** Reference: per-candidate embedding dimension = the correlation argmax of pyEDM
+   `EmbedDimension` (the stacked candidate cross-predicting the target, dimensions in
    1..maxE, optional `firstEMax` first-local-peak rule; Run.py:222-252).
-   torchEDM: one E for all candidates = self-prediction optimum of the target
+   torchEDM: one embedding dimension for all candidates = self-prediction optimum of the target
    series (`ConvergentCrossMap.py:141-157`, `Hyperparameters.py:248`); no
-   `firstEMax` equivalent. Measured: E=4 for every candidate vs reference
-   per-candidate median 11 (range 1–15). Forcing the reference E values while
+   `firstEMax` equivalent. Measured: 4 for every candidate vs the reference's
+   per-candidate median 11 (range 1–15). Forcing the reference embedding dimensions while
    keeping the rest of torchEDM's design moves slope agreement to r = 0.79
-   (Spearman 0.84) and decisions to 86.25% — the E criterion is the dominant
+   (Spearman 0.84) and decisions to 86.25% — the embedding-dimension criterion is the dominant
    factor. [03 --e-attrib]
 2. **`embedDimRhoMin` gate has no torchEDM equivalent.** The reference skips a
-   candidate whose E-sweep peak rho is below threshold before running CCM
+   candidate whose sweep peak correlation is below threshold before running the growth test
    (Run.py:262-264); at the Fly test's 0.65 this alone cuts reference passes
    from 59 to 21 of 80. [03]
 3. **Library-size basis.** Reference: `pLibSizes` percent of full data length
    (dimx MDE.py:386-394; [106,159,901,954] at N=1061). torchEDM: percent of
    the train window (`MDE.py:506,567`; [29,44,254,269] at nTrain=299).
-4. **Sampling pool and prediction set.** Reference pyEDM CCM ignores lib/pred:
-   libraries are drawn from all valid rows, rho computed over all valid rows.
+4. **Sampling pool and prediction set.** Reference pyEDM CCM ignores the training and test windows:
+   subsets are drawn from all valid rows, the correlation computed over all valid rows.
    torchEDM `convergent='post'` (sample mode): both restricted to the train
    window (`ConvergentCrossMap.py:341,397-402`); `convergent='pre'`
-   (variables mode): library from train, rho over the test window
+   (variables mode): subsets from the training window, correlation over the test window
    (`ConvergentCrossMap.py:290-296,316`). The two torchEDM modes also differ
    from each other, and selected different variables on Fly/FWD (see 9).
-5. **Slope normalization.** Reference regresses rho on libSizes/N
+5. **Slope normalization.** Reference regresses the correlation on subset size / N
    (Run.py:31-32); torchEDM on libSizes/max(libSizes) (`MDE.py:511-512,
    574-575`). The same 0.01 threshold therefore cuts at different effective
    convergence rates.
-6. **exclusionRadius in sample-mode CCM.** `exclusionRadius==0` masks the
+6. **exclusionRadius in sample-mode ConvergentCrossMap.** `exclusionRadius==0` masks the
    self-match (diagonal); any radius > 0 applies no exclusion at all, so the
    self-match re-enters the neighbor set (`ConvergentCrossMap.py:381-383`).
    pyEDM CCM always removes the self-match and additionally excludes
-   |t_i−t_j| ≤ radius. Measured (Lorenz, V5→V1, identical draws): rho by
-   libSize [0.854, 0.883, 0.969, 0.970] at radius=0 vs
+   |t_i−t_j| ≤ radius. Measured (Lorenz, V5→V1, identical draws): correlation by
+   subset size [0.854, 0.883, 0.969, 0.970] at radius=0 vs
    [0.870, 0.901, 0.996, 0.998] at radius=10. [06]
-7. **No caching.** Reference caches E and slope per column per run, freezing
+7. **No caching.** Reference caches the embedding dimension and slope per column per run, freezing
    each candidate's verdict (Run.py:70-71,215-216,271-272); torchEDM re-runs
-   the CCM check every dimension. Identical outcome when `CCMSeed` is set;
+   the convergence check every dimension. Identical outcome when `CCMSeed` is set;
    unseeded, a rejected candidate is re-tried each dimension under fresh
    draws, which the reference's caching precludes.
 
 ## Divergences in the selection loop
 
 8. **Termination.** Reference stops expansion at the first dimension where no
-   candidate passes `crossMapRhoMin` or the CCM gate (Run.py:135-145,
+   candidate passes `crossMapRhoMin` or the convergence gate (Run.py:135-145,
    315-320). torchEDM selects nothing for that target and continues iterating
-   to `MaxD` (`MDE.py:281-365` has no break), re-running every candidate's CCM
+   to `MaxD` (`MDE.py:281-365` has no break), re-running every candidate's convergence
    check each remaining dimension: same selection when seeded, plus the
    unseeded re-try effect of (7).
 9. **Full-run outcome, Fly/FWD** (matched parameters;
@@ -108,7 +108,7 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
    for `embedDimRhoMin=0.65`): agreement at dim 1 only, as the gate
    divergences (1–5) compound through the greedy path.
 
-   | dim | reference | rho | post | rho | pre | rho |
+   | dim | reference | corr | post | corr | pre | corr |
    |---|---|---|---|---|---|---|
    | 1 | TS33 | 0.6528 | TS33 | 0.6528 | TS33 | 0.6528 |
    | 2 | TS4 | 0.7923 | TS5 | 0.7699 | TS21 | 0.7734 |
@@ -120,20 +120,20 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
    | 8 | TS71 | 0.8711 | TS57 | 0.8699 | TS48 | 0.8975 |
 
    The dim-2 split is the gate disagreement on TS4: reference slope +0.0349
-   (pass), torchEDM −0.0025 (fail). Final-dimension rho is comparable
+   (pass), torchEDM −0.0025 (fail). Final-dimension correlation is comparable
    (0.871 / 0.870 / 0.898). [05, 03]
 
 ## API-boundary semantics (sklearn adapter)
 
 10. **Last data row unreachable as a test point.** The adapter emits the test
     pair end as `len(data)−1`, which the 1-offset core converts to row
-    `len(data)−2` (`DataAdapter.py:222-224`, `EDM.py:827`). Reference
-    `pred=[c,N]` therefore cannot be expressed; comparisons trim the reference
-    window instead. Related: `ConvergentCrossMap` indexes `Y[test+Tp]` without
+    `len(data)−2` (`DataAdapter.py:222-224`, `EDM.py:827`). A reference
+    test window `[c,N]` therefore cannot be expressed; comparisons trim the reference
+    window instead. Related: `ConvergentCrossMap` indexes `Y[test + horizon]` without
     trimming, so a test window touching the last row raises IndexError
     (`ConvergentCrossMap.py:166`, `utils.py:36-47`) where pyEDM drops such
-    rows; its train window uses `min(stop, N−Tp)` where `Simplex` uses
-    `stop−Tp`, a one-row pool difference when the train window ends mid-data.
+    rows; its train window uses `min(stop, N − horizon)` where `Simplex` uses
+    `stop − horizon`, a one-row pool difference when the train window ends mid-data.
 11. **`TrainStart=0` produces row index −1** (wraps to the last row):
     `CreateIndices` subtracts 1 from the adapter's already-0-offset start
     (`EDM.py:774`); the guard at `EDM.py:748-749` assigns a dead local.
@@ -143,7 +143,7 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
 
 12. **NaN.** torchEDM `Correlation` has no NaN handling (`_core.py:92-111`):
     a NaN prediction yields a NaN score and the candidate sorts last, and NaN
-    embedding rows are dropped once from the shared all-column embedding
+    state rows are dropped once from the shared all-column state
     (`MDE.py:220-227`). Reference drops NaN pairs inside `ComputeError` and
     NaN rows per candidate combination. Identical on NaN-free data (both test
     sets); differs when data contain NaN.
@@ -164,7 +164,7 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
 | `sample` 20 | `CCMNumSamples` 10 | — |
 | `ccmSlope` 0.01 | `CCMConvergenceThreshold` 0.01 | same value, different slope scale (see 5) |
 | `ccmSeed` None | `CCMSeed` None | — |
-| `maxE` 15 | `CCMMaxEmbeddingDimensions` 15 | different E criterion (see 1) |
+| `maxE` 15 | `CCMMaxEmbeddingDimensions` 15 | different embedding-dimension criterion (see 1) |
 | `firstEMax` | — | no equivalent |
 | `noCCM=True` | `Convergent=False` | equivalent (verified, [02]) |
 | lazy per-dimension gate | `Convergent` 'pre'/'post' | fitter default 'pre'; 'pre' and 'post' use different CCM prediction sets (see 4) |
@@ -175,17 +175,17 @@ reference 59/80 (slope gate) and 21/80 (full gate). [03]
 Each divergence above was reviewed and resolved as follows.
 
 **Align with the reference:**
-- (1) Embedding dimension: per-candidate E, tuned on candidate→target
+- (1) Embedding dimension: per-candidate embedding dimension, tuned on candidate→target
   prediction and consumed for the target→candidate reconstruction — the
   tune/consume pairing copied as deliberate reference design (obfuscated by
-  its CCM API taking a single E). Implemented as one upfront batched sweep
+  its CCM API taking a single dimension). Implemented as one upfront batched sweep
   (`FindOptimalEmbeddingDimensionality(candidates, target, joint=False)`),
   argmax per candidate on raw scores (torchEDM does not round; the
   reference's 4-decimal tie-rounding is not copied). Two search modes: the
-  default shares the most restrictive (maxDims) row set across all depths in
+  default shares the most restrictive (maxDims) row set across all embedding dimensions in
   one fully batched pass — a deliberate torch-parallel divergence that
   changes some chosen dimensions; `IterativeDimensionSearch=True` gives each
-  depth its own valid rows, reproduces the reference, and is what these
+  embedding dimension its own valid rows, reproduces the reference, and is what these
   verification scripts use.
 - (2) Solo-predictability pre-screen: adopted, as an upfront pass over all
   candidates (cheap under batching) — new threshold parameter mirroring the
@@ -213,12 +213,12 @@ Each divergence above was reviewed and resolved as follows.
 - (10, 11) 0-based indexing enforced end-to-end (the engine's 1-offset
   convention, inherited from pyEDM's mixed 0/1 indexing, is removed rather
   than compensated for). Every row passed is usable except rows whose
-  target index (t+Tp) or history stack would be out of bounds — those are
+  target index (t + horizon) or history stack would be out of bounds — those are
   trimmed, never crash. Consequences accepted: `TrainStart=0` means row 0;
   `TestStart=0` means the first prediction input is XTest row 0 (the first
-  Tp test targets are unpredicted unless overlap is passed explicitly); the
+  horizon test targets are unpredicted unless overlap is passed explicitly); the
   training-window end uses the bounds-only clamp, keeping one row the
-  reference's unconditional Tp-subtraction drops mid-data.
+  reference's unconditional horizon subtraction drops mid-data.
 - (9) carries no decision — it is the measured compound effect, re-measured
   after implementation (see the re-verification section if present).
 
@@ -230,8 +230,8 @@ Re-running the scripts against the reference:
 - Windows are now 0-based half-open `[start, stop)` pairs with bounds-only
   trimming; the
   mapping in `common.py` reproduces the reference windows exactly, and the
-  simplex core [01] and CCM-off greedy path [02] results are unchanged.
-- Candidate E search [03]: torchEDM matches the reference's per-candidate E
+  neighbor-averaging core [01] and check-off greedy path [02] results are unchanged.
+- Candidate embedding-dimension search [03]: torchEDM matches the reference's per-candidate embedding dimensions
   80/80, peaks equal at 4 decimals; the solo-predictability gate
   (`MinCandidatePerformance=0.65`) agrees 80/80 at the reference threshold.
 - Full convergence gate [03]: decision agreement 52.5% → 97.5% (21 vs 21
@@ -241,14 +241,14 @@ Re-running the scripts against the reference:
 - Full run [05]: selection matches the reference through dim 5 (TS33, TS4,
   TS8, TS9, TS32), splitting at dim 6 on TS24 (the marginal-slope case);
   `'pre'` and `'post'` now produce identical selections.
-- Lorenz5D [06]: identical selection and rho at all 4 dims, identical
-  per-candidate E; the fixed sample-mode exclusion makes radius=10 accuracy
+- Lorenz5D [06]: identical selection and correlation at all 4 dims, identical
+  per-candidate embedding dimensions; the fixed sample-mode exclusion makes radius=10 accuracy
   drop below radius=0 (pre-fix it rose above, from self-match leakage).
 - torchEDM's own test suite: the 6 tests affected by the indexing change
   pass after window translation; the 5 embed-dimension tests pass at their
   original 1e-6 tolerance (all 11 crashed or failed beforehand); the
   remaining failures predate this work (value drift in the legacy
-  simplex/smap/ccm tests and a CUDA-only test).
+  predictor and cross-map tests and a CUDA-only test).
 
 ## Comparison-methodology notes
 
@@ -259,6 +259,6 @@ Re-running the scripts against the reference:
   it. Passing the frame Time-less with `noTime=True` keeps all candidates.
 - Accepted differences observed, excluded from the list above: neighbor-tie
   resolution (torch.topk vs pyEDM's deterministic lexsort; bounded at one
-  swapped neighbor per exact tie [01]) and CCM library-sampling RNG stream
+  swapped neighbor per exact tie [01]) and subset-sampling RNG stream
   identity at equal seeds (bounded by the seed-to-seed spread measured in
   [04]).

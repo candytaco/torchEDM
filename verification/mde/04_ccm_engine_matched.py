@@ -1,14 +1,14 @@
-"""CCM engine equivalence under a MATCHED design.
+"""ConvergentCrossMap equivalence under a MATCHED design.
 
-Runs torchEDM's ConvergentCrossMap (sample mode — the engine behind
-convergent='post') with the reference design imposed: full-data library pool
-and prediction set, per-candidate E from the reference, libSizes
-[106,159,901,954], repeats=20, slope on libSizes/N. Compares against the pyEDM
+Runs torchEDM's ConvergentCrossMap (sample mode, which convergent='post'
+uses) with the reference design imposed: full-data sampling pool
+and prediction set, per-candidate embedding dimensions from the reference, subset sizes
+[106,159,901,954], repeats=20, slope on subset size / N. Compares against the pyEDM
 slopes stored by 03_ccm_gate.py, with library-sampling noise calibrated by
 rerunning pyEDM CCM under seeds 1..5 on a subset of columns.
 
 Windows are the 0-based half-open full span (0, N); rows without a valid
-next-value target are trimmed by the engine.
+next-value target are trimmed by ConvergentCrossMap.
 
 Run 03_ccm_gate.py first to create ref_ccm_all80.pkl.
 """
@@ -48,10 +48,10 @@ def main():
             embedDimensions=ref[c]['E'], predictionHorizon=1, step=-1,
             exclusionRadius=0, device='cpu', batchMode='sample',
             dtype=torch.float64, seed=SEED, showProgress=False)
-        rho = np.asarray(ccm.Run().forward_performance)
+        correlation = np.asarray(ccm.Run().forward_performance)
         tor_s.append(float(LinearRegression().fit(
-            x.reshape(-1, 1), np.nan_to_num(rho)).coef_[0]))
-        print(f'{c}: E={ref[c]["E"]} ref={ref[c]["slope"]:+.5f} '
+            x.reshape(-1, 1), np.nan_to_num(correlation)).coef_[0]))
+        print(f'{c}: embedding dimension={ref[c]["E"]} ref={ref[c]["slope"]:+.5f} '
               f'torch(matched)={tor_s[-1]:+.5f}', flush=True)
 
     print('\npyEDM slope spread across seeds 1..5 (sampling-noise calibration):')

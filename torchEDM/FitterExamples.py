@@ -25,7 +25,7 @@ def FitterExamples():
 	X_train, Y_train = data[0:100, 1], data[0:100, 1]
 	X_test, Y_test = data[98:196, 1], data[98:196, 1]
 	result = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1).Fit(X_train, Y_train, X_test, Y_test)
-	plot_prediction(Y_test, result, "Simplex: block_3sp, one column stacked to depth 3")
+	plot_prediction(Y_test, result, "Simplex: block_3sp, one column stacked to 3 embedding dimensions")
 
 	# 3: ensemble over combinations of the stacked columns
 	X_train, Y_train = data[0:100, [1, 4, 7]], data[0:100, 1]

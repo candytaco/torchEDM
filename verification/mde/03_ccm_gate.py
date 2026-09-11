@@ -1,27 +1,27 @@
-"""CCM convergence gate per candidate (target FWD): reference pipeline vs
+"""Convergence gate per candidate (target FWD): reference pipeline vs
 torchEDM (post-alignment).
 
 Reference (dimx Run.py):
-  E_c      = pyEDM EmbedDimension(columns=candidate, target=FWD, maxE=15) argmax
-  gate 1   = E-sweep max rho >= embedDimRhoMin (0.65 here)
+  embedding dimension = pyEDM EmbedDimension(columns=candidate, target=FWD, maxE=15) argmax
+  gate 1   = peak correlation of that sweep >= embedDimRhoMin (0.65 here)
   libSizes = [10,15,85,90]% of full N=1061 -> [106,159,901,954]
-  CCM      = pyEDM CCM(E=E_c, sample=20, seed): library sampled from all valid
+  growth   = pyEDM CCM at that dimension (sample=20, seed): training subsets sampled from all valid
              rows, prediction over all valid rows
-  slope    = OLS of rho('FWD:candidate') on libSizes/N;  gate 2 = slope > 0.01
+  slope    = OLS of the correlation ('FWD:candidate') on subset size / N;  gate 2 = slope > 0.01
 
-torchEDM (aligned): per-candidate E and peak from the same batched sweep
-(matches reference E 80/80 and peaks to 4 decimals); gate 1 =
+torchEDM (aligned): per-candidate embedding dimension and peak from the same batched sweep
+(matches the reference's embedding dimensions 80/80 and peaks to 4 decimals); gate 1 =
 MinCandidatePerformance; gate 2 = growth slope. Deliberately kept divergences:
 the growth test samples from and measures on the training window, its sizes
 are percentages of nTrain -> [29,44,254,269], and the slope is per fraction
 of the training window.
 
-Expected (torch 2.13 / pyEDM 2.5.7): E matches 80/80, peak diff 0.0000;
+Expected (torch 2.13 / pyEDM 2.5.7): embedding dimensions match 80/80, peak diff 0.0000;
 full-gate decision agreement 97.5% (21 vs 21 passes; residual = the kept
 train/test-separation divergences flipping two marginal slopes, TS1 and TS24);
 slope Pearson r = 0.79.
 
-Writes ref_ccm_all80.pkl (reference E/slope/rho per candidate) for reuse by 04.
+Writes ref_ccm_all80.pkl (reference embedding dimension, slope, and correlations per candidate) for reuse by 04.
 """
 import os
 import pickle
@@ -51,16 +51,16 @@ def reference_side(df, ts_cols, out_pkl):
                              tau=-1, exclusionRadius=0, validLib=[], noTime=True,
                              numProcess=15, showPlot=False)
         iMax = edf['rho'].round(4).argmax()
-        maxRhoE = float(edf['rho'].iloc[iMax].round(4))
-        E = int(edf['E'].iloc[iMax])
+        peakCorrelation = float(edf['rho'].iloc[iMax].round(4))
+        embedDimension = int(edf['E'].iloc[iMax])
         ccmDF = CCM(dataFrame=numericDF, columns=c, target='FWD',
-                    libSizes=libSizes, sample=20, E=E, Tp=1, tau=-1,
+                    libSizes=libSizes, sample=20, E=embedDimension, Tp=1, tau=-1,
                     exclusionRadius=0, seed=SEED, noTime=True)
-        ccmVals = ccmDF[f'FWD:{c}'].to_numpy()
+        correlationBySize = ccmDF[f'FWD:{c}'].to_numpy()
         slope = round(float(LinearRegression().fit(
-            x, np.nan_to_num(ccmVals)).coef_[0]), 5)
-        res[c] = dict(E=E, maxRhoE=maxRhoE, slope=slope, rhoVals=ccmVals)
-        print(f'{c}: E={E} maxRhoE={maxRhoE:.4f} slope={slope:+.5f}', flush=True)
+            x, np.nan_to_num(correlationBySize)).coef_[0]), 5)
+        res[c] = dict(E=embedDimension, maxRhoE=peakCorrelation, slope=slope, rhoVals=correlationBySize)
+        print(f'{c}: embedding dimension={embedDimension} peak correlation={peakCorrelation:.4f} slope={slope:+.5f}', flush=True)
 
     with open(out_pkl, 'wb') as f:
         pickle.dump(dict(res=res, libSizes=libSizes), f)
@@ -93,11 +93,11 @@ def main():
     fitter.Fit(XTrain, YTrain, XTest, YTest)
     mde = fitter.MDE
 
-    E_match = sum(1 for i, c in enumerate(ts_cols)
+    embedDimensionMatches = sum(1 for i, c in enumerate(ts_cols)
                   if mde.candidateEmbedDimensions[0, i] == ref[c]['E'])
     peak_diff = max(abs(mde.candidatePeakPerformance[0, i] - ref[c]['maxRhoE'])
                     for i, c in enumerate(ts_cols))
-    print(f'E matches: {E_match}/80; max peak diff: {peak_diff:.4f}')
+    print(f'embedding dimensions match: {embedDimensionMatches}/80; max peak diff: {peak_diff:.4f}')
 
     ref_full, tor_full, ref_slopes, tor_slopes = [], [], [], []
     for i, c in enumerate(ts_cols):

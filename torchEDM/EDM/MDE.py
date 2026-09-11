@@ -71,10 +71,10 @@ class MDE:
 		:param batch_size:	candidates per batch
 		:param dtype:		torch dtype for the selection tensors
 		:param columns:		candidate X columns; None uses all
-		:param embedDimensions:	fixed history depth for the convergence check; 0 searches each candidate's depth
+		:param embedDimensions:	fixed embedding dimensions for the convergence check; 0 searches each candidate's embedding dimension
 		:param predictionHorizon:	rows between a state and the target it predicts
 		:param knn:			neighbors for the final prediction and the convergence check; 0 means the default
-		:param step:		row offset between stacked copies in the convergence check and depth search
+		:param step:		row offset between stacked copies in the convergence check and embedding-dimension search
 		:param exclusionRadius:	training states this close in rows are not neighbors. Always applied in the
 			convergence check, which runs on the training rows; applied to the selection and the final
 			prediction only when X_test is omitted, since a separate test array shares no sample axis
@@ -87,13 +87,13 @@ class MDE:
 		:param CCMNumSamples:	random subsets per size
 		:param CCMConvergenceThreshold:	minimum skill-versus-size slope to count as convergent
 		:param CCMSeed:		random seed for the convergence check
-		:param CCMMaxEmbeddingDimensions:	deepest history tried in the per-candidate depth search
+		:param CCMMaxEmbeddingDimensions:	largest embedding dimension tried in the per-candidate embedding-dimension search
 		:param MinPredictionThreshold:	minimum candidate score to be selectable
-		:param MinCandidatePerformance:	minimum score a candidate alone (at its best depth) must reach predicting
-			the target to stay in the pool; applied when convergence checking is on and the depth is searched. 0 disables.
-		:param IterativeDimensionSearch:	True evaluates each depth on its own complete rows (slower, reproduces the
-			reference); False shares the rows complete at the deepest history in one pass
-		:param TimeDelay:	time delay analysis depth; 0 disables
+		:param MinCandidatePerformance:	minimum score a candidate alone (at its best embedding dimension) must reach predicting
+			the target to stay in the pool; applied when convergence checking is on and the embedding dimension is searched. 0 disables.
+		:param IterativeDimensionSearch:	True evaluates each embedding dimension on its own complete rows (slower, reproduces the
+			reference); False shares the rows complete at the largest embedding dimension in one pass
+		:param TimeDelay:	time delay analysis embedding dimensions; 0 disables
 		:param device:		torch device; None picks cuda when available
 		"""
 		if X_test is not None and Y_test is None:
@@ -148,7 +148,7 @@ class MDE:
 		self.iterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
-		# per-run candidate depth-search results, arrays [nTargets, nColumns]
+		# per-run candidate embedding-dimension-search results, arrays [nTargets, nColumns]
 		self.candidateEmbedDimensions = None
 		self.candidatePeakPerformance = None
 		self._ccmSlopeCache = None
@@ -259,9 +259,9 @@ class MDE:
 		# NaN slope is stored as -inf so it stays cached as rejected
 		self._ccmSlopeCache = numpy.full([nTargets, nVars], numpy.nan)
 
-		# per-candidate depth search and solo-predictability gate: one batched sweep in which
-		# each candidate, stacked to every depth up to CCMMaxEmbedDimensions, predicts each
-		# target; the best depth and its peak are kept per (target, candidate), and candidates
+		# per-candidate embedding-dimension search and solo-predictability gate: one batched sweep in which
+		# each candidate, stacked to every embedding dimension up to CCMMaxEmbedDimensions, predicts each
+		# target; the best embedding dimension and its peak are kept per (target, candidate), and candidates
 		# below MinCandidatePerformance leave the pool before any convergence check
 		self.candidateEmbedDimensions = numpy.full([nTargets, nVars], -1, dtype = int)
 		self.candidatePeakPerformance = numpy.full([nTargets, nVars], numpy.nan)
@@ -436,8 +436,8 @@ class MDE:
 
 	def _search_candidate_embedding_dimensions(self, remaining_variables) -> None:
 		"""
-		Per-candidate depth search: each candidate column, stacked at every depth up to
-		CCMMaxEmbedDimensions, predicts each target over the test rows. The best depth and
+		Per-candidate embedding-dimension search: each candidate column, stacked at every embedding dimension up to
+		CCMMaxEmbedDimensions, predicts each target over the test rows. The best embedding dimension and
 		its peak score are stored per (target, candidate) for the convergence check.
 		"""
 		from ..Hyperparameters import FindOptimalEmbeddingDimensionality

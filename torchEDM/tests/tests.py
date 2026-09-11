@@ -230,7 +230,7 @@ class test_Predictors(unittest.TestCase):
 			SimplexPredict(d[0:100, x], d[0:100, x], d[98:150, x], d[98:151, x], embedDimensions = 3)
 
 	def test_simplex_default_neighbor_count(self):
-		"""State size plus one: two columns stacked to depth 5 give eleven neighbors."""
+		"""State size plus one: two columns stacked to 5 embedding dimensions give eleven neighbors."""
 		df = Frame('Lorenz5D'); d = df.values.astype(float)
 		cols = [df.columns.get_loc('V1'), df.columns.get_loc('V3')]; v5 = df.columns.get_loc('V5')
 		result = SimplexPredict(d[1:301, cols], d[1:301, v5], d[297:311, cols], d[297:311, v5], embedDimensions = 5)
@@ -387,13 +387,13 @@ class test_Hyperparameters(unittest.TestCase):
 
 	def lorenzArrays(self):
 		df = Frame('Lorenz5D'); d = df.values.astype(float); v1 = df.columns.get_loc('V1')
-		# reference test states 500..799 at depths up to 12 with step -5: the test arrays start 55 rows
+		# reference test states 500..799 at embedding dimensions up to 12 with step -5: the test arrays start 55 rows
 		# early for the history, and the targets of states before row 500 are NaN so they are not scored
 		Y_test = d[445:815, v1].copy(); Y_test[:70] = nan
 		return d[0:485, v1], d[445:815, v1], Y_test
 
 	def test_embed_dimension(self):
-		"""(EmbedDim) Each depth on its own complete rows reproduces the reference."""
+		"""(EmbedDim) Each embedding dimension on its own complete rows reproduces the reference."""
 		X_train, X_test, Y_test = self.lorenzArrays()
 		scores = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train, X_train, X_test, Y_test, maxDims = 12,
 																	predictionHorizon = 15, step = -5, batched = False)
@@ -401,7 +401,7 @@ class test_Hyperparameters(unittest.TestCase):
 		self.assertTrue(numpy.allclose(scores, reference, atol = 1e-6))
 
 	def test_embed_dimension_batched(self):
-		"""The shared-row pass trims the training rows at the deepest history, so it is close, not exact."""
+		"""The shared-row pass trims the training rows at the largest embedding dimension, so it is close, not exact."""
 		X_train, X_test, Y_test = self.lorenzArrays()
 		scores = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train, X_train, X_test, Y_test, maxDims = 12,
 																	predictionHorizon = 15, step = -5, batched = True)
@@ -423,10 +423,10 @@ class test_Hyperparameters(unittest.TestCase):
 																		 X_test[:, None], numpy.column_stack([Y_test, Y_test]), **common)
 		self.assertEqual(multiTarget.shape, (2, 12))
 		self.assertTrue(numpy.allclose(multiTarget[0], joint) and numpy.allclose(multiTarget[1], joint))
-		depths = Hyperparameters.FindSelfPredictionEmbeddingDimension(Frame('Lorenz5D').values[0:800, 1:6].astype(float), maxDims = 8,
+		embedDimensions = Hyperparameters.FindSelfPredictionEmbeddingDimension(Frame('Lorenz5D').values[0:800, 1:6].astype(float), maxDims = 8,
 																	  device = 'cpu', dtype = torch.float32, showProgress = False)
-		self.assertEqual(depths.shape, (5,))
-		self.assertTrue(((depths >= 1) & (depths <= 8)).all())
+		self.assertEqual(embedDimensions.shape, (5,))
+		self.assertTrue(((embedDimensions >= 1) & (embedDimensions <= 8)).all())
 
 	def test_prediction_horizon(self):
 		"""(PredictInterval) Every horizon refitted on its own rows reproduces the reference."""

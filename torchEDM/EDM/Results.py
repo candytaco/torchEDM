@@ -184,7 +184,7 @@ class BatchedCCMResult:
 	:param forward_performance:	mean skill per subset size, shape [nSizes, nSources, nTargets] with singleton axes squeezed
 	:param predictionHorizon:	rows between a state and the target it predicts
 	:param library_sizes:	the training-subset sizes evaluated
-	:param forward_embed_dimensions:	history depth used per source ([nSources] or [nSources, nTargets] when searched, else the scalar given)
+	:param forward_embed_dimensions:	embedding dimensions used per source ([nSources] or [nSources, nTargets] when searched, else the scalar given)
 	"""
 	forward_performance: np.ndarray
 	predictionHorizon: int
@@ -205,7 +205,7 @@ class CCMCVResult:
 	:param mean_performance:	mean over folds
 	:param std_performance:	standard deviation over folds
 	:param predictionHorizon:	rows between a state and the target it predicts
-	:param fold_forward_embed_dimensions:	history depth per fold
+	:param fold_forward_embed_dimensions:	embedding dimensions per fold
 	"""
 	fold_results: List['BatchedCCMResult']
 	fold_performances: Optional[np.ndarray]

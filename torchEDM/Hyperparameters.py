@@ -1,6 +1,6 @@
 """
 Parameter sweeps scored on X_train/Y_train -> X_test/Y_test with the predictors' row
-semantics (see EDM.Setup): history depth, prediction horizon, and localization.
+semantics (see EDM.Setup): embedding dimensions, prediction horizon, and localization.
 """
 from typing import Callable, List, Optional
 
@@ -48,7 +48,7 @@ def _GatherAtOffset(runs: List[numpy.ndarray], rows: numpy.ndarray, runIds: nump
 
 
 # ---------------------------------------------------------------------------------------
-# history depth
+# embedding dimensions
 # ---------------------------------------------------------------------------------------
 
 def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
@@ -66,20 +66,20 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 									   BatchSize: Optional[int] = None,
 									   device = None) -> numpy.ndarray:
 	"""
-	Pearson correlation of the neighbor-averaging prediction at every history depth 1..maxDims.
+	Pearson correlation of the neighbor-averaging prediction at every embedding dimension 1..maxDims.
 
 	:param X_train:		[nTrain, nFeatures] or a list of runs
 	:param Y_train:		[nTrain, nTargets] or a list of runs; None makes every X column predict every X column
 	:param X_test:		[nTest, nFeatures] or a list of runs; None scores the training rows in-sample
 	:param Y_test:		targets for X_test (required with X_test unless Y_train is None)
-	:param maxDims:		deepest history to test
+	:param maxDims:		largest embedding dimension to test
 	:param predictionHorizon:	rows between a state and the target it predicts
 	:param step:		row offset between stacked copies; negative reaches into the past
 	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
 	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
-	:param batched:		True: every depth shares the test states complete at maxDims and the training rows
-						usable there, in one pass. False: each depth is scored on its own complete rows
-						(more rows at shallow depths, slower).
+	:param batched:		True: every embedding dimension shares the test states complete at maxDims and the training rows
+						usable there, in one pass. False: each embedding dimension is scored on its own complete rows
+						(more rows at smaller embedding dimensions, slower).
 	:param joint:		True: all X columns stacked together predict each Y column, [nTargets, maxDims].
 						False: each X column alone predicts each Y column, [nTargets, nVars, maxDims].
 						Self-prediction (Y_train None) is always per column, [nVars, nVars, maxDims].
@@ -99,13 +99,13 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 			X_train, Y_train, X_test, Y_test, maxDims, predictionHorizon, step, exclusionRadius,
 			trainRowMask, joint, dtype, BatchSize, device)
 	else:
-		perDepth = []
-		for depth in range(1, maxDims + 1):
+		perEmbedDimension = []
+		for embedDimension in range(1, maxDims + 1):
 			scores = _FindOptimalEmbeddingDimensionalityBatched(
-				X_train, Y_train, X_test, Y_test, depth, predictionHorizon, step, exclusionRadius,
+				X_train, Y_train, X_test, Y_test, embedDimension, predictionHorizon, step, exclusionRadius,
 				trainRowMask, joint, dtype, BatchSize, device)
-			perDepth.append(scores[..., -1])
-		scores = numpy.stack(perDepth, axis = -1)
+			perEmbedDimension.append(scores[..., -1])
+		scores = numpy.stack(perEmbedDimension, axis = -1)
 
 	scores = numpy.asarray(scores)
 	if scores.ndim >= 2 and scores.shape[0] == 1:
@@ -117,7 +117,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X_train, Y_train, X_test, Y_test,
 											   exclusionRadius, trainRowMask, joint, dtype, batchSize, device):
 	"""
 	One pass over the rows complete at maxDims; per-column squared distances are accumulated
-	over the stacked history so every depth comes from one cumulative sum.
+	over the stacked history so every embedding dimension comes from one cumulative sum.
 	"""
 	inputs = PreparePrediction(X_train, Y_train, X_test, maxDims, step, predictionHorizon, exclusionRadius, trainRowMask)
 	testTargets = TestTargets(Y_test if X_test is not None else Y_train, inputs)
@@ -141,10 +141,10 @@ def _FindOptimalEmbeddingDimensionalityBatched(X_train, Y_train, X_test, Y_test,
 
 def _ComputeJointEmbeddingDistances(X_train, X_test, maxDims, nVars, device, dtype):
 	"""
-	Cumulative squared distances of all columns stacked together, one matrix per depth.
+	Cumulative squared distances of all columns stacked together, one matrix per embedding dimension.
 	Stacked columns arrive variable-major (all lags of column 0, then column 1, ...); they
-	are reordered lag-major so the cumulative sum at position depth * nVars - 1 holds every
-	column through that depth. :return: [maxDims, nTrain, nTest]
+	are reordered lag-major so the cumulative sum at position embedDimension * nVars - 1 holds every
+	column through that embedding dimension. :return: [maxDims, nTrain, nTest]
 	"""
 	trainTensor = torch.as_tensor(X_train, device = device, dtype = dtype)
 	testTensor = torch.as_tensor(X_test, device = device, dtype = dtype)
@@ -162,15 +162,15 @@ def _ComputeJointEmbeddingDistances(X_train, X_test, maxDims, nVars, device, dty
 		distances = distances[lagMajor]
 	cumulative = torch.cumsum(distances, dim = 0)
 	del distances
-	perDepth = cumulative[[depth * nVars - 1 for depth in range(1, maxDims + 1)]]
+	perEmbedDimension = cumulative[[embedDimension * nVars - 1 for embedDimension in range(1, maxDims + 1)]]
 	del cumulative
-	return perDepth
+	return perEmbedDimension
 
 
 def _ComputePerVariableEmbeddingDistances(X_train, X_test, maxDims, batchNumVars, colStart, colEnd, device, dtype):
 	"""
 	Cumulative squared distances per column for a batch of columns.
-	:return: [batchNumVars * maxDims, nTrain, nTest], row v * maxDims + d is column v through depth d + 1
+	:return: [batchNumVars * maxDims, nTrain, nTest], row v * maxDims + d is column v through embedding dimension d + 1
 	"""
 	numBatch = batchNumVars * maxDims
 	trainTensor = torch.as_tensor(X_train[:, colStart:colEnd], device = device, dtype = dtype)
@@ -190,7 +190,7 @@ def _ComputePerVariableEmbeddingDistances(X_train, X_test, maxDims, batchNumVars
 
 def _BatchedJointPrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars, device, dtype, maskTensor):
 	"""
-	All X columns jointly predict each target; depth d uses d * nVars + 1 neighbors.
+	All X columns jointly predict each target; embedding dimension d uses d * nVars + 1 neighbors.
 
 	:param X_train:	stacked training states [nTrain, nVars * maxDims], source-major
 	:param Y_train:	[nTargets, nTrain] tensor
@@ -232,7 +232,7 @@ def _BatchedSeparatePrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars,
 		if maskTensor is not None:
 			embeddingDistances[:, maskTensor] = float('inf')
 
-		# matrix v * maxDims + d is column v at depth d + 1, predicted with its own d + 2 neighbors
+		# matrix v * maxDims + d is column v at embedding dimension d + 1, predicted with its own d + 2 neighbors
 		neighborCounts = torch.arange(2, maxDims + 2, dtype = torch.long, device = device).repeat(batchNumVars)
 		out = torch.zeros(nTargets, batchNumVars * maxDims, device = device, dtype = dtype)
 		for targetIndex in range(nTargets):
@@ -259,8 +259,8 @@ def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 										  targetVRAM: Optional[float] = None,
 										  showProgress: bool = True) -> numpy.ndarray:
 	"""
-	For every column, the history depth in 1..maxDims at which its own stacked history best
-	predicts its future value. This is the depth to give a source column when it cross-maps
+	For every column, the embedding dimension in 1..maxDims at which its own stacked history best
+	predicts its future value. This is the embedding dimension to give a source column when it cross-maps
 	a target.
 
 	Columns are processed in batches whose dominant tensor is [sourceBatch, nTrain, nTest].
@@ -270,7 +270,7 @@ def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 	:param X_test:		[nTest, nColumns] or a list of runs; None scores the training rows in-sample
 	:param batchSize:	columns per batch (auto-raised to fill targetVRAM when given)
 	:param targetVRAM:	GB budget; None uses batchSize as is
-	:return: [nColumns] best depth per column, 1-based
+	:return: [nColumns] best embedding dimension per column, 1-based
 	"""
 	inputs = PreparePrediction(X_train, X_train, X_test, maxDims, step, predictionHorizon, exclusionRadius, trainRowMask)
 	targets = TestTargets(X_test if X_test is not None else X_train, inputs)

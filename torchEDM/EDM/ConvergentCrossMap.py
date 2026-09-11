@@ -19,7 +19,7 @@ from ..Hyperparameters import FindSelfPredictionEmbeddingDimension
 
 class ConvergentCrossMap:
 	"""
-	Vectorized cross mapping: every source column, stacked to its own history depth,
+	Vectorized cross mapping: every source column, stacked to its own embedding dimensions,
 	predicts every target column from random training subsets of increasing size.
 	"""
 
@@ -53,11 +53,11 @@ class ConvergentCrossMap:
 		:param Y_test:		targets for X_test; required with X_test unless Y_train is None
 		:param trainSizes:	training-subset sizes; None uses 10, 25, 50, 75 and 90 percent of the training rows
 		:param repeats:		random subsets drawn per size
-		:param embedDimensions:	history depth per source: an int, [nSources], or [nSources, nTargets]; None searches
-			each source's depth up to maxEmbedDimensions with FindSelfPredictionEmbeddingDimension
-		:param maxEmbedDimensions:	deepest history tried when embedDimensions is None
+		:param embedDimensions:	embedding dimensions per source: an int, [nSources], or [nSources, nTargets]; None searches
+			each source's embedding dimension up to maxEmbedDimensions with FindSelfPredictionEmbeddingDimension
+		:param maxEmbedDimensions:	largest embedding dimension tried when embedDimensions is None
 		:param predictionHorizon:	rows between a state and the target it predicts
-		:param knn:			neighbors; None means depth + 1 per source
+		:param knn:			neighbors; None means embedding dimensions + 1 per source
 		:param step:		row offset between stacked copies; negative reaches into the past
 		:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
 		:param seed:		random seed for the subsets
@@ -160,7 +160,7 @@ class ConvergentCrossMap:
 		"""
 		Batch over source columns: one distance matrix per source, reused across every
 		(subset size, repeat, target). X_train/X_test hold every source stacked to
-		the largest depth, source-major; Y_train/Y_test are [nTrain, nTargets] and
+		the largest embedding dimension, source-major; Y_train/Y_test are [nTrain, nTargets] and
 		[nTest, nTargets] tensors.
 		"""
 		numTrain = X_train.shape[0]
@@ -172,7 +172,7 @@ class ConvergentCrossMap:
 		if embedDimsArray.ndim == 0:
 			embedDimsArray = numpy.full(numSources, int(embedDimsArray))
 		elif embedDimsArray.ndim == 2:
-			# one depth per source in this mode: the deepest over its targets
+			# one embedding dimension per source in this mode: the largest over its targets
 			embedDimsArray = embedDimsArray.max(axis = 1)
 
 		# When targetVRAM is given, the budget sets both batch sizes; x_batch and y_batch are the
@@ -280,8 +280,8 @@ class ConvergentCrossMap:
 		"""
 		Batch over subsets per size; the training rows predict themselves. Efficient when
 		there are few source columns. Cumulative per-lag squared distances are built once per
-		source so each (source, target) pair reads its own depth off the prefix sum. Without a
-		user-set knn, each pair uses depth + 1 neighbors, enforced by masking the extra
+		source so each (source, target) pair reads its own embedding dimension off the prefix sum. Without a
+		user-set knn, each pair uses embedding dimensions + 1 neighbors, enforced by masking the extra
 		neighbors to zero weight after one shared topk.
 		"""
 		numSamplesInBatch = self.sampleBatchSize if self.sampleBatchSize is not None else self.sample
