@@ -47,7 +47,7 @@ def main():
               f'{ref_vars[d] == torch_vars[d]}')
 
     print('\nper-dimension candidate correlation spectra (torch - reference):')
-    stepwise = fitter.MDE.stepwise_performance
+    stepwise = result.stepwise_performance
     for d in range(1, D + 1):
         spec = mde_ref.rhoD[d]['rho']
         diffs = np.array([stepwise[0, d - 1, ts_cols.index(c)] - r

@@ -9,9 +9,9 @@ import torch
 from tqdm import tqdm as ProgressBar
 
 from .EDM._core import (Correlation as TorchCorrelation, batch_simplex_predict, batch_get_simplex_weights,
-						ComputePairwiseDistances, ComputeSimplexWeights, ProjectSimplex, ComputeSMapWeights,
+						ComputeSimplexWeights, ProjectSimplex, ComputeSMapWeights,
 						SolveWeightedLinearMap)
-from .EDM.Setup import ArrayOrRuns, AsRuns, PreparePrediction, PredictionInputs, TestTargets, ResolveNeighborCount
+from .EDM.Setup import ArrayOrRuns, AsRuns, PreparePrediction, TestTargets, ResolveNeighborCount
 from .EDM.Predictors import SimplexPredict, ResolveDevice, _FindNeighbors
 from .Scoring import Correlation, _FilterNonFinite
 
@@ -56,15 +56,15 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 									   X_test: Optional[ArrayOrRuns] = None,
 									   Y_test: Optional[ArrayOrRuns] = None,
 									   maxDims: int = 10,
-									   predictionHorizon: int = 1,
 									   step: int = -1,
+									   predictionHorizon: int = 1,
 									   exclusionRadius: int = 0,
 									   trainRowMask: Optional[ArrayOrRuns] = None,
-									   batched: bool = True,
-									   joint: bool = True,
-									   dtype: torch.dtype = torch.float32,
-									   BatchSize: Optional[int] = None,
-									   device = None) -> numpy.ndarray:
+									   isBatched: bool = True,
+									   isJoint: bool = True,
+									   batchSize: Optional[int] = None,
+									   device = None,
+									   dtype: torch.dtype = torch.float32) -> numpy.ndarray:
 	"""
 	Pearson correlation of the neighbor-averaging prediction at every embedding dimension 1..maxDims.
 
@@ -77,33 +77,33 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 	:param step:		row offset between stacked copies; negative reaches into the past
 	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
 	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
-	:param batched:		True: every embedding dimension shares the test states complete at maxDims and the training rows
+	:param isBatched:		True: every embedding dimension shares the test states complete at maxDims and the training rows
 						usable there, in one pass. False: each embedding dimension is scored on its own complete rows
 						(more rows at smaller embedding dimensions, slower).
-	:param joint:		True: all X columns stacked together predict each Y column, [nTargets, maxDims].
+	:param isJoint:		True: all X columns stacked together predict each Y column, [nTargets, maxDims].
 						False: each X column alone predicts each Y column, [nTargets, nVars, maxDims].
 						Self-prediction (Y_train None) is always per column, [nVars, nVars, maxDims].
 	:param dtype:		torch dtype for the computation
-	:param BatchSize:	X columns per pass in the per-column sweeps; None takes all at once
+	:param batchSize:	X columns per pass in the per-column sweeps; None takes all at once
 	:param device:		torch device; None picks cuda when available
 	:return: scores with the leading target axis dropped when there is one target
 	"""
 	isSelfPrediction = Y_train is None
 	if isSelfPrediction:
-		Y_train, Y_test, joint = X_train, X_test, False
+		Y_train, Y_test, isJoint = X_train, X_test, False
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score predictions on X_test')
 
-	if batched:
+	if isBatched:
 		scores = _FindOptimalEmbeddingDimensionalityBatched(
 			X_train, Y_train, X_test, Y_test, maxDims, predictionHorizon, step, exclusionRadius,
-			trainRowMask, joint, dtype, BatchSize, device)
+			trainRowMask, isJoint, dtype, batchSize, device)
 	else:
 		perEmbedDimension = []
 		for embedDimension in range(1, maxDims + 1):
 			scores = _FindOptimalEmbeddingDimensionalityBatched(
 				X_train, Y_train, X_test, Y_test, embedDimension, predictionHorizon, step, exclusionRadius,
-				trainRowMask, joint, dtype, BatchSize, device)
+				trainRowMask, isJoint, dtype, batchSize, device)
 			perEmbedDimension.append(scores[..., -1])
 		scores = numpy.stack(perEmbedDimension, axis = -1)
 
@@ -249,15 +249,15 @@ def _BatchedSeparatePrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars,
 def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 										  X_test: Optional[ArrayOrRuns] = None,
 										  maxDims: int = 10,
-										  predictionHorizon: int = 1,
 										  step: int = -1,
+										  predictionHorizon: int = 1,
 										  exclusionRadius: int = 0,
 										  trainRowMask: Optional[ArrayOrRuns] = None,
-										  dtype: torch.dtype = torch.float16,
-										  device = 'cuda',
 										  batchSize: int = 1000,
 										  targetVRAM: Optional[float] = None,
-										  showProgress: bool = True) -> numpy.ndarray:
+										  hasProgressBar: bool = True,
+										  device = 'cuda',
+										  dtype: torch.dtype = torch.float16) -> numpy.ndarray:
 	"""
 	For every column, the embedding dimension in 1..maxDims at which its own stacked history best
 	predicts its future value. This is the embedding dimension to give a source column when it cross-maps
@@ -270,6 +270,7 @@ def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 	:param X_test:		[nTest, nColumns] or a list of runs; None scores the training rows in-sample
 	:param batchSize:	columns per batch (auto-raised to fill targetVRAM when given)
 	:param targetVRAM:	GB budget; None uses batchSize as is
+	:param hasProgressBar:	show a progress bar
 	:return: [nColumns] best embedding dimension per column, 1-based
 	"""
 	inputs = PreparePrediction(X_train, X_train, X_test, maxDims, step, predictionHorizon, exclusionRadius, trainRowMask)
@@ -298,7 +299,7 @@ def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 	testStates = inputs.testStates[isScored]
 
 	for sourceBatchStart in ProgressBar(range(0, numSources, sourceBatchSize), desc = 'Embedding dim search',
-										leave = False, disable = not showProgress):
+										leave = False, disable = not hasProgressBar):
 		sourceBatchEnd = min(sourceBatchStart + sourceBatchSize, numSources)
 		actualSourceBatchSize = sourceBatchEnd - sourceBatchStart
 
@@ -361,36 +362,36 @@ def FindOptimalPredictionHorizon(X_train: ArrayOrRuns,
 								 Y_train: ArrayOrRuns,
 								 X_test: Optional[ArrayOrRuns] = None,
 								 Y_test: Optional[ArrayOrRuns] = None,
-								 maxTp: int = 10,
+								 maxHorizon: int = 10,
 								 embedDimensions: int = 1,
 								 step: int = -1,
 								 knn: int = 0,
 								 exclusionRadius: int = 0,
 								 trainRowMask: Optional[ArrayOrRuns] = None,
-								 batched: bool = False,
-								 scoringFunction: Callable = Correlation,
+								 isBatched: bool = False,
 								 isScoringFinitePairsOnly: bool = False,
 								 isTieBreakDeterministic: bool = False,
+								 scoringFunction: Callable = Correlation,
 								 device = None,
 								 dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""
-	Score of the neighbor-averaging prediction at every horizon 1..maxTp.
+	Score of the neighbor-averaging prediction at every horizon 1..maxHorizon.
 
-	:param batched:		False (default): each horizon is refitted on its own training rows with
+	:param isBatched:		False (default): each horizon is refitted on its own training rows with
 						SimplexPredict. True: neighbors are found once on the training states usable at
-						maxTp and reused at every horizon (faster; the shared training set loses
-						maxTp - horizon usable rows at each shorter horizon).
+						maxHorizon and reused at every horizon (faster; the shared training set loses
+						maxHorizon - horizon usable rows at each shorter horizon).
 	:param scoringFunction:	scoringFunction(actual, predicted) -> float, applied per target
 	:param isScoringFinitePairsOnly:	drop pairs with a non-finite value before scoring
 	Other parameters as in SimplexPredict.
-	:return: [maxTp, 1 + nTargets], the horizon in column 0
+	:return: [maxHorizon, 1 + nTargets], the horizon in column 0
 	"""
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score predictions on X_test')
-	horizons = numpy.arange(1, maxTp + 1)
+	horizons = numpy.arange(1, maxHorizon + 1)
 	Y_true = Y_test if X_test is not None else Y_train
 
-	if batched:
+	if isBatched:
 		scores = _FindOptimalPredictionHorizonBatched(
 			X_train, Y_train, X_test, Y_true, horizons, embedDimensions, step, knn, exclusionRadius,
 			trainRowMask, scoringFunction, isScoringFinitePairsOnly, isTieBreakDeterministic, device, dtype)
@@ -411,8 +412,8 @@ def _FindOptimalPredictionHorizonBatched(X_train, Y_train, X_test, Y_true, horiz
 	Training rows usable at the largest horizon are usable at every smaller one, so their
 	neighbors and weights are computed once; only the gathered targets change per horizon.
 	"""
-	maxTp = int(numpy.max(horizons))
-	inputs = PreparePrediction(X_train, Y_train, X_test, embedDimensions, step, maxTp, exclusionRadius, trainRowMask)
+	maxHorizon = int(numpy.max(horizons))
+	inputs = PreparePrediction(X_train, Y_train, X_test, embedDimensions, step, maxHorizon, exclusionRadius, trainRowMask)
 	knn = ResolveNeighborCount(knn, inputs)
 	device = ResolveDevice(device)
 	neighborDistances, neighborIndices, _, _ = _FindNeighbors(inputs, knn, isTieBreakDeterministic, device, dtype)
@@ -440,14 +441,14 @@ def FindSMapNeighborhood(X_train: ArrayOrRuns,
 						 Y_test: Optional[ArrayOrRuns] = None,
 						 theta: Optional[List[float]] = None,
 						 embedDimensions: int = 1,
+						 step: int = -1,
 						 predictionHorizon: int = 1,
 						 knn: int = 0,
-						 step: int = -1,
 						 exclusionRadius: int = 0,
 						 trainRowMask: Optional[ArrayOrRuns] = None,
-						 scoringFunction: Callable = Correlation,
 						 isScoringFinitePairsOnly: bool = False,
 						 isTieBreakDeterministic: bool = False,
+						 scoringFunction: Callable = Correlation,
 						 device = None,
 						 dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""

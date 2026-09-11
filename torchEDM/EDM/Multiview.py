@@ -16,28 +16,38 @@ from .Setup import ArrayOrRuns, AsRuns, IsListOfRuns, StackHistory, ScorePredict
 from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 
 
-def MultiviewPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
-					 X_test: Optional[ArrayOrRuns] = None, Y_test: Optional[ArrayOrRuns] = None,
-					 D: int = 0, embedDimensions: int = 1, predictionHorizon: int = 1, knn: int = 0, step: int = -1,
-					 multiview: int = 0, exclusionRadius: int = 0, isRankedInSample: bool = True,
-					 scoringFunction: Callable = Correlation, isTieBreakDeterministic: bool = False,
-					 device = None, dtype: torch.dtype = torch.float64) -> MultiviewResult:
+def MultiviewPredict(X_train: ArrayOrRuns,
+					 Y_train: ArrayOrRuns,
+					 X_test: Optional[ArrayOrRuns] = None,
+					 Y_test: Optional[ArrayOrRuns] = None,
+					 embedDimensions: int = 1,
+					 step: int = -1,
+					 predictionHorizon: int = 1,
+					 knn: int = 0,
+					 exclusionRadius: int = 0,
+					 columnsPerView: int = 0,
+					 numTopViews: int = 0,
+					 isRankedInSample: bool = True,
+					 isTieBreakDeterministic: bool = False,
+					 scoringFunction: Callable = Correlation,
+					 device = None,
+					 dtype: torch.dtype = torch.float64) -> MultiviewResult:
 	"""
-	Every feature column is stacked to embedDimensions copies; every D-column combination
-	of the stacked columns predicts the target with SimplexPredict and is ranked by score;
-	the top `multiview` combinations are averaged.
+	Every feature column is stacked to embedDimensions copies; every combination of
+	columnsPerView stacked columns predicts the target with SimplexPredict and is ranked by
+	score; the top numTopViews combinations are averaged.
 
 	:param X_train:		[nTrain, nFeatures] or a list of runs
 	:param Y_train:		[nTrain, nTargets] or a list of runs
 	:param X_test:		[nTest, nFeatures] or a list of runs; None predicts the training rows in-sample
 	:param Y_test:		targets for X_test; required with X_test
-	:param D:			stacked columns per combination; 0 means the number of feature columns
 	:param embedDimensions:	copies of each feature column in the stacked state
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors per combination; 0 means D + 1
 	:param step:		row offset between copies; negative reaches into the past
-	:param multiview:	combinations averaged; 0 means the square root of the number of combinations
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param knn:			neighbors per combination; 0 means columnsPerView + 1
 	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
+	:param columnsPerView:	stacked columns per combination; 0 means the number of feature columns
+	:param numTopViews:	combinations averaged; 0 means the square root of the number of combinations
 	:param isRankedInSample:	True ranks combinations on the training rows predicting themselves
 						(faster, optimistic); False ranks them on X_test/Y_test
 	:param scoringFunction:	scoringFunction(actual, predicted) -> float used for ranking and the score
@@ -56,17 +66,17 @@ def MultiviewPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 
 	nFeatures = xRuns[0].shape[1]
 	nStacked = stackedTrain[0].shape[1]
-	if D <= 0:
-		D = nFeatures
-	if D > nStacked:
-		warn(f'MultiviewPredict: D = {D} exceeds the {nStacked} stacked columns; D set to {nStacked}')
-		D = nStacked
-	combos = list(combinations(range(nStacked), D))
-	if multiview < 1:
-		multiview = floor(sqrt(len(combos)))
-	if multiview > len(combos):
-		warn(f'MultiviewPredict: multiview = {multiview} exceeds the {len(combos)} combinations; set to {len(combos)}')
-		multiview = len(combos)
+	if columnsPerView <= 0:
+		columnsPerView = nFeatures
+	if columnsPerView > nStacked:
+		warn(f'MultiviewPredict: columnsPerView = {columnsPerView} exceeds the {nStacked} stacked columns; set to {nStacked}')
+		columnsPerView = nStacked
+	combos = list(combinations(range(nStacked), columnsPerView))
+	if numTopViews < 1:
+		numTopViews = floor(sqrt(len(combos)))
+	if numTopViews > len(combos):
+		warn(f'MultiviewPredict: numTopViews = {numTopViews} exceeds the {len(combos)} combinations; set to {len(combos)}')
+		numTopViews = len(combos)
 
 	def selectColumns(stacked, isList, combo):
 		selected = [s[:, list(combo)] for s in stacked]
@@ -86,7 +96,7 @@ def MultiviewPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 	rankInSample = isRankedInSample or X_test is None
 	rankScores = numpy.array([predict(combo, rankInSample).score[0] for combo in combos], dtype = float)
 	order = numpy.argsort(numpy.where(numpy.isnan(rankScores), -numpy.inf, rankScores))[::-1]
-	topCombos = [combos[i] for i in order[:multiview]]
+	topCombos = [combos[i] for i in order[:numTopViews]]
 
 	# predict the requested rows with the top combinations and average
 	topResults = {combo: predict(combo, X_test is None) for combo in topCombos}
@@ -114,7 +124,7 @@ def MultiviewPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 		view = view,
 		topRankPredictions = {combo: topResults[combo].Y_pred for combo in topCombos},
 		topRankStats = topRankStats,
-		D = D,
+		columnsPerView = columnsPerView,
 		embedDimensions = embedDimensions,
 		predictionHorizon = predictionHorizon,
 		score = ScorePredictions(scoringFunction, Y_true, Y_pred))

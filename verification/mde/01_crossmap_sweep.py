@@ -1,8 +1,8 @@
 """Dimension-1 cross-map sweep: per-candidate neighbor-averaging correlation, torchEDM vs pyEDM.
 
 Reference side replicates dimx's SimplexWorker (pyEDM Simplex + ComputeError)
-for every candidate column. torchEDM side is the sklearn-like MDEFitter;
-per-candidate scores read from MDE.stepwise_performance.
+for every candidate column. torchEDM side is the MDEFitter wrapper;
+per-candidate scores read from the result's stepwise_performance.
 
 Second part proves the residual differences are neighbor-tie resolution:
 recomputing the neighbor-averaging prediction manually with pyEDM's tie order (distance, |testRow-trainRow|,
@@ -41,6 +41,7 @@ def manual_neighbor_average_correlation(x, y, tr, te, tiebreak, predictionHorizo
 def main():
     from pyEDM import Simplex, ComputeError
     from torchEDM.Fitters.MDEFitter import MDEFitter
+    from torchEDM.EDM.Setup import PreparePrediction, TestTargets
 
     df = load_fly()
     numericDF = df.drop(columns=['index'])
@@ -54,18 +55,18 @@ def main():
         ref_correlation[c] = ComputeError(sdf['Observations'], sdf['Predictions'])['rho']
 
     XTrain, YTrain, XTest, YTest = fly_split(df, ts_cols)
-    fitter = MDEFitter(MaxD=1, Convergent=False, PredictionHorizon=1,
+    result = MDEFitter(MaxD=1, Convergent=False, PredictionHorizon=1,
                        MinPredictionThreshold=0.0, dtype=torch.float64,
-                       progressBar=False)
-    fitter.Fit(XTrain, YTrain, XTest, YTest)
-    mde = fitter.MDE
+                       progressBar=False).Fit(XTrain, YTrain, XTest, YTest)
     # rows the arrays were built to reproduce (see common.fly_split)
     tr, te = np.arange(0, 299), np.arange(300, 600)
-    print(f'torchEDM training states n={mde.trainData.shape[0]} | '
-          f'scored test states n={mde.testData.shape[0]}')
+    inputs = PreparePrediction(XTrain, YTrain, XTest, 1, -1, 1)
+    numScored = int(np.isfinite(TestTargets(YTest, inputs)).all(axis=1).sum())
+    print(f'torchEDM training states n={inputs.numTrainingPairs} | '
+          f'scored test states n={numScored}')
     print('reference:  train 0..298 (n=299) | test 300..599 (n=300)')
 
-    torch_correlation = {c: mde.stepwise_performance[0, 0, i] for i, c in enumerate(ts_cols)}
+    torch_correlation = {c: result.stepwise_performance[0, 0, i] for i, c in enumerate(ts_cols)}
     diffs = np.array([torch_correlation[c] - ref_correlation[c] for c in ts_cols])
     print(f'\nmax |diff| = {np.max(np.abs(diffs)):.2e}   '
           f'mean |diff| = {np.mean(np.abs(diffs)):.2e}')

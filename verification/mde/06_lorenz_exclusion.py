@@ -66,16 +66,16 @@ def main():
     slopes = [round(float(r), 5) for r in result.ccm_values[0] if not np.isnan(r)]
     print(f'\ntorchEDM post: vars={sel} correlation={correlation} growth_slopes={slopes}')
     print('torch dimensions per candidate:',
-          {c: int(fitter.MDE.candidateEmbedDimensions[0, k]) for k, c in enumerate(cols)})
+          {c: int(result.candidate_embed_dimensions[0, k]) for k, c in enumerate(cols)})
 
     print('\nsample-mode exclusionRadius handling (stacked V5 history -> V1):')
     for radius in [0, 10]:
-        ccm2 = ConvergentCrossMap(
+        growth = ConvergentCrossMap(
             y[0:500], data['V1'].values[0:500], trainSizes=[50, 75, 425, 450],
             repeats=20, embedDimensions=5, predictionHorizon=1, step=-5,
             exclusionRadius=radius, device='cpu', batchMode='sample',
-            dtype=torch.float64, seed=7777, showProgress=False)
-        r = np.asarray(ccm2.Run().forward_performance)
+            dtype=torch.float64, seed=7777, hasProgressBar=False)
+        r = np.asarray(growth.forward_performance)
         print(f'  exclusionRadius={radius}: correlation by subset size = {np.round(r, 4)}')
 
 

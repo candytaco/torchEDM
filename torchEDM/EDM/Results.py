@@ -8,7 +8,7 @@ carries time; rows are sample positions.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 
@@ -70,7 +70,7 @@ class MultiviewResult:
 	:param view:		one row per top-ranked combination: [combination, correlation, max abs error, sum abs error, RMSE]
 	:param topRankPredictions:	combination tuple -> that combination's Y_pred
 	:param topRankStats:		combination tuple -> [correlation, max abs error, sum abs error, RMSE]
-	:param D:			columns of the stacked state used per combination
+	:param columnsPerView:	columns of the stacked state used per combination
 	:param embedDimensions:	copies of each feature column in the stacked state
 	:param predictionHorizon:	rows between a state and the target it predicts
 	:param score:		[nTargets] scoringFunction over the ensemble (Y_test, Y_pred) pairs; None when Y_test was not given
@@ -79,7 +79,7 @@ class MultiviewResult:
 	view: List
 	topRankPredictions: Dict
 	topRankStats: Dict
-	D: int
+	columnsPerView: int
 	embedDimensions: int
 	predictionHorizon: int
 	score: Optional[np.ndarray] = None
@@ -99,12 +99,19 @@ class MDEResult:
 	"""
 	Greedy variable selection (manifold dimensional expansion).
 
-	:param Y_pred:		final predictions shaped like Y_test, one column per target; None if not requested
-	:param selected_variables:	selected X columns per target, shape [nTargets, maxD], padded with -1
-	:param performance:	score after each addition, shape [nTargets, maxD], padded with NaN
-	:param ccm_values:	convergence slopes of the selected variables, shape [nTargets, maxD], padded with NaN
-	:param stepwise_performance:	score of every candidate at every step, shape [nTargets, maxD, nColumns]
-	:param timeDelayResults:	(variable, delay, improvement, score) tuples, or None
+	Column indices refer to the candidate view [X columns | target columns], so nColumns is
+	nFeatures + nTargets and a target's own column is nFeatures + targetIndex.
+
+	:param Y_pred:		final predictions shaped like Y_test, one column per target
+	:param selected_variables:	selected columns per target, shape [nTargets, maxVariables], padded with -1
+	:param performance:	score after each addition, shape [nTargets, maxVariables], padded with NaN
+	:param ccm_values:	convergence slopes of the selected variables, shape [nTargets, maxVariables], padded with NaN
+	:param stepwise_performance:	score of every candidate at every step, shape [nTargets, maxVariables, nColumns]
+	:param candidate_embed_dimensions:	best embedding dimension per (target, candidate), shape [nTargets, nColumns];
+		-1 where the search did not run
+	:param candidate_peak_scores:	the score at that embedding dimension, shape [nTargets, nColumns]; NaN where the search did not run
+	:param candidate_slopes:	convergence slope per (target, candidate), shape [nTargets, nColumns]; NaN for a
+		candidate the run never checked, -inf for a check whose slope was NaN
 	:param score:		[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
 	Y_pred: Optional[ArrayOrList]
@@ -112,27 +119,9 @@ class MDEResult:
 	performance: np.ndarray
 	ccm_values: np.ndarray
 	stepwise_performance: np.ndarray
-	timeDelayResults: List[Tuple[int, int, float, float]] = None
-	score: Optional[np.ndarray] = None
-
-
-@dataclass(frozen = True)
-class MDECVResult:
-	"""
-	Cross-validated variable selection from the MDECV class.
-
-	:param Y_pred:		final predictions shaped like Y_test, or None
-	:param selected_variables:	final selected X columns, shape [nTargets, maxD], padded with -1
-	:param fold_results:	MDEResult per fold
-	:param fold_performances:	score per fold, shape [nFolds] or [nFolds, nTargets]
-	:param best_fold:	index of the best fold
-	:param score:		[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
-	"""
-	Y_pred: Optional[ArrayOrList]
-	selected_variables: np.ndarray
-	fold_results: List[MDEResult]
-	fold_performances: np.ndarray
-	best_fold: np.ndarray
+	candidate_embed_dimensions: Optional[np.ndarray] = None
+	candidate_peak_scores: Optional[np.ndarray] = None
+	candidate_slopes: Optional[np.ndarray] = None
 	score: Optional[np.ndarray] = None
 
 
@@ -141,12 +130,12 @@ class MDECVResults:
 	"""
 	Cross-validated variable selection from MDEFitterCV.
 
-	:param fold_selected_variables:	selected X columns per fold, shape [nFolds, nTargets, maxD], padded with -1
-	:param fold_stepwise_performances:	candidate scores per fold, shape [nFolds, nTargets, maxD, nColumns]
+	:param fold_selected_variables:	selected X columns per fold, shape [nFolds, nTargets, maxVariables], padded with -1
+	:param fold_stepwise_performances:	candidate scores per fold, shape [nFolds, nTargets, maxVariables, nColumns]
 	:param fold_accuracies:	score per fold and target, shape [nFolds, nTargets]
 	:param fold_Y_pred:		Y_pred of each fold's held-out data
 	:param best_fold:		best fold per target, shape [nTargets]
-	:param selected_variables:	final selected X columns, shape [nTargets, maxD], padded with -1
+	:param selected_variables:	final selected X columns, shape [nTargets, maxVariables], padded with -1
 	:param Y_pred:			final predictions shaped like Y_test, or None
 	:param score:			[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
@@ -163,7 +152,7 @@ class MDECVResults:
 	def selected_stepwise_performances(self) -> np.ndarray:
 		"""
 		Score of the variable actually selected at each step, per fold and target:
-		fold_stepwise_performances [nFolds, nTargets, maxD, nColumns] indexed by
+		fold_stepwise_performances [nFolds, nTargets, maxVariables, nColumns] indexed by
 		fold_selected_variables, NaN where nothing was selected.
 		"""
 		selected = self.fold_selected_variables
@@ -231,8 +220,6 @@ class ResultsIO:
 			return ResultsIO._MultiviewArrays(result)
 		if isinstance(result, MDEResult):
 			return ResultsIO._MDEArrays(result)
-		if isinstance(result, MDECVResult):
-			return ResultsIO._MDECVArrays(result)
 		if isinstance(result, MDECVResults):
 			return ResultsIO._MDECVResultsArrays(result)
 		if isinstance(result, BatchedCCMResult):
@@ -249,7 +236,6 @@ class ResultsIO:
 			'SMapResult': ResultsIO._LoadSMap,
 			'MultiviewResult': ResultsIO._LoadMultiview,
 			'MDEResult': ResultsIO._LoadMDE,
-			'MDECVResult': ResultsIO._LoadMDECV,
 			'MDECVResults': ResultsIO._LoadMDECVResults,
 			'BatchedCCMResult': ResultsIO._LoadBatchedCCM,
 			'CCMCVResult': ResultsIO._LoadCCMCV}
@@ -347,7 +333,7 @@ class ResultsIO:
 		for i, entry in enumerate(result.view):
 			view_array[i] = entry
 		arrays = dict(view = view_array, combo_keys = combo_keys, topRankStats_values = stats_values,
-					  n_combos = np.array(len(combos)), D = np.array(result.D),
+					  n_combos = np.array(len(combos)), columnsPerView = np.array(result.columnsPerView),
 					  embedDimensions = np.array(result.embedDimensions),
 					  predictionHorizon = np.array(result.predictionHorizon))
 		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
@@ -366,22 +352,10 @@ class ResultsIO:
 		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
 			arrays['score'] = np.asarray(result.score)
-		if result.timeDelayResults is not None:
-			arrays['timeDelayResults'] = np.array(result.timeDelayResults, dtype = float)
-		return arrays
-
-	@staticmethod
-	def _MDECVArrays(result: MDECVResult) -> dict:
-		arrays = dict(selected_variables = result.selected_variables,
-					  fold_performances = result.fold_performances,
-					  best_fold = np.asarray(result.best_fold),
-					  n_folds = np.array(len(result.fold_results)))
-		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
-		if result.score is not None:
-			arrays['score'] = np.asarray(result.score)
-		for i, fold in enumerate(result.fold_results):
-			for key, value in ResultsIO._MDEArrays(fold).items():
-				arrays[f'fold_{i}_{key}'] = value
+		for key in ('candidate_embed_dimensions', 'candidate_peak_scores', 'candidate_slopes'):
+			value = getattr(result, key)
+			if value is not None:
+				arrays[key] = np.asarray(value)
 		return arrays
 
 	@staticmethod
@@ -460,37 +434,24 @@ class ResultsIO:
 			view = list(data['view']),
 			topRankPredictions = {combo_keys[i]: ResultsIO._UnpackRuns(data, f'topRankPred_{i}') for i in range(n_combos)},
 			topRankStats = {combo_keys[i]: stats_values[i] for i in range(n_combos)},
-			D = int(data['D']),
+			columnsPerView = int(data['columnsPerView'] if 'columnsPerView' in data else data['D']),
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
 			score = data['score'] if 'score' in data else None)
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
-		time_delay = None
-		if 'timeDelayResults' in data:
-			time_delay = [(int(row[0]), int(row[1]), float(row[2]), float(row[3])) for row in data['timeDelayResults']]
+		def optional(key):
+			return data[key] if key in data else None
 		return MDEResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
 						 selected_variables = data['selected_variables'],
 						 performance = data['accuracy'],
 						 ccm_values = data['ccm_values'],
 						 stepwise_performance = data['stepwise_performance'],
-						 timeDelayResults = time_delay,
-						 score = data['score'] if 'score' in data else None)
-
-	@staticmethod
-	def _LoadMDECV(data) -> MDECVResult:
-		n_folds = int(data['n_folds'])
-		fold_results = []
-		for i in range(n_folds):
-			prefix = f'fold_{i}_'
-			fold_results.append(ResultsIO._LoadMDE({key[len(prefix):]: data[key] for key in list(data) if key.startswith(prefix)}))
-		return MDECVResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
-						   selected_variables = data['selected_variables'],
-						   fold_results = fold_results,
-						   fold_performances = data['fold_performances'],
-						   best_fold = data['best_fold'],
-						   score = data['score'] if 'score' in data else None)
+						 candidate_embed_dimensions = optional('candidate_embed_dimensions'),
+						 candidate_peak_scores = optional('candidate_peak_scores'),
+						 candidate_slopes = optional('candidate_slopes'),
+						 score = optional('score'))
 
 	@staticmethod
 	def _LoadMDECVResults(data) -> MDECVResults:

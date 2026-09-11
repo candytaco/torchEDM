@@ -25,7 +25,6 @@ from torchEDM.EDM.Predictors import SimplexPredict, SMapPredict, SimplexGenerate
 from torchEDM.EDM.Multiview import MultiviewPredict
 from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
 from torchEDM.EDM.MDE import MDE
-from torchEDM.EDM.MDECV import MDECV
 from torchEDM.EDM.Results import ResultsIO
 from torchEDM.EDM.Setup import PreparePrediction
 from torchEDM.EDM._core import ComputePairwiseDistances, SelectNearestNeighbors
@@ -320,14 +319,14 @@ class test_Multiview(unittest.TestCase):
 		df = Frame('block_3sp'); d = df.values.astype(float)
 		cols = [df.columns.get_loc(c) for c in ('x_t', 'y_t', 'z_t')]; x = cols[0]
 		Y_test = d[98:198, x].copy(); Y_test[:3] = nan
-		result = MultiviewPredict(d[0:100, cols], d[0:100, x], d[98:198, cols], Y_test, D = 0, embedDimensions = 3,
+		result = MultiviewPredict(d[0:100, cols], d[0:100, x], d[98:198, cols], Y_test, columnsPerView = 0, embedDimensions = 3,
 								  predictionHorizon = 1, isRankedInSample = False)
 		reference = Validation('Multiview_pred_valid.csv')['Predictions'].values	# row k <-> data row 100 + k
 		self.assertTrue(numpy.allclose(reference[1:98], result.Y_pred[3:100], atol = 1e-4))
 		combos = Validation('Multiview_combos_valid.csv')
 		self.assertTrue(numpy.allclose(combos['correlation'].values, [row[1] for row in result.view], atol = 1e-4))
 		self.assertTrue(numpy.allclose(combos['RMSE'].values, [row[4] for row in result.view], atol = 1e-4))
-		self.assertEqual(result.D, 3)
+		self.assertEqual(result.columnsPerView, 3)
 		self.assertEqual(len(result.topRankPredictions), 9)
 
 		fitted = MultiviewFitter(EmbedDimensions = 3, PredictionHorizon = 1, IsRankedInSample = False).Fit(d[0:100, cols], d[0:100, x], d[98:198, cols], Y_test)
@@ -344,12 +343,12 @@ class test_CrossMap(unittest.TestCase):
 		a, t = df.columns.get_loc('anchovy'), df.columns.get_loc('np_sst')
 		reference = Validation('CCM_anch_sst_valid.csv').values
 		forward = ConvergentCrossMap(d[:, [a, a]], d[:, t], trainSizes = self.sizes, repeats = 100, embedDimensions = 3,
-									 predictionHorizon = 0, showProgress = False).Run()
+									 predictionHorizon = 0, hasProgressBar = False)
 		self.assertTrue(numpy.allclose(forward.forward_performance[:, 0], reference[:, 1], atol = 5e-2))
 		self.assertTrue(numpy.allclose(forward.forward_performance[:, 1], reference[:, 1], atol = 5e-2))
 		# the reverse direction is the same call with X and Y exchanged
 		reverse = ConvergentCrossMap(d[:, t], d[:, a], trainSizes = self.sizes, repeats = 100, embedDimensions = 3,
-									 predictionHorizon = 0, showProgress = False).Run()
+									 predictionHorizon = 0, hasProgressBar = False)
 		self.assertTrue(numpy.allclose(reverse.forward_performance, reference[:, 2], atol = 5e-2))
 		fitted = CCMFitter(TrainSizes = self.sizes, numRepeats = 100, EmbedDimensions = 3, PredictionHorizon = 0, progressBar = False).Fit(d[:, a], d[:, t])
 		self.assertTrue(numpy.allclose(fitted.forward_performance, reference[:, 1], atol = 5e-2))
@@ -359,14 +358,14 @@ class test_CrossMap(unittest.TestCase):
 		a, t = df.columns.get_loc('anchovy'), df.columns.get_loc('np_sst')
 		reference = Validation('CCM_anch_sst_valid.csv').values
 		result = ConvergentCrossMap(d[:, a], d[:, t], trainSizes = self.sizes, repeats = 100, embedDimensions = 3,
-									predictionHorizon = 0, batchMode = 'sample', seed = 3, showProgress = False).Run()
+									predictionHorizon = 0, batchMode = 'sample', seed = 3, hasProgressBar = False)
 		self.assertTrue(numpy.allclose(result.forward_performance, reference[:, 1], atol = 5e-2))
 
 	def test_nan(self):
 		d = CircleWithNaN()
 		reference = Validation('CCM_nan_valid.csv').values
 		result = ConvergentCrossMap(d[:, 1], d[:, 2], trainSizes = list(range(10, 191, 10)), repeats = 20, embedDimensions = 2,
-									predictionHorizon = 5, seed = 777, showProgress = False).Run()
+									predictionHorizon = 5, seed = 777, hasProgressBar = False)
 		self.assertTrue(numpy.allclose(result.forward_performance, reference[:, 1], atol = 5e-2))
 
 	def test_many_sources_and_targets(self):
@@ -374,11 +373,11 @@ class test_CrossMap(unittest.TestCase):
 		sources = [df.columns.get_loc(c) for c in ('Var 1', 'Var3', 'Var 5 1')]
 		targets = [df.columns.get_loc(c) for c in ('Var 2', 'Var 4 A')]
 		result = ConvergentCrossMap(d[:, sources], d[:, targets], trainSizes = [20, 50, 90], repeats = 3, embedDimensions = 5,
-									predictionHorizon = 0, seed = 777, showProgress = False).Run()
+									predictionHorizon = 0, seed = 777, hasProgressBar = False)
 		self.assertEqual(result.forward_performance.shape, (3, 3, 2))
 		self.assertTrue(numpy.isfinite(result.forward_performance).all())
 		searched = ConvergentCrossMap(d[:, sources], trainSizes = [20, 50, 90], repeats = 3, maxEmbedDimensions = 4,
-									  showProgress = False).Run()
+									  hasProgressBar = False)
 		self.assertEqual(len(searched.forward_embed_dimensions), 3)
 		self.assertEqual(searched.forward_performance.shape, (3, 3, 3))
 
@@ -396,7 +395,7 @@ class test_Hyperparameters(unittest.TestCase):
 		"""(EmbedDim) Each embedding dimension on its own complete rows reproduces the reference."""
 		X_train, X_test, Y_test = self.lorenzArrays()
 		scores = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train, X_train, X_test, Y_test, maxDims = 12,
-																	predictionHorizon = 15, step = -5, batched = False)
+																	predictionHorizon = 15, step = -5, isBatched = False)
 		reference = Validation('EmbedDim_valid.csv').values[:, 1]
 		self.assertTrue(numpy.allclose(scores, reference, atol = 1e-6))
 
@@ -404,17 +403,17 @@ class test_Hyperparameters(unittest.TestCase):
 		"""The shared-row pass trims the training rows at the largest embedding dimension, so it is close, not exact."""
 		X_train, X_test, Y_test = self.lorenzArrays()
 		scores = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train, X_train, X_test, Y_test, maxDims = 12,
-																	predictionHorizon = 15, step = -5, batched = True)
+																	predictionHorizon = 15, step = -5, isBatched = True)
 		reference = Validation('EmbedDim_valid.csv').values[:, 1]
 		self.assertTrue(numpy.allclose(scores, reference, atol = 5e-2))
 
 	def test_embed_dimension_variants(self):
 		"""Per-column, self-prediction, and multi-target sweeps reduce to the joint single-column sweep."""
 		X_train, X_test, Y_test = self.lorenzArrays()
-		common = dict(maxDims = 12, predictionHorizon = 15, step = -5, batched = True)
+		common = dict(maxDims = 12, predictionHorizon = 15, step = -5, isBatched = True)
 		joint = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train, X_train, X_test, Y_test, **common)
 		separate = Hyperparameters.FindOptimalEmbeddingDimensionality(numpy.column_stack([X_train, X_train]), X_train,
-																	  numpy.column_stack([X_test, X_test]), Y_test, joint = False, **common)
+																	  numpy.column_stack([X_test, X_test]), Y_test, isJoint = False, **common)
 		self.assertEqual(separate.shape, (2, 12))
 		self.assertTrue(numpy.allclose(separate[0], joint) and numpy.allclose(separate[1], joint))
 		selfPrediction = Hyperparameters.FindOptimalEmbeddingDimensionality(X_train[:, None], None, X_test[:, None], **common)
@@ -424,19 +423,19 @@ class test_Hyperparameters(unittest.TestCase):
 		self.assertEqual(multiTarget.shape, (2, 12))
 		self.assertTrue(numpy.allclose(multiTarget[0], joint) and numpy.allclose(multiTarget[1], joint))
 		embedDimensions = Hyperparameters.FindSelfPredictionEmbeddingDimension(Frame('Lorenz5D').values[0:800, 1:6].astype(float), maxDims = 8,
-																	  device = 'cpu', dtype = torch.float32, showProgress = False)
+																	  device = 'cpu', dtype = torch.float32, hasProgressBar = False)
 		self.assertEqual(embedDimensions.shape, (5,))
 		self.assertTrue(((embedDimensions >= 1) & (embedDimensions <= 8)).all())
 
 	def test_prediction_horizon(self):
 		"""(PredictInterval) Every horizon refitted on its own rows reproduces the reference."""
 		df = Frame('block_3sp'); d = df.values.astype(float); x = df.columns.get_loc('x_t')
-		scores = Hyperparameters.FindOptimalPredictionHorizon(d[0:150, x], d[0:150, x], d[148:200, x], d[148:200, x], maxTp = 15,
+		scores = Hyperparameters.FindOptimalPredictionHorizon(d[0:150, x], d[0:150, x], d[148:200, x], d[148:200, x], maxHorizon = 15,
 															  embedDimensions = 3, isScoringFinitePairsOnly = True)
 		reference = Validation('PredictInterval_valid.csv').values
 		self.assertTrue(numpy.allclose(scores, reference, atol = 1e-6))
-		shared = Hyperparameters.FindOptimalPredictionHorizon(d[0:150, x], d[0:150, x], d[148:200, x], d[148:200, x], maxTp = 15,
-															  embedDimensions = 3, batched = True, isScoringFinitePairsOnly = True)
+		shared = Hyperparameters.FindOptimalPredictionHorizon(d[0:150, x], d[0:150, x], d[148:200, x], d[148:200, x], maxHorizon = 15,
+															  embedDimensions = 3, isBatched = True, isScoringFinitePairsOnly = True)
 		self.assertEqual(shared.shape, (15, 2))
 		self.assertTrue(numpy.allclose(shared[:, 0], numpy.arange(1, 16)))
 
@@ -463,8 +462,7 @@ class test_MDE(unittest.TestCase):
 
 	def test_mde1(self):
 		"""Selected variables and scores match the reference (lib rows 0..299, pred rows 300..600)."""
-		mde = MDE(self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601], maxD = 5, convergent = False, predictionHorizon = 1)
-		result = mde.Run()
+		result = MDE(self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601], maxVariables = 5, convergenceCheck = False, predictionHorizon = 1)
 		selected = [self.colNames[i] for i in result.selected_variables[0] if i >= 0]
 		self.assertEqual(selected, self.truth['variables'].tolist())
 		performance = result.performance[0][~numpy.isnan(result.performance[0])]
@@ -472,13 +470,14 @@ class test_MDE(unittest.TestCase):
 			self.assertAlmostEqual(float(computed), float(expected), places = 4)
 		self.assertEqual(result.Y_pred.shape, (301, 1))
 		self.assertTrue(numpy.isnan(result.Y_pred[0, 0]) and numpy.isfinite(result.Y_pred[1:, 0]).all())
+		self.assertEqual(result.candidate_embed_dimensions.shape, (1, self.X.shape[1] + 1))
 		fitted = MDEFitter(MaxD = 5, Convergent = False, PredictionHorizon = 1, progressBar = False).Fit(self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601])
 		self.assertTrue(numpy.array_equal(fitted.selected_variables, result.selected_variables))
 
 	def test_mde2(self):
 		"""A duplicated target selects the same variables for both columns."""
 		Y = numpy.column_stack([self.y, self.y])
-		result = MDE(self.X[0:300], Y[0:300], self.X[300:601], Y[300:601], maxD = 5, convergent = False, predictionHorizon = 1).Run()
+		result = MDE(self.X[0:300], Y[0:300], self.X[300:601], Y[300:601], maxVariables = 5, convergenceCheck = False, predictionHorizon = 1)
 		self.assertEqual(result.selected_variables.shape[0], 2)
 		for j in range(2):
 			selected = [self.colNames[i] for i in result.selected_variables[j] if i >= 0]
@@ -489,13 +488,18 @@ class test_MDE(unittest.TestCase):
 		self.assertEqual(result.Y_pred.shape, (301, 2))
 
 	def test_mde_convergent_in_sample(self):
-		"""The convergence gate runs and records slopes for the selected variables."""
-		result = MDE(self.X[0:300], self.y[0:300], maxD = 2, convergent = 'post', CCMSeed = 1, MinCandidatePerformance = 0.3).Run()
+		"""The convergence gate runs and records slopes for the selected variables and the checked candidates."""
+		result = MDE(self.X[0:300], self.y[0:300], maxVariables = 2, convergenceCheck = 'post', convergenceSeed = 1, minCandidateScore = 0.3)
 		self.assertEqual(int((result.selected_variables[0] >= 0).sum()), 2)
 		self.assertTrue(numpy.isfinite(result.ccm_values[0, :2]).all())
+		checked = result.candidate_slopes[0, ~numpy.isnan(result.candidate_slopes[0])]
+		self.assertGreaterEqual(len(checked), 2)
+		for selected, slope in zip(result.selected_variables[0, :2], result.ccm_values[0, :2]):
+			self.assertEqual(result.candidate_slopes[0, selected], slope)
+		self.assertTrue((result.candidate_embed_dimensions[0, :self.X.shape[1]] >= 1).all())
 
 	def test_mde_cross_validation(self):
-		"""Leave-one-run-out selection over three runs and a final prediction."""
+		"""Leave-one-run-out selection over three runs and a final prediction; then contiguous folds of one run."""
 		runs = [(0, 300), (300, 600), (600, 900)]
 		X = [self.X[a:b] for a, b in runs]; Y = [self.y[a:b] for a, b in runs]
 		fitter = MDEFitterCV(MaxD = 2, Convergent = False, LeaveOneRunOut = True, progressBar = False)
@@ -505,11 +509,11 @@ class test_MDE(unittest.TestCase):
 		predicted = fitter.Predict(self.X[900:1061], self.y[900:1061])
 		self.assertEqual(predicted.Y_pred.shape, (161, 1))
 		self.assertTrue(numpy.isfinite(predicted.score).all())
-		cv = MDECV(self.X[0:600], self.y[0:600], maxD = 2, convergent = False, folds = 3, include_target = False)
-		cv.fit()
-		final = cv.predict(self.X[600:800], self.y[600:800])
+		blocks = MDEFitterCV(MaxD = 2, Convergent = False, LeaveOneRunOut = False, Folds = 3, progressBar = False)
+		blockResult = blocks.Fit(self.X[0:600], self.y[0:600])
+		self.assertEqual(blockResult.fold_selected_variables.shape, (3, 1, 2))
+		final = blocks.Predict(self.X[600:800], self.y[600:800])
 		self.assertEqual(final.Y_pred.shape, (200, 1))
-		self.assertEqual(len(final.fold_results), 3)
 
 
 if __name__ == '__main__':

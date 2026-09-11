@@ -114,7 +114,7 @@ def plot_embed_dimension(result: np.ndarray, title: str = "", block: bool = True
 
 def plot_predict_interval(result: np.ndarray, title: str = "", block: bool = True):
 	"""
-	:param result:	[maxTp, 1 + nTargets] from FindOptimalPredictionHorizon
+	:param result:	[maxHorizon, 1 + nTargets] from FindOptimalPredictionHorizon
 	"""
 	_plot_sweep(result, 'Prediction horizon', title or "Prediction horizon", block)
 

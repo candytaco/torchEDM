@@ -43,12 +43,12 @@ def main():
     fwd = df['FWD'].values
     tor_s = []
     for c in ts_cols:
-        ccm = ConvergentCrossMap(
+        growth = ConvergentCrossMap(
             fwd, df[c].values, trainSizes=libSizes, repeats=20,
             embedDimensions=ref[c]['E'], predictionHorizon=1, step=-1,
             exclusionRadius=0, device='cpu', batchMode='sample',
-            dtype=torch.float64, seed=SEED, showProgress=False)
-        correlation = np.asarray(ccm.Run().forward_performance)
+            dtype=torch.float64, seed=SEED, hasProgressBar=False)
+        correlation = np.asarray(growth.forward_performance)
         tor_s.append(float(LinearRegression().fit(
             x.reshape(-1, 1), np.nan_to_num(correlation)).coef_[0]))
         print(f'{c}: embedding dimension={ref[c]["E"]} ref={ref[c]["slope"]:+.5f} '

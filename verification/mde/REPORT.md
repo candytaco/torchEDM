@@ -179,7 +179,7 @@ Each divergence above was reviewed and resolved as follows.
   prediction and consumed for the target→candidate reconstruction — the
   tune/consume pairing copied as deliberate reference design (obfuscated by
   its CCM API taking a single dimension). Implemented as one upfront batched sweep
-  (`FindOptimalEmbeddingDimensionality(candidates, target, joint=False)`),
+  (`FindOptimalEmbeddingDimensionality(candidates, target, isJoint=False)`),
   argmax per candidate on raw scores (torchEDM does not round; the
   reference's 4-decimal tie-rounding is not copied). Two search modes: the
   default shares the most restrictive (maxDims) row set across all embedding dimensions in

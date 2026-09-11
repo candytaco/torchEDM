@@ -27,8 +27,8 @@ class CCMFitterCV(EDMFitter):
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 device: str = 'cuda',
-				 x_batch: int = 1000,
-				 y_batch: Optional[int] = None,
+				 sourceBatchSize: int = 1000,
+				 targetBatchSize: Optional[int] = None,
 				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variables',
@@ -52,8 +52,8 @@ class CCMFitterCV(EDMFitter):
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
-		self.x_batch = x_batch
-		self.y_batch = y_batch if y_batch is not None else 2000
+		self.sourceBatchSize = sourceBatchSize
+		self.targetBatchSize = targetBatchSize if targetBatchSize is not None else 2000
 		self.targetVRAM = targetVRAM
 		self.dtype = dtype
 		self.batchMode = batchMode
@@ -77,7 +77,7 @@ class CCMFitterCV(EDMFitter):
 		self.foldResults = []
 		progressBar = ProgressBar(total = self.splitter.GetNSplits(), desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
 		for trainSlices, testSlices in self.splitter.Split():
-			ccm = ConvergentCrossMap(
+			foldResult = ConvergentCrossMap(
 				SliceRuns(xRuns, trainSlices),
 				None if yRuns is None else SliceRuns(yRuns, trainSlices),
 				SliceRuns(xRuns, testSlices),
@@ -92,14 +92,14 @@ class CCMFitterCV(EDMFitter):
 				exclusionRadius = self.ExclusionRadius,
 				seed = self.seed,
 				device = self.device,
-				x_batch = self.x_batch,
-				y_batch = self.y_batch,
+				sourceBatchSize = self.sourceBatchSize,
+				targetBatchSize = self.targetBatchSize,
 				targetVRAM = self.targetVRAM,
 				dtype = self.dtype,
-				showProgress = False,
+				hasProgressBar = False,
 				batchMode = self.batchMode,
 				sampleBatchSize = self.sampleBatchSize)
-			self.foldResults.append(ccm.Run())
+			self.foldResults.append(foldResult)
 			progressBar.update(1)
 		progressBar.close()
 

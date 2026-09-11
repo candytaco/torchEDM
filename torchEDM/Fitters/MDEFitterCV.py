@@ -46,7 +46,6 @@ class MDEFitterCV(EDMFitter):
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
 				 IterativeDimensionSearch: bool = False,
-				 TimeDelay: int = 0,
 				 progressBar: bool = True,
 				 device = None):
 		"""
@@ -83,7 +82,6 @@ class MDEFitterCV(EDMFitter):
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidatePerformance = MinCandidatePerformance
 		self.IterativeDimensionSearch = IterativeDimensionSearch
-		self.TimeDelay = TimeDelay
 		self.device = device
 
 		self.xRuns = None
@@ -97,30 +95,30 @@ class MDEFitterCV(EDMFitter):
 		self.bestVariablesInFold = None
 		self.bestFoldAccuracy = None
 
-	def MDEKeywords(self, columns = None, convergent = None) -> dict:
-		return dict(maxD = self.MaxD, include_target = self.IncludeTarget,
-					convergent = self.Convergent if convergent is None else convergent,
-					metric = self.Metric, batch_size = self.BatchSize, dtype = self.dtype, columns = columns,
+	def MDEKeywords(self, candidateColumns = None, convergenceCheck = None) -> dict:
+		return dict(maxVariables = self.MaxD, isTargetIncluded = self.IncludeTarget,
+					convergenceCheck = self.Convergent if convergenceCheck is None else convergenceCheck,
+					candidateMetric = self.Metric, batchSize = self.BatchSize, dtype = self.dtype, candidateColumns = candidateColumns,
 					embedDimensions = self.EmbedDimensions, predictionHorizon = self.PredictionHorizon,
-					knn = self.KNN, step = self.Step, exclusionRadius = self.ExclusionRadius, verbose = self.Verbose,
-					useSMap = self.UseSMap, theta = self.Theta, stdThreshold = self.stdThreshold,
-					CCMLibraryPercentiles = self.CCMLibraryPercentiles, CCMNumSamples = self.CCMNumSamples,
-					CCMConvergenceThreshold = self.CCMConvergenceThreshold, CCMSeed = self.CCMSeed,
-					CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
-					MinPredictionThreshold = self.MinPredictionThreshold,
-					MinCandidatePerformance = self.MinCandidatePerformance,
-					IterativeDimensionSearch = self.IterativeDimensionSearch, TimeDelay = self.TimeDelay,
+					knn = self.KNN, step = self.Step, exclusionRadius = self.ExclusionRadius, isVerbose = self.Verbose,
+					isUsingSMap = self.UseSMap, theta = self.Theta, stdThreshold = self.stdThreshold,
+					convergenceSubsetPercentiles = self.CCMLibraryPercentiles, convergenceRepeats = self.CCMNumSamples,
+					convergenceSlopeThreshold = self.CCMConvergenceThreshold, convergenceSeed = self.CCMSeed,
+					convergenceMaxEmbedDimensions = self.CCMMaxEmbeddingDimensions,
+					minPredictionScore = self.MinPredictionThreshold,
+					minCandidateScore = self.MinCandidatePerformance,
+					isIterativeDimensionSearch = self.IterativeDimensionSearch,
 					device = self.device)
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None, initialVariables: Optional[List[int]] = None,
-			scoring_function = Correlation) -> MDECVResults:
+			scoringFunction = Correlation) -> MDECVResults:
 		"""
 		:param X_train:	candidate columns, an array or a list of runs
 		:param Y_train:	targets matching X_train
 		:param X_test:	kept for Predict; optional
 		:param Y_test:	kept for Predict; optional
 		:param initialVariables:	candidate X columns; None uses all
-		:param scoring_function:	scoring_function(actual, predicted) -> float
+		:param scoringFunction:	scoringFunction(actual, predicted) -> float
 		"""
 		self.xRuns = AsRuns(X_train)
 		self.yRuns = AsRuns(Y_train)
@@ -136,7 +134,7 @@ class MDEFitterCV(EDMFitter):
 		for trainSlices, testSlices in self.splitter.Split():
 			foldResult = self.FitSingleFold(SliceRuns(self.xRuns, trainSlices), SliceRuns(self.yRuns, trainSlices),
 											SliceRuns(self.xRuns, testSlices), SliceRuns(self.yRuns, testSlices),
-											initialVariables, scoring_function = scoring_function)
+											initialVariables, scoringFunction = scoringFunction)
 			self.foldResults.append(foldResult)
 			foldAccuracyRows.append(foldResult.score)
 			progressBar.update(1)
@@ -162,13 +160,13 @@ class MDEFitterCV(EDMFitter):
 			selected_variables = self.bestVariablesInFold)
 		return self.Result
 
-	def FitSingleFold(self, X_train, Y_train, X_test, Y_test, columns = None, convergent = None,
-					  return_predictions: bool = True, scoring_function = Correlation) -> MDEResult:
-		mde = MDE(X_train, Y_train, X_test, Y_test, **self.MDEKeywords(columns, convergent))
-		return mde.Run(return_predictions = return_predictions, scoring_function = scoring_function)
+	def FitSingleFold(self, X_train, Y_train, X_test, Y_test, candidateColumns = None, convergenceCheck = None,
+					  scoringFunction = Correlation) -> MDEResult:
+		return MDE(X_train, Y_train, X_test, Y_test, scoringFunction = scoringFunction,
+				   **self.MDEKeywords(candidateColumns, convergenceCheck))
 
 	def SelectedVariables(self) -> numpy.ndarray:
-		"""Final [nTargets, maxD] selection per FinalVariableSelection, padded with -1."""
+		"""Final [nTargets, MaxD] selection per FinalVariableSelection, padded with -1."""
 		nTargets = self.yRuns[0].shape[1]
 		if self.FinalVariableSelection == 'frequency':
 			return self.GetMostFrequentVariables()
@@ -179,12 +177,11 @@ class MDEFitterCV(EDMFitter):
 					allSelected |= set(int(v) for v in foldSelection[j] if v >= 0)
 			result = self.FitSingleFold(self.xRuns if len(self.xRuns) > 1 else self.xRuns[0],
 										self.yRuns if len(self.yRuns) > 1 else self.yRuns[0],
-										None, None, sorted(allSelected), convergent = False)
+										None, None, sorted(allSelected), convergenceCheck = False)
 			return result.selected_variables
 		return self.bestVariablesInFold
 
-	def Predict(self, X_test = None, Y_test = None, return_predictions: bool = True,
-				scoring_function = Correlation) -> MDECVResults:
+	def Predict(self, X_test = None, Y_test = None, scoringFunction = Correlation) -> MDECVResults:
 		"""
 		Predict test data from all training runs with the final variables.
 
@@ -215,7 +212,7 @@ class MDEFitterCV(EDMFitter):
 				[run[:, variables] for run in xTestRuns], [run[:, [j]] for run in yTestRuns],
 				embedDimensions = 1, step = self.Step, predictionHorizon = self.PredictionHorizon,
 				knn = self.KNN if self.KNN > 0 else len(variables) + 1,
-				scoringFunction = scoring_function, device = self.device, dtype = self.dtype)
+				scoringFunction = scoringFunction, device = self.device, dtype = self.dtype)
 			for run, values in zip(Y_pred, result.Y_pred):
 				run[:, j] = values[:, 0]
 			scores[j] = result.score[0]
@@ -227,11 +224,11 @@ class MDEFitterCV(EDMFitter):
 			fold_Y_pred = self.Result.fold_Y_pred,
 			best_fold = self.bestFold,
 			selected_variables = variablesPerTarget,
-			Y_pred = (Y_pred[0] if isSingleTestRun else Y_pred) if return_predictions else None,
+			Y_pred = Y_pred[0] if isSingleTestRun else Y_pred,
 			score = scores)
 		return self.Result
 
-	def ReconstructFoldPredictions(self, results: MDECVResults, X_train, Y_train, scoring_function = Correlation):
+	def ReconstructFoldPredictions(self, results: MDECVResults, X_train, Y_train, scoringFunction = Correlation):
 		"""
 		Recompute each fold's held-out predictions from the variable selections stored in a
 		saved MDECVResults, for files that predate fold_Y_pred.
@@ -259,7 +256,7 @@ class MDEFitterCV(EDMFitter):
 					[run[:, [j]] for run in SliceRuns(yRuns, trainSlices)],
 					[run[:, variables] for run in testX], [run[:, [j]] for run in testY],
 					embedDimensions = 1, step = self.Step, predictionHorizon = self.PredictionHorizon,
-					knn = len(variables) + 1, scoringFunction = scoring_function, device = self.device, dtype = self.dtype)
+					knn = len(variables) + 1, scoringFunction = scoringFunction, device = self.device, dtype = self.dtype)
 				for run, values in zip(foldPrediction, result.Y_pred):
 					run[:, j] = values[:, 0]
 				foldAccuracyRow[j] = result.score[0]
@@ -268,7 +265,7 @@ class MDEFitterCV(EDMFitter):
 		return foldPredictions, numpy.array(foldAccuracyRows)
 
 	def GetMostFrequentVariables(self) -> numpy.ndarray:
-		"""Per target, the MaxD columns selected in the most folds, [nTargets, maxD] padded with -1."""
+		"""Per target, the MaxD columns selected in the most folds, [nTargets, MaxD] padded with -1."""
 		nTargets = self.yRuns[0].shape[1]
 		result = numpy.full([nTargets, self.MaxD], -1, dtype = int)
 		for j in range(nTargets):

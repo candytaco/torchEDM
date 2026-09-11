@@ -34,10 +34,21 @@ class MDEFitter(EDMFitter):
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
 				 IterativeDimensionSearch: bool = False,
-				 TimeDelay: int = 0,
 				 progressBar: bool = True,
 				 device = None):
-		"""Parameters as in MDE."""
+		"""
+		:param MaxD:		maxVariables of MDE
+		:param Convergent:	convergenceCheck of MDE: 'pre', 'post', or False
+		:param Metric:		candidateMetric of MDE
+		:param CCMLibraryPercentiles:	convergenceSubsetPercentiles of MDE
+		:param CCMNumSamples:	convergenceRepeats of MDE
+		:param CCMConvergenceThreshold:	convergenceSlopeThreshold of MDE
+		:param CCMSeed:		convergenceSeed of MDE
+		:param CCMMaxEmbeddingDimensions:	convergenceMaxEmbedDimensions of MDE
+		:param MinPredictionThreshold:	minPredictionScore of MDE
+		:param MinCandidatePerformance:	minCandidateScore of MDE
+		Other parameters as in MDE.
+		"""
 		super().__init__(progressBar)
 		self.MaxD = MaxD
 		self.IncludeTarget = IncludeTarget
@@ -62,25 +73,22 @@ class MDEFitter(EDMFitter):
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidatePerformance = MinCandidatePerformance
 		self.IterativeDimensionSearch = IterativeDimensionSearch
-		self.TimeDelay = TimeDelay
 		self.device = device
-		self.MDE = None
 
 	def MDEKeywords(self) -> dict:
-		return dict(maxD = self.MaxD, include_target = self.IncludeTarget, convergent = self.Convergent,
-					metric = self.Metric, batch_size = self.BatchSize, dtype = self.dtype,
+		return dict(maxVariables = self.MaxD, isTargetIncluded = self.IncludeTarget, convergenceCheck = self.Convergent,
+					candidateMetric = self.Metric, batchSize = self.BatchSize, dtype = self.dtype,
 					embedDimensions = self.EmbedDimensions, predictionHorizon = self.PredictionHorizon,
-					knn = self.KNN, step = self.Step, exclusionRadius = self.ExclusionRadius, verbose = self.Verbose,
-					useSMap = self.UseSMap, theta = self.Theta, stdThreshold = self.stdThreshold,
-					CCMLibraryPercentiles = self.CCMLibraryPercentiles, CCMNumSamples = self.CCMNumSamples,
-					CCMConvergenceThreshold = self.CCMConvergenceThreshold, CCMSeed = self.CCMSeed,
-					CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
-					MinPredictionThreshold = self.MinPredictionThreshold,
-					MinCandidatePerformance = self.MinCandidatePerformance,
-					IterativeDimensionSearch = self.IterativeDimensionSearch, TimeDelay = self.TimeDelay,
+					knn = self.KNN, step = self.Step, exclusionRadius = self.ExclusionRadius, isVerbose = self.Verbose,
+					isUsingSMap = self.UseSMap, theta = self.Theta, stdThreshold = self.stdThreshold,
+					convergenceSubsetPercentiles = self.CCMLibraryPercentiles, convergenceRepeats = self.CCMNumSamples,
+					convergenceSlopeThreshold = self.CCMConvergenceThreshold, convergenceSeed = self.CCMSeed,
+					convergenceMaxEmbedDimensions = self.CCMMaxEmbeddingDimensions,
+					minPredictionScore = self.MinPredictionThreshold,
+					minCandidateScore = self.MinCandidatePerformance,
+					isIterativeDimensionSearch = self.IterativeDimensionSearch,
 					device = self.device)
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
-		self.MDE = MDE(X_train, Y_train, X_test, Y_test, **self.MDEKeywords())
-		self.Result = self.MDE.Run()
+		self.Result = MDE(X_train, Y_train, X_test, Y_test, **self.MDEKeywords())
 		return self.Result

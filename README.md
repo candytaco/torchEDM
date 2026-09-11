@@ -7,8 +7,10 @@ Empirical dynamic modeling with a pyTorch backend. Forked from pyEDM and rebuilt
 
 ### The array contract
 
-Every predictor takes arrays and returns arrays. There is no time column: samples are
-assumed evenly spaced, and it is up to the caller to make the data comply.
+Every function takes arrays and returns a result record. There is no time column: samples are
+assumed evenly spaced, and it is up to the caller to make the data comply. Keyword parameters
+follow one style: `embedDimensions, step, predictionHorizon, knn, exclusionRadius, trainRowMask`
+come first, then the function's own settings, then `scoringFunction, device, dtype`.
 
 - `X_train [nTrain, nFeatures]`, `Y_train [nTrain, nTargets]` (a 1-D `Y` is one target).
 - `X_test [nTest, nFeatures]` is optional. Omitted means in-sample: the training rows predict
@@ -52,15 +54,16 @@ future = SimplexGenerate(x[0:200], 50, embedDimensions = 3)       # shape (50, 1
 
 # cross-map skill of many source columns onto a target across training-subset sizes, in-sample
 lorenz = ExampleData.sampleData['Lorenz5D']
-screen = ConvergentCrossMap(lorenz[:, 1:5], lorenz[:, 5], trainSizes = [100, 300, 600, 900], repeats = 20,
-                            embedDimensions = 3, showProgress = False).Run()
+screen = ConvergentCrossMap(lorenz[:, 1:5], lorenz[:, 5], embedDimensions = 3, trainSizes = [100, 300, 600, 900],
+                            repeats = 20, hasProgressBar = False)
 screen.forward_performance   # shape (4 sizes, 4 sources)
 # the reverse direction is a second call with X and Y exchanged
 
 # greedy variable selection: candidates are the columns of X_train
-selection = MDE(lorenz[0:500, 1:5], lorenz[0:500, 5], lorenz[500:1000, 1:5], lorenz[500:1000, 5], maxD = 3, convergent = False).Run()
+selection = MDE(lorenz[0:500, 1:5], lorenz[0:500, 5], lorenz[500:1000, 1:5], lorenz[500:1000, 5], maxVariables = 3, convergenceCheck = False)
 selection.selected_variables  # column indices into X_train, padded with -1
 selection.Y_pred              # shape (500, 1)
+selection.candidate_embed_dimensions  # per (target, candidate) when the convergence check searched them
 ```
 
 Parameter sweeps live in `torchEDM.Hyperparameters`: `FindOptimalEmbeddingDimensionality`,

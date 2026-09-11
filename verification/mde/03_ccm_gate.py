@@ -69,6 +69,8 @@ def reference_side(df, ts_cols, out_pkl):
 
 def main():
     from torchEDM.Fitters.MDEFitter import MDEFitter
+    from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
+    from torchEDM.EDM.Setup import PreparePrediction
     from scipy.stats import spearmanr
 
     df = load_fly()
@@ -90,23 +92,44 @@ def main():
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=SEED, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    fitter.Fit(XTrain, YTrain, XTest, YTest)
-    mde = fitter.MDE
+    result = fitter.Fit(XTrain, YTrain, XTest, YTest)
 
     embedDimensionMatches = sum(1 for i, c in enumerate(ts_cols)
-                  if mde.candidateEmbedDimensions[0, i] == ref[c]['E'])
-    peak_diff = max(abs(mde.candidatePeakPerformance[0, i] - ref[c]['maxRhoE'])
+                                if result.candidate_embed_dimensions[0, i] == ref[c]['E'])
+    peak_diff = max(abs(result.candidate_peak_scores[0, i] - ref[c]['maxRhoE'])
                     for i, c in enumerate(ts_cols))
     print(f'embedding dimensions match: {embedDimensionMatches}/80; max peak diff: {peak_diff:.4f}')
 
-    ref_full, tor_full, ref_slopes, tor_slopes = [], [], [], []
+    # the run records a slope for every candidate it checked (result.candidate_slopes); every
+    # candidate gets the same check here: the target's stacked history cross-maps the candidate
+    # on the training rows, subsets sized by percentiles of the training states, and the slope
+    # is regressed on subset size / training states
+    inputs = PreparePrediction(XTrain, YTrain, XTest, 1, -1, 1)
+    numTrainStates = inputs.numTrainingPairs
+    subsetSizes = [int(p / 100 * numTrainStates) for p in PCTS]
+    normalizedSizes = np.array(subsetSizes, dtype=float) / numTrainStates
+    recorded_diffs = []
+    tor_slopes = []
     for i, c in enumerate(ts_cols):
-        ok, slope = mde._check_single_candidate_convergence(i, mde.targets[0])
-        peak_ok = mde.candidatePeakPerformance[0, i] >= 0.65
-        tor_full.append(bool(ok) and peak_ok)
+        growth = ConvergentCrossMap(
+            YTrain, XTrain[:, i], trainSizes=subsetSizes, repeats=20,
+            embedDimensions=int(result.candidate_embed_dimensions[0, i]),
+            predictionHorizon=1, step=-1, exclusionRadius=0, seed=SEED,
+            batchMode='sample', dtype=torch.float64, hasProgressBar=False)
+        slope = float(np.polyfit(normalizedSizes, np.asarray(growth.forward_performance, dtype=float), 1)[0])
+        recorded = result.candidate_slopes[0, i]
+        if np.isfinite(recorded):
+            recorded_diffs.append(abs(recorded - slope))
+        tor_slopes.append(slope)
+    print(f'slopes recorded by the run: {len(recorded_diffs)}/80; '
+          f'max |recorded - recomputed| = {max(recorded_diffs) if recorded_diffs else 0:.2e}')
+
+    ref_full, tor_full, ref_slopes = [], [], []
+    for i, c in enumerate(ts_cols):
+        peak_ok = result.candidate_peak_scores[0, i] >= 0.65
+        tor_full.append((tor_slopes[i] > 0.01) and peak_ok)
         ref_full.append((ref[c]['slope'] > 0.01) and (ref[c]['maxRhoE'] >= 0.65))
         ref_slopes.append(ref[c]['slope'])
-        tor_slopes.append(slope)
     ref_full, tor_full = np.array(ref_full), np.array(tor_full)
     print(f'full-gate decision agreement: {(ref_full == tor_full).mean():.2%} '
           f'(ref passes {ref_full.sum()}, torch passes {tor_full.sum()})')
@@ -117,7 +140,7 @@ def main():
         if ref_full[i] != tor_full[i]:
             print(f'  {c}: ref slope={ref_slopes[i]:+.4f} peak={ref[c]["maxRhoE"]:.3f} '
                   f'| torch slope={tor_slopes[i]:+.4f} '
-                  f'peak={mde.candidatePeakPerformance[0, i]:.3f}')
+                  f'peak={result.candidate_peak_scores[0, i]:.3f}')
 
 
 if __name__ == '__main__':

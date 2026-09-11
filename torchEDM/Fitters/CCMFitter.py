@@ -20,8 +20,8 @@ class CCMFitter(EDMFitter):
 				 ExclusionRadius: int = 0,
 				 progressBar: bool = True,
 				 device: str = 'cuda',
-				 x_batch: int = 1000,
-				 y_batch: int = 2000,
+				 sourceBatchSize: int = 1000,
+				 targetBatchSize: int = 2000,
 				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float16,
 				 batchMode: str = 'variables',
@@ -44,21 +44,20 @@ class CCMFitter(EDMFitter):
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
-		self.x_batch = x_batch
-		self.y_batch = y_batch
+		self.sourceBatchSize = sourceBatchSize
+		self.targetBatchSize = targetBatchSize
 		self.targetVRAM = targetVRAM
 		self.dtype = dtype
 		self.batchMode = batchMode
 		self.sampleBatchSize = sampleBatchSize
 		self.seed = seed
-		self.CCM = None
 
 	def Fit(self, X_train, Y_train = None, X_test = None, Y_test = None):
 		"""
 		:param X_train:	source columns; :param Y_train: targets, None cross-maps X onto itself
 		:param X_test:	None scores the training rows in-sample
 		"""
-		self.CCM = ConvergentCrossMap(
+		self.Result = ConvergentCrossMap(
 			X_train, Y_train, X_test, Y_test,
 			trainSizes = self.TrainSizes,
 			repeats = self.Repeats,
@@ -71,12 +70,11 @@ class CCMFitter(EDMFitter):
 			exclusionRadius = self.ExclusionRadius,
 			seed = self.seed,
 			device = self.device,
-			x_batch = self.x_batch,
-			y_batch = self.y_batch,
+			sourceBatchSize = self.sourceBatchSize,
+			targetBatchSize = self.targetBatchSize,
 			targetVRAM = self.targetVRAM,
 			dtype = self.dtype,
-			showProgress = not self.hideProgress,
+			hasProgressBar = not self.hideProgress,
 			batchMode = self.batchMode,
 			sampleBatchSize = self.sampleBatchSize)
-		self.Result = self.CCM.Run()
 		return self.Result
