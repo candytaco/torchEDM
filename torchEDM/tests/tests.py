@@ -286,6 +286,16 @@ class test_Predictors(unittest.TestCase):
 		reference = Validation('SMap_nan_valid.csv')['Predictions'].values	# row k <-> data row 1 + k
 		self.assertTrue(numpy.allclose(reference[1:49], result.Y_pred[2:50], atol = 1e-6, equal_nan = True))
 
+	def test_smap_without_finite_targets(self):
+		"""A target with no finite neighbor target has no equations: NaN, not a zero fit."""
+		d = Frame('circle').values.astype(float)
+		result = SMapPredict(d[0:100, [1, 2]], numpy.full(100, nan), d[100:150, [1, 2]], d[100:150, 1], theta = 2.0)
+		self.assertTrue(numpy.isnan(result.Y_pred).all())
+		self.assertTrue(numpy.isnan(result.coefficients).all())
+		self.assertTrue(numpy.isnan(result.variance).all())
+		mixed = SMapPredict(d[0:100, [1, 2]], d[0:100, 1], d[100:150, [1, 2]], d[100:150, 1], theta = 2.0)
+		self.assertTrue(numpy.isfinite(mixed.Y_pred[1:]).all())
+
 	def test_smap_out_of_sample(self):
 		"""(SMap_noTime) The reference used every training state but one as neighbors."""
 		d = Frame('circle_noTime').values.astype(float)

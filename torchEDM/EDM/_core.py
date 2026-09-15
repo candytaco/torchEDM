@@ -208,7 +208,9 @@ def SolveWeightedLinearMap(weights: torch.Tensor, neighborStates: torch.Tensor,
 	"""
 	Per test state, solve the weighted least-squares map from neighbor states to
 	neighbor targets (with an intercept) and apply it to the test state.
-	A NaN neighbor target drops that neighbor's equation for that target only.
+	A NaN neighbor target drops that neighbor's equation for that target only; a target
+	with no finite neighbor target has no equations, and its coefficients, prediction,
+	variance, and singular values are NaN.
 
 	:param weights:			[nTest, k]
 	:param neighborStates:	[nTest, k, stateSize]
@@ -244,6 +246,14 @@ def SolveWeightedLinearMap(weights: torch.Tensor, neighborStates: torch.Tensor,
 		padding = torch.full((nTest, nTargets, stateSize + 1 - singularValues.shape[-1]), float('nan'),
 							 device = design.device, dtype = design.dtype)
 		singularValues = torch.cat([singularValues, padding], dim = -1)
+
+	# an all-NaN neighbor target leaves an all-zero system, which lstsq solves as zeros
+	hasEquation = weightSum > 0	# [nTest, nTargets]
+	nan = torch.tensor(float('nan'), device = design.device, dtype = design.dtype)
+	predictions = torch.where(hasEquation, predictions, nan)
+	variance = torch.where(hasEquation, variance, nan)
+	coefficients = torch.where(hasEquation[..., None], coefficients, nan)
+	singularValues = torch.where(hasEquation[..., None], singularValues, nan)
 
 	return coefficients.permute(0, 2, 1), predictions, variance, singularValues.permute(0, 2, 1)
 

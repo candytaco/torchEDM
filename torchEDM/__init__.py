@@ -14,7 +14,6 @@ from .Hyperparameters import (FindOptimalEmbeddingDimensionality, FindOptimalPre
 # parameter-holding wrappers with Fit(X_train, Y_train, X_test, Y_test)
 from . import Fitters
 from .Utils import SurrogateData
-from .FitterExamples import FitterExamples
 
 from .EDM.Results import (
     SimplexResult,
@@ -23,15 +22,6 @@ from .EDM.Results import (
     MDEResult,
     BatchedCCMResult,
     ResultsIO,
-)
-from .Visualization import (
-    plot_prediction,
-    plot_smap_coefficients,
-    plot_ccm,
-    plot_multiview,
-    plot_embed_dimension,
-    plot_predict_interval,
-    plot_predict_nonlinear
 )
 
 __version__     = "4"

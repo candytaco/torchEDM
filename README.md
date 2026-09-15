@@ -74,8 +74,13 @@ Parameter sweeps live in `torchEDM.Hyperparameters`: `FindOptimalEmbeddingDimens
 `torchEDM.Fitters` holds parameter-holding classes with a `Fit(X_train, Y_train, X_test = None, Y_test = None)`
 method that calls the matching function and keeps the result in `Result`: `SimplexFitter`,
 `SMapFitter`, `MultiviewFitter`, `CCMFitter`, `MDEFitter`, and the cross-validated `MDEFitterCV`
-and `CCMFitterCV`, which split lists of runs with `Fitters.RunSplitter`. `FitterExamples()` runs
-each of them on the sample data.
+and `CCMFitterCV`, which split lists of runs with `Fitters.RunSplitter`.
+
+### Examples and plots
+
+`examples/fitter_examples.py` runs each wrapper on the sample data and plots the results with
+the helpers in `examples/plots.py`. The plotting code lives outside the package so that
+matplotlib is not a dependency of the core; run the script from the `examples` directory.
 
 ### Argument names relative to pyEDM
 
