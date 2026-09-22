@@ -7,16 +7,21 @@ Setup (once):
     pip install -e <this repo>
     export MDE_REPO=<somewhere>/MDE
 
-Window equivalence used throughout (torchEDM windows are 0-based, half-open
-[start, stop) pairs; rows whose target index is out of bounds are trimmed):
-reference lib=[a,b], pred=[c,d] with horizon 1 is reproduced by
-  - class API: train=[(a-1, b-1)], test=[(c-1, d)]
-  - sklearn API: XTrain = rows a-1..c-2, XTest = rows c-1..d, and
-    Fit(..., TrainStart=0, TrainEnd=1, TestStart=0, TestEnd=1)
-For the Fly runs (lib=[1,300], pred=[301,600]) both give train rows 0..298
-and test rows 300..599, matching the reference exactly (verified in 01).
+Array equivalence used throughout. torchEDM takes X_train/Y_train/X_test/Y_test
+arrays; a training state is any row whose history is complete and whose
+horizon-shifted target lies inside the array, and Y_pred has Y_test's shape
+with NaN where no complete state predicts the row. A reference training window [a,b]
+and test window [c,d] (1-offset inclusive) with horizon 1 are reproduced by
+  X_train = rows a-1..b-1 (training states a-1..b-2, targets a..b-1) and
+  X_test = rows c-1-h..d where h is the longest history span needed, with the
+  Y_test entries before row c set to NaN so those rows are predicted but never
+  scored (scored states c-1..d-1, targets c..d).
+For the Fly runs (training window [1,300], test window [301,600]) this gives training states
+0..298 and scored test states 300..599, matching the reference (verified in 01).
 """
 import os
+
+import numpy as np
 
 import pandas as pd
 
@@ -38,13 +43,15 @@ def ts_columns(df):
     return [c for c in df.columns if c.startswith('TS')]
 
 
-def fly_split(df, ts_cols):
-    """XTrain/YTrain/XTest/YTest reproducing reference lib=[1,300],
-    pred=[301,600] when passed with TrainStart=0, TrainEnd=1, TestStart=0,
-    TestEnd=1."""
+def fly_split(df, ts_cols, historySpan=14):
+    """X_train/Y_train/X_test/Y_test reproducing the reference training window [1,300]
+    and test window [301,600]. The test arrays start historySpan rows early so the longest
+    history (15 samples) is complete for the reference's first test state (row
+    300); the targets of those early rows are NaN so they are predicted but
+    never scored. Scored states 300..599, targets 301..600."""
     X = df[ts_cols].values
-    y = df['FWD'].values
-    return X[0:300], y[0:300], X[300:601], y[300:601]
-
-
-FLY_FIT_KWARGS = dict(TrainStart=0, TrainEnd=1, TestStart=0, TestEnd=1)
+    y = df['FWD'].values.astype(float)
+    testStart = 300 - historySpan
+    Y_test = y[testStart:601].copy()
+    Y_test[:historySpan + 1] = np.nan
+    return X[0:300], y[0:300], X[testStart:601], Y_test

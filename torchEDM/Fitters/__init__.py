@@ -5,3 +5,4 @@ from .SMapFitter import SMapFitter
 from .MultiviewFitter import MultiviewFitter
 from .MDEFitter import MDEFitter
 from .MDEFitterCV import MDEFitterCV
+from .CVSplitter import RunSplitter, SliceRuns

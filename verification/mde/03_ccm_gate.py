@@ -1,27 +1,27 @@
-"""CCM convergence gate per candidate (target FWD): reference pipeline vs
+"""Convergence gate per candidate (target FWD): reference pipeline vs
 torchEDM (post-alignment).
 
 Reference (dimx Run.py):
-  E_c      = pyEDM EmbedDimension(columns=candidate, target=FWD, maxE=15) argmax
-  gate 1   = E-sweep max rho >= embedDimRhoMin (0.65 here)
+  embedding dimension = pyEDM EmbedDimension(columns=candidate, target=FWD, maxE=15) argmax
+  gate 1   = peak correlation of that sweep >= embedDimRhoMin (0.65 here)
   libSizes = [10,15,85,90]% of full N=1061 -> [106,159,901,954]
-  CCM      = pyEDM CCM(E=E_c, sample=20, seed): library sampled from all valid
+  growth   = pyEDM CCM at that dimension (sample=20, seed): training subsets sampled from all valid
              rows, prediction over all valid rows
-  slope    = OLS of rho('FWD:candidate') on libSizes/N;  gate 2 = slope > 0.01
+  slope    = OLS of the correlation ('FWD:candidate') on subset size / N;  gate 2 = slope > 0.01
 
-torchEDM (aligned): per-candidate E and peak from the same batched sweep
-(matches reference E 80/80 and peaks to 4 decimals); gate 1 =
+torchEDM (aligned): per-candidate embedding dimension and peak from the same batched sweep
+(matches the reference's embedding dimensions 80/80 and peaks to 4 decimals); gate 1 =
 MinCandidatePerformance; gate 2 = growth slope. Deliberately kept divergences:
 the growth test samples from and measures on the training window, its sizes
 are percentages of nTrain -> [29,44,254,269], and the slope is per fraction
 of the training window.
 
-Expected (torch 2.13 / pyEDM 2.5.7): E matches 80/80, peak diff 0.0000;
+Expected (torch 2.13 / pyEDM 2.5.7): embedding dimensions match 80/80, peak diff 0.0000;
 full-gate decision agreement 97.5% (21 vs 21 passes; residual = the kept
 train/test-separation divergences flipping two marginal slopes, TS1 and TS24);
 slope Pearson r = 0.79.
 
-Writes ref_ccm_all80.pkl (reference E/slope/rho per candidate) for reuse by 04.
+Writes ref_ccm_all80.pkl (reference embedding dimension, slope, and correlations per candidate) for reuse by 04.
 """
 import os
 import pickle
@@ -29,7 +29,7 @@ import pickle
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
+from common import load_fly, ts_columns, fly_split
 
 SEED = 7777
 PCTS = [10, 15, 85, 90]
@@ -51,16 +51,16 @@ def reference_side(df, ts_cols, out_pkl):
                              tau=-1, exclusionRadius=0, validLib=[], noTime=True,
                              numProcess=15, showPlot=False)
         iMax = edf['rho'].round(4).argmax()
-        maxRhoE = float(edf['rho'].iloc[iMax].round(4))
-        E = int(edf['E'].iloc[iMax])
+        peakCorrelation = float(edf['rho'].iloc[iMax].round(4))
+        embedDimension = int(edf['E'].iloc[iMax])
         ccmDF = CCM(dataFrame=numericDF, columns=c, target='FWD',
-                    libSizes=libSizes, sample=20, E=E, Tp=1, tau=-1,
+                    libSizes=libSizes, sample=20, E=embedDimension, Tp=1, tau=-1,
                     exclusionRadius=0, seed=SEED, noTime=True)
-        ccmVals = ccmDF[f'FWD:{c}'].to_numpy()
+        correlationBySize = ccmDF[f'FWD:{c}'].to_numpy()
         slope = round(float(LinearRegression().fit(
-            x, np.nan_to_num(ccmVals)).coef_[0]), 5)
-        res[c] = dict(E=E, maxRhoE=maxRhoE, slope=slope, rhoVals=ccmVals)
-        print(f'{c}: E={E} maxRhoE={maxRhoE:.4f} slope={slope:+.5f}', flush=True)
+            x, np.nan_to_num(correlationBySize)).coef_[0]), 5)
+        res[c] = dict(E=embedDimension, maxRhoE=peakCorrelation, slope=slope, rhoVals=correlationBySize)
+        print(f'{c}: embedding dimension={embedDimension} peak correlation={peakCorrelation:.4f} slope={slope:+.5f}', flush=True)
 
     with open(out_pkl, 'wb') as f:
         pickle.dump(dict(res=res, libSizes=libSizes), f)
@@ -69,6 +69,8 @@ def reference_side(df, ts_cols, out_pkl):
 
 def main():
     from torchEDM.Fitters.MDEFitter import MDEFitter
+    from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
+    from torchEDM.EDM.Setup import PreparePrediction
     from scipy.stats import spearmanr
 
     df = load_fly()
@@ -90,23 +92,44 @@ def main():
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=SEED, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
-    mde = fitter.MDE
+    result = fitter.Fit(XTrain, YTrain, XTest, YTest)
 
-    E_match = sum(1 for i, c in enumerate(ts_cols)
-                  if mde.candidateEmbedDimensions[0, i] == ref[c]['E'])
-    peak_diff = max(abs(mde.candidatePeakPerformance[0, i] - ref[c]['maxRhoE'])
+    embedDimensionMatches = sum(1 for i, c in enumerate(ts_cols)
+                                if result.candidate_embed_dimensions[0, i] == ref[c]['E'])
+    peak_diff = max(abs(result.candidate_peak_scores[0, i] - ref[c]['maxRhoE'])
                     for i, c in enumerate(ts_cols))
-    print(f'E matches: {E_match}/80; max peak diff: {peak_diff:.4f}')
+    print(f'embedding dimensions match: {embedDimensionMatches}/80; max peak diff: {peak_diff:.4f}')
 
-    ref_full, tor_full, ref_slopes, tor_slopes = [], [], [], []
+    # the run records a slope for every candidate it checked (result.candidate_slopes); every
+    # candidate gets the same check here: the target's stacked history cross-maps the candidate
+    # on the training rows, subsets sized by percentiles of the training states, and the slope
+    # is regressed on subset size / training states
+    inputs = PreparePrediction(XTrain, YTrain, XTest, 1, -1, 1)
+    numTrainStates = inputs.numTrainingPairs
+    subsetSizes = [int(p / 100 * numTrainStates) for p in PCTS]
+    normalizedSizes = np.array(subsetSizes, dtype=float) / numTrainStates
+    recorded_diffs = []
+    tor_slopes = []
     for i, c in enumerate(ts_cols):
-        ok, slope = mde._check_single_candidate_convergence(i, mde.targets[0])
-        peak_ok = mde.candidatePeakPerformance[0, i] >= 0.65
-        tor_full.append(bool(ok) and peak_ok)
+        growth = ConvergentCrossMap(
+            YTrain, XTrain[:, i], trainSizes=subsetSizes, repeats=20,
+            embedDimensions=int(result.candidate_embed_dimensions[0, i]),
+            predictionHorizon=1, step=-1, exclusionRadius=0, seed=SEED,
+            batchMode='sample', dtype=torch.float64, hasProgressBar=False)
+        slope = float(np.polyfit(normalizedSizes, np.asarray(growth.forward_performance, dtype=float), 1)[0])
+        recorded = result.candidate_slopes[0, i]
+        if np.isfinite(recorded):
+            recorded_diffs.append(abs(recorded - slope))
+        tor_slopes.append(slope)
+    print(f'slopes recorded by the run: {len(recorded_diffs)}/80; '
+          f'max |recorded - recomputed| = {max(recorded_diffs) if recorded_diffs else 0:.2e}')
+
+    ref_full, tor_full, ref_slopes = [], [], []
+    for i, c in enumerate(ts_cols):
+        peak_ok = result.candidate_peak_scores[0, i] >= 0.65
+        tor_full.append((tor_slopes[i] > 0.01) and peak_ok)
         ref_full.append((ref[c]['slope'] > 0.01) and (ref[c]['maxRhoE'] >= 0.65))
         ref_slopes.append(ref[c]['slope'])
-        tor_slopes.append(slope)
     ref_full, tor_full = np.array(ref_full), np.array(tor_full)
     print(f'full-gate decision agreement: {(ref_full == tor_full).mean():.2%} '
           f'(ref passes {ref_full.sum()}, torch passes {tor_full.sum()})')
@@ -117,7 +140,7 @@ def main():
         if ref_full[i] != tor_full[i]:
             print(f'  {c}: ref slope={ref_slopes[i]:+.4f} peak={ref[c]["maxRhoE"]:.3f} '
                   f'| torch slope={tor_slopes[i]:+.4f} '
-                  f'peak={mde.candidatePeakPerformance[0, i]:.3f}')
+                  f'peak={result.candidate_peak_scores[0, i]:.3f}')
 
 
 if __name__ == '__main__':

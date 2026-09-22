@@ -1,16 +1,14 @@
-
-from typing import Optional, List, Union
+from typing import Union
 
 import numpy
 import torch
 
-from torchEDM.EDM.MDE import MDE
+from ..EDM.MDE import MDE
 from .EDMFitter import EDMFitter
 
+
 class MDEFitter(EDMFitter):
-	"""
-	Wrapper class for MDE that provides sklearn-like API.
-	"""
+	"""Parameter holder for MDE."""
 
 	def __init__(self,
 				 MaxD: int = 5,
@@ -19,7 +17,6 @@ class MDEFitter(EDMFitter):
 				 Metric: str = "correlation",
 				 BatchSize: int = 1000,
 				 dtype: torch.dtype = torch.float32,
-				 Embed: bool = False,
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
 				 KNN: int = 0,
@@ -37,30 +34,22 @@ class MDEFitter(EDMFitter):
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
 				 IterativeDimensionSearch: bool = False,
-				 TimeDelay: int = 0,
-				 progressBar: bool = True):
+				 progressBar: bool = True,
+				 device = None):
 		"""
-		Initialize MDE wrapper with sklearn-style separate arrays.
-
-		:param MaxD: 				Maximum number of features to select
-		:param IncludeTarget: 		Whether to start with target in feature list
-		:param Convergent: 			Whether to use convergence checking
-		:param Metric: 				Metric to use: "correlation" or "MAE"
-		:param BatchSize: 			Number of features to process in each batch
-		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
-		:param Embed:				whether to embed the data or not
-		:param EmbedDimensions: 	Embedding dimension (E)
-		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param KNN: 				Number of nearest neighbors
-		:param Step: 				Time delay step size (tau)
-		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param Verbose: 			Print diagnostic messages
-		:param UseSMap: 			Whether to use SMap instead of Simplex
-		:param Theta: 				S-Map localization parameter
+		:param MaxD:		maxVariables of MDE
+		:param Convergent:	convergenceCheck of MDE: 'pre', 'post', or False
+		:param Metric:		candidateMetric of MDE
+		:param CCMLibraryPercentiles:	convergenceSubsetPercentiles of MDE
+		:param CCMNumSamples:	convergenceRepeats of MDE
+		:param CCMConvergenceThreshold:	convergenceSlopeThreshold of MDE
+		:param CCMSeed:		convergenceSeed of MDE
+		:param CCMMaxEmbeddingDimensions:	convergenceMaxEmbedDimensions of MDE
+		:param MinPredictionThreshold:	minPredictionScore of MDE
+		:param MinCandidatePerformance:	minCandidateScore of MDE
+		Other parameters as in MDE.
 		"""
-
 		super().__init__(progressBar)
-
 		self.MaxD = MaxD
 		self.IncludeTarget = IncludeTarget
 		self.Convergent = Convergent
@@ -75,9 +64,7 @@ class MDEFitter(EDMFitter):
 		self.Verbose = Verbose
 		self.UseSMap = UseSMap
 		self.Theta = Theta
-		self.Embed = Embed
 		self.stdThreshold = stdThreshold
-
 		self.CCMLibraryPercentiles = CCMLibraryPercentiles
 		self.CCMNumSamples = CCMNumSamples
 		self.CCMConvergenceThreshold = CCMConvergenceThreshold
@@ -86,58 +73,22 @@ class MDEFitter(EDMFitter):
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidatePerformance = MinCandidatePerformance
 		self.IterativeDimensionSearch = IterativeDimensionSearch
-		self.TimeDelay = TimeDelay
+		self.device = device
 
-		self.MDE = None
+	def MDEKeywords(self) -> dict:
+		return dict(maxVariables = self.MaxD, isTargetIncluded = self.IncludeTarget, convergenceCheck = self.Convergent,
+					candidateMetric = self.Metric, batchSize = self.BatchSize, dtype = self.dtype,
+					embedDimensions = self.EmbedDimensions, predictionHorizon = self.PredictionHorizon,
+					knn = self.KNN, step = self.Step, exclusionRadius = self.ExclusionRadius, isVerbose = self.Verbose,
+					isUsingSMap = self.UseSMap, theta = self.Theta, stdThreshold = self.stdThreshold,
+					convergenceSubsetPercentiles = self.CCMLibraryPercentiles, convergenceRepeats = self.CCMNumSamples,
+					convergenceSlopeThreshold = self.CCMConvergenceThreshold, convergenceSeed = self.CCMSeed,
+					convergenceMaxEmbedDimensions = self.CCMMaxEmbeddingDimensions,
+					minPredictionScore = self.MinPredictionThreshold,
+					minCandidateScore = self.MinCandidatePerformance,
+					isIterativeDimensionSearch = self.IterativeDimensionSearch,
+					device = self.device)
 
-	def Fit(self, XTrain: numpy.ndarray, YTrain: numpy.ndarray, XTest: numpy.ndarray, YTest: numpy.ndarray,
-			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
-			TestTime: Optional[numpy.ndarray] = None):
-		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
-
-		Data = self.GetEDMData()
-		TrainIndices = self.GetTrainIndices()
-		TestIndices = self.GetTestIndices()
-		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd))
-		Target = self.GetYIndex()
-		NoTime = not self.HasTime()
-
-		# Determine columns to use
-
-		self.MDE = MDE(
-			data = Data,
-			target = Target,
-			maxD = self.MaxD,
-			include_target = self.IncludeTarget,
-			convergent = self.Convergent,
-			metric = self.Metric,
-			batch_size = self.BatchSize,
-			dtype = self.dtype,
-			columns = Columns,
-			train = TrainIndices,
-			test = TestIndices,
-			embedded = not self.Embed,
-			embedDimensions = self.EmbedDimensions,
-			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			exclusionRadius = self.ExclusionRadius,
-			noTime = NoTime,
-			verbose = self.Verbose,
-			useSMap = self.UseSMap,
-			theta = self.Theta,
-			stdThreshold = self.stdThreshold,
-			CCMLibraryPercentiles = self.CCMLibraryPercentiles,
-			CCMNumSamples = self.CCMNumSamples,
-			CCMConvergenceThreshold = self.CCMConvergenceThreshold,
-			CCMSeed = self.CCMSeed,
-			CCMMaxEmbeddingDimensions = self.CCMMaxEmbeddingDimensions,
-			MinPredictionThreshold = self.MinPredictionThreshold,
-			MinCandidatePerformance = self.MinCandidatePerformance,
-			IterativeDimensionSearch = self.IterativeDimensionSearch,
-			TimeDelay = self.TimeDelay
-		)
-
-		self.Result = self.MDE.Run()
+	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
+		self.Result = MDE(X_train, Y_train, X_test, Y_test, **self.MDEKeywords())
 		return self.Result

@@ -1,447 +1,130 @@
-
-# python modules
+"""
+Ensemble prediction over the top-ranked combinations of stacked feature columns
+(Ye & Sugihara 2016, doi.org/10.1126/science.aag0863).
+"""
 from itertools import combinations
 from math import floor, sqrt
+from typing import Callable, Optional
 from warnings import warn
 
-# package modules
-from numpy import argsort, array, column_stack, mean
+import numpy
+import torch
 
-# local modules
-from .utils import MakeDelays
-from .. import Functions
-from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
-from ..Utils import IsNonStringIterable
+from .Predictors import SimplexPredict
 from .Results import MultiviewResult
+from .Setup import ArrayOrRuns, AsRuns, IsListOfRuns, StackHistory, ScorePredictions
+from ..Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 
 
-#------------------------------------------------------
-# Function to evaluate multiview predictions top combos
-#------------------------------------------------------
-def MultiviewSimplexPred( combo, data, args ) :
+def MultiviewPredict(X_train: ArrayOrRuns,
+					 Y_train: ArrayOrRuns,
+					 X_test: Optional[ArrayOrRuns] = None,
+					 Y_test: Optional[ArrayOrRuns] = None,
+					 embedDimensions: int = 1,
+					 step: int = -1,
+					 predictionHorizon: int = 1,
+					 knn: int = 0,
+					 exclusionRadius: int = 0,
+					 columnsPerView: int = 0,
+					 numTopViews: int = 0,
+					 isRankedInSample: bool = True,
+					 isTieBreakDeterministic: bool = False,
+					 scoringFunction: Callable = Correlation,
+					 device = None,
+					 dtype: torch.dtype = torch.float64) -> MultiviewResult:
 	"""
-	Function to evaluate multiview predictions top combos
+	Every feature column is stacked to embedDimensions copies; every combination of
+	columnsPerView stacked columns predicts the target with SimplexPredict and is ranked by
+	score; the top numTopViews combinations are averaged.
 
-	:param combo: Column combination tuple
-	:param data: Embedded data array
-	:param args: Dictionary of Simplex arguments
-	:return: Prediction projection array
+	:param X_train:		[nTrain, nFeatures] or a list of runs
+	:param Y_train:		[nTrain, nTargets] or a list of runs
+	:param X_test:		[nTest, nFeatures] or a list of runs; None predicts the training rows in-sample
+	:param Y_test:		targets for X_test; required with X_test
+	:param embedDimensions:	copies of each feature column in the stacked state
+	:param step:		row offset between copies; negative reaches into the past
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param knn:			neighbors per combination; 0 means columnsPerView + 1
+	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
+	:param columnsPerView:	stacked columns per combination; 0 means the number of feature columns
+	:param numTopViews:	combinations averaged; 0 means the square root of the number of combinations
+	:param isRankedInSample:	True ranks combinations on the training rows predicting themselves
+						(faster, optimistic); False ranks them on X_test/Y_test
+	:param scoringFunction:	scoringFunction(actual, predicted) -> float used for ranking and the score
+	:param isTieBreakDeterministic:	order exactly tied neighbor distances reproducibly
+	:param device:		torch device; None picks cuda when available
+	:param dtype:		torch dtype for the computation
 	"""
-	projection = Functions.FitSimplex(data       = data,
-                                columns         = list( combo ),
-                                target          = args['target'],
-                                train             = args['train'],
-                                test            = args['test'],
-                                embedDimensions = args['embedDims'],
-                                predictionHorizon              = args['predictionHorizon'],
-                                step             = args['step'],
-                                exclusionRadius = args['exclusionRadius'],
-                                embedded        = args['embedded'],
-                                noTime          = args['noTime'],
-                                ignoreNan       = args['ignoreNan'])
-	return projection
-
-#----------------------------------------------------
-# Function to evaluate combo rank (correlation)
-#----------------------------------------------------
-def MultiviewSimplexcorrelation( combo, data, args, scoring_function = Correlation ) :
-	"""
-	Function to evaluate combo rank (correlation)
-
-	:param combo: Column combination tuple
-	:param data: Embedded data array
-	:param args: Dictionary of Simplex arguments
-	:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar
-	:return: Scoring value
-	"""
-	projection = Functions.FitSimplex(data       = data,
-                                columns         = list( combo ),
-                                target          = args['target'],
-                                train             = args['train'],
-                                test            = args['test'],
-                                embedDimensions = args['embedDims'],
-                                predictionHorizon              = args['predictionHorizon'],
-                                step             = args['step'],
-                                exclusionRadius = args['exclusionRadius'],
-                                embedded        = args['embedded'],
-                                noTime          = args['noTime'],
-                                ignoreNan       = args['ignoreNan'])
-
-	# projection is numpy array: Column 1 is Observations, Column 2 is Predictions
-	return scoring_function(projection[:, 1], projection[:, 2])
-
-#------------------------------------------------------------------
-class Multiview:
-    """
-	Multiview class : Base class. Contains a Simplex instance
-
-	D represents the number of variables to combine for each
-	assessment, if not specified, it is the number of columns.
-
-	E is the embedding dimension of each variable.
-	If E = 1, no time delay embedding is done, but the variables
-	in the embedding are named X(t-0), Y(t-0)...
-
-	Simplex.Validate() sets knn equal to E+1 if knn not specified,
-	so we need to explicitly set knn to D + 1.
-
-	Parameter 'multiview' is the number of top-ranked D-dimensional
-	predictions for the final prediction. Corresponds to parameter k
-	in Ye & Sugihara with default k = sqrt(m) where m is the number
-	of combinations C(n,D) available from the n = D * E columns
-	taken D at-a-time.
-
-	Ye H., and G. Sugihara, 2016. Information leverage in
-	interconnected ecosystems: Overcoming the curse of dimensionality
-	Science 353:922-925.
-
-	Parameter 'trainLib' controls the evaluation strategy for ranking
-	column combinations:
-
-	trainLib = True (default):
-		Uses in-sample evaluation for ranking. During the Rank() phase,
-		predictions are made using test = train (in-sample). This is
-		computationally faster but may produce artificially high skill
-		scores, as highly accurate in-sample predictions can be made from
-		arbitrary non-constant, non-oscillatory vectors. After ranking,
-		the final Project() phase uses the specified train and test.
-
-	trainLib = False:
-		Uses proper out-of-sample evaluation for ranking. The Rank() phase
-		uses the specified train and test parameters to evaluate combinations.
-		This is more rigorous but computationally more expensive. Requires
-		explicit train and test parameters.
-
-	NOTE: When trainLib = True and no train/test are specified, the data
-			is automatically split 50/50 for the final projection phase.
-    """
-
-    def __init__( self,
-                  data,
-                  columns=None,
-                  target=None,
-                  train=None,
-                  test=None,
-                  D=0,
-                  embedDimensions=0,
-                  predictionHorizon=1,
-                  knn=0,
-                  step=-1,
-                  multiview=0,
-                  exclusionRadius=0,
-                  trainLib=True,
-                  excludeTarget=False,
-                  ignoreNan=True,
-                  verbose=False,
-                  numProcess=4,
-                  mpMethod=None,
-                  chunksize=1,
-                  scoring_function=Correlation):
-        """
-        Initialize Multiview using plain arguments.
-
-        :param data: 2D numpy array where column 0 is time (unless noTime=True)
-        :param columns: Column indices to use (defaults to all except time)
-        :param target: Target column index (defaults to column 1)
-        :param train: Training set indices [start, end]
-        :param test: Test set indices [start, end]
-        :param D: State-space dimension (number of variables to combine for each assessment). If 0, defaults to number of columns.
-        :param embedDimensions: Embedding dimension (E). If 0, will be set by Validate()
-        :param predictionHorizon: Prediction time horizon (Tp)
-        :param knn: Number of nearest neighbors. If 0, will be set to E+1 by Validate()
-        :param step: Time delay step size (tau). Negative values indicate lag
-        :param multiview: Number of top-ranked D-dimensional predictions for final ensemble (parameter k in Ye & Sugihara). If 0, defaults to sqrt(m) where m is the number of combinations C(n,D).
-        :param exclusionRadius: Temporal exclusion radius for neighbors
-        :param trainLib: Evaluation strategy for ranking column combinations: True uses in-sample evaluation (test=train during Rank phase). False uses proper out-of-sample evaluation with specified train/test.
-        :param excludeTarget: Whether to exclude target column from embedding combinations
-        :param ignoreNan: Remove NaN values from embedding
-        :param verbose: Print diagnostic messages
-        :param numProcess: Number of processes for multiprocessing
-        :param mpMethod: Multiprocessing context method (ExecutionMode.SPAWN, ExecutionMode.FORK, ExecutionMode.FORKSERVER). If None, uses platform default
-        :param chunksize: Chunk size for pool.starmap operations
-        """
-
-        # Assign parameters directly
-        self.name            = 'Multiview'
-        self.Data            = data
-        self.columns         = columns
-        self.target          = target
-        self.embedDimensions = embedDimensions
-        self.predictionHorizon = predictionHorizon
-        self.knn             = knn
-        self.step            = step
-        self.D               = D
-        self.multiview       = multiview
-        self.exclusionRadius = exclusionRadius
-        self.trainLib        = trainLib
-        self.excludeTarget   = excludeTarget
-        self.ignoreNan       = ignoreNan
-        self.verbose         = verbose
-
-        # Assign split parameters
-        self.train = train if train is not None else []
-        self.test = test if test is not None else []
-
-        # Assign execution parameters
-        self.numProcess = numProcess
-        self.mpMethod   = mpMethod
-        self.chunksize  = chunksize
-        self.scoring_function = scoring_function
-
-        self.Embedding  = None # numpy array
-        self.View       = None # numpy array
-        self.Projection = None # numpy array
-
-        self.combos             = None # List of column combinations (tuples)
-        self.topRankCombos      = None # List of top columns (tuples)
-        self.topRankProjections = None # dict of columns : numpy array
-        self.topRankStats       = None # dict of columns : dict of stats
-
-        # Setup
-        self.Validate() # Multiview Method: set knn default, E if embedded
-        self.Setup()    # Embed Data
-
-    #-------------------------------------------------------------------
-    # Methods
-    #-------------------------------------------------------------------
-    def Run( self, return_predictions: bool = True, scoring_function = Correlation ) :
-        """
-        Execute Multiview prediction and return MultiviewResult.
-
-        :param return_predictions: If False, the predictions field of the result will not be populated
-        :param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
-        :return: Multiview results with ensemble-averaged predictions, view rankings, top-ranked projections, and statistics
-        """
-        self.Rank()
-        self.Project()
-
-        # Compute ensemble-averaged prediction
-        # M.topRankProjections is dict of combo : numpy array
-        # Each array has columns: [Time, Observations, Predictions, Pred_Variance]
-
-        # Get first projection for Time
-        first_proj = next(iter(self.topRankProjections.values()))
-        time_values = first_proj[:, 0]
-
-        # Collect all predictions (column 2) and average them
-        all_predictions = [proj[:, 2] for proj in self.topRankProjections.values()]
-        multiviewPredict = mean(all_predictions, axis=0)
-
-        # Create result array: [Time, Observations, Predictions]
-        self.Projection = column_stack([first_proj[:, 0], first_proj[:, 1], multiviewPredict])
-
-        # Create View: rankings of column combinations
-        colCombos = list(self.topRankProjections.keys())
-
-        topRankStats = {}
-        for combo in colCombos :
-            proj = self.topRankProjections[combo]
-            # proj columns: 0=Time, 1=Observations, 2=Predictions, 3=Variance
-            metrics = [Correlation(proj[:, 1], proj[:, 2]),
-                       MaxAbsoluteError(proj[:, 1], proj[:, 2]),
-                       SumAbsoluteError(proj[:, 1], proj[:, 2]),
-                       RootMeanSquareError(proj[:, 1], proj[:, 2])]
-            topRankStats[combo] = metrics
-
-        self.topRankStats = topRankStats
-
-        # Build View array: each row is [combo_as_str, correlation, MAE, CAE, RMSE]
-        view_rows = []
-        for combo in colCombos:
-            stats = topRankStats[combo]
-            view_rows.append([str(combo), stats[0], stats[1], stats[2], stats[3]])
-
-        self.View = view_rows  # List of lists
-
-        score = scoring_function(first_proj[:, 1], multiviewPredict)
-
-        return MultiviewResult(
-            time=time_values,
-            view=self.View,
-            topRankProjections=self.topRankProjections,
-            topRankStats=self.topRankStats,
-            D=self.D,
-            embedDimensions=self.embedDimensions,
-            predictionHorizon=self.predictionHorizon,
-            predictions=multiviewPredict if return_predictions else None,
-            score=score
-        )
-
-    #-------------------------------------------------------------------
-    def Rank( self ) :
-        """
-        Multiprocess to rank top multiview vectors
-        """
-
-        if self.verbose:
-            print( f'{self.name}: Rank()' )
-
-        args = { 'target'          : self.target, 
-                 'train'             : self.train,
-                 'test'            : self.test,
-                 'embedDims'               : self.D,
-                 'predictionHorizon'              : self.predictionHorizon,
-                 'step'             : self.step,
-                 'exclusionRadius' : self.exclusionRadius,
-                 'embedded'        : True,
-                 'noTime'          : True,
-                 'ignoreNan'       : self.ignoreNan }
-
-        if self.trainLib :
-            # Set test = train for in-sample training
-            args['test'] = self.train
-
-        # Sequential evaluation of all combos
-        correlationList = [MultiviewSimplexcorrelation(combo, self.Embedding, args, self.scoring_function)
-                           for combo in self.combos]
-
-        correlationVec    = array( correlationList, dtype = float )
-        rank_i    = argsort( correlationVec )[::-1] # Reverse results 
-        topRank_i = rank_i[ :self.multiview ]
-
-        self.topRankCombos = [ self.combos[i] for i in topRank_i ]
-
-    #-------------------------------------------------------------------
-    # 
-    #-------------------------------------------------------------------
-    def Project( self ) :
-        """
-        Projection with top multiview vectors
-        """
-
-        if self.verbose:
-            print( f'{self.name}: Project()' )
-
-        args = { 'target'          : self.target, 
-                 'train'             : self.train,
-                 'test'            : self.test,
-                 'embedDims'               : self.D,
-                 'predictionHorizon'              : self.predictionHorizon,
-                 'step'             : self.step,
-                 'exclusionRadius' : self.exclusionRadius,
-                 'embedded'        : True,
-                 'noTime'          : True,
-                 'ignoreNan'       : self.ignoreNan }
-
-        # Sequential projection for top-ranked combos
-        dfList = [MultiviewSimplexPred(combo, self.Embedding, args)
-                  for combo in self.topRankCombos]
-
-        self.topRankProjections = dict( zip( self.topRankCombos, dfList ) )
-
-    #--------------------------------------------------------------------
-    def Setup( self ):
-    #--------------------------------------------------------------------
-        """
-        Set D, train, test, combos. Embed Data.
-        """
-        if self.verbose:
-            print( f'{self.name}: Setup()' )
-
-        # Set default train & test if not provided
-        if self.trainLib :
-            if not len( self.test ) and not len( self.train ) :
-                # Set train & test for ranking : train, test = 1/2 data
-                self.train = [(0, floor(self.Data.shape[0] / 2))]
-                self.test = [(floor(self.Data.shape[0] / 2), self.Data.shape[0])]
-
-        # Establish state-space dimension D
-        # default to number of input columns (not embedding columns)
-        if self.D == 0 :
-            self.D = len( self.columns )
-
-        # Check D is not greater than number of embedding columns
-        if self.D > len( self.columns ) * self.embedDimensions :
-            newD = len( self.columns ) * self.embedDimensions
-            msg = f'Validate() {self.name}: D = {self.D}'      +\
-                ' exceeds number of columns in the embedding: {newD}.' +\
-                f' D set to {newD}'
-            warn( msg )
-
-            self.D = newD
-
-        # Remove target columns from potential combos
-        if self.excludeTarget :
-            comboCols = [col for col in self.columns if col not in self.target]
-        else :
-            comboCols = self.columns
-
-        if len( comboCols ) == 0 :
-            raise RuntimeError( f'Setup() {self.name}: excludeTarget leaves' +\
-                                ' no candidate columns.' )
-
-        # Stack delayed copies of only the candidate columns; the time column
-        # and unselected columns must not enter the candidate pool. The raw
-        # target series is appended as the final column so predictions always
-        # score against the actual target, and that appended column is never
-        # itself a candidate.
-        stackedHistory = MakeDelays(self.Data[:, comboCols],
-                                    num_delays = self.embedDimensions,
-                                    stepSize = self.step)
-        self.Embedding = column_stack([stackedHistory, self.Data[:, self.target[0]]])
-        self.target = [stackedHistory.shape[1]]
-
-        # Combinations of possible stacked columns, D at-a-time.
-        # Column v of comboCols occupies stacked columns
-        # [v * embedDimensions, (v + 1) * embedDimensions).
-        n_embed_cols = stackedHistory.shape[1]
-        # The earlier D check ran against all input columns; excludeTarget can
-        # shrink the candidate pool below that, leaving no D-sized combinations.
-        if self.D > n_embed_cols :
-            msg = f'Setup() {self.name}: D = {self.D} exceeds the'    +\
-                f' {n_embed_cols} candidate columns after excludeTarget.' +\
-                f' D set to {n_embed_cols}'
-            warn( msg )
-            self.D = n_embed_cols
-        embed_col_indices = list(range(n_embed_cols))
-        self.combos = list( combinations( embed_col_indices, self.D ) )
-
-        # Establish number of ensembles if not specified
-        if self.multiview < 1 :
-            # Ye & Sugihara suggest sqrt( m ) as number of embeddings to avg
-            self.multiview = floor( sqrt( len( self.combos ) ) )
-
-            if self.verbose :
-                msg = f'Validate() {self.name}:' +\
-                    f' Set view sample size to {self.multiview}'
-                print( msg, flush = True )
-
-        if self.multiview > len( self.combos ) :
-            msg = f'Validate() {self.name}: multiview ensembles ' +\
-                f' {self.multiview} exceeds the number of available' +\
-                f' combinations: {len(self.combos)}. Set to {len(self.combos)}.'
-            warn( msg )
-
-            self.multiview = len( self.combos )
-
-    #--------------------------------------------------------------------
-    def Validate( self ):
-    #--------------------------------------------------------------------
-        """
-        Validate Multiview inputs and parameters
-
-        :raises RuntimeError: if inputs are invalid
-        """
-        if self.verbose:
-            print( f'{self.name}: Validate()' )
-
-        if self.columns is None or not len(self.columns):
-            raise RuntimeError( f'Validate() {self.name}: columns required.' )
-        if not IsNonStringIterable(self.columns) :
-            raise RuntimeError( f'Validate() {self.name}: columns must be a list of integers.' )
-
-        if self.target is None:
-            raise RuntimeError( f'Validate() {self.name}: target required.' )
-        if not IsNonStringIterable(self.target) :
-            self.target = [self.target]
-
-        if not self.trainLib :
-            if not len( self.train ) :
-                msg = f'{self.name}: Validate(): trainLib False requires' +\
-                       ' train specification.'
-                raise RuntimeError( msg )
-
-            if not len( self.test ) :
-                msg = f'{self.name}: Validate(): trainLib False requires' +\
-                       ' test specification.'
-                raise RuntimeError( msg )
+	if X_test is not None and Y_test is None:
+		raise ValueError('Y_test is needed to score predictions on X_test')
+	xRuns = AsRuns(X_train)
+	stackedTrain = [StackHistory(x, embedDimensions, step) for x in xRuns]
+	stackedTest = None if X_test is None else [StackHistory(x, embedDimensions, step) for x in AsRuns(X_test)]
+	isTrainList = IsListOfRuns(X_train)
+	isTestList = X_test is not None and IsListOfRuns(X_test)
+	Y_true = Y_test if X_test is not None else Y_train
+
+	nFeatures = xRuns[0].shape[1]
+	nStacked = stackedTrain[0].shape[1]
+	if columnsPerView <= 0:
+		columnsPerView = nFeatures
+	if columnsPerView > nStacked:
+		warn(f'MultiviewPredict: columnsPerView = {columnsPerView} exceeds the {nStacked} stacked columns; set to {nStacked}')
+		columnsPerView = nStacked
+	combos = list(combinations(range(nStacked), columnsPerView))
+	if numTopViews < 1:
+		numTopViews = floor(sqrt(len(combos)))
+	if numTopViews > len(combos):
+		warn(f'MultiviewPredict: numTopViews = {numTopViews} exceeds the {len(combos)} combinations; set to {len(combos)}')
+		numTopViews = len(combos)
+
+	def selectColumns(stacked, isList, combo):
+		selected = [s[:, list(combo)] for s in stacked]
+		return selected if isList else selected[0]
+
+	def predict(combo, isInSample):
+		return SimplexPredict(
+			X_train = selectColumns(stackedTrain, isTrainList, combo), Y_train = Y_train,
+			X_test = None if isInSample else selectColumns(stackedTest, isTestList, combo),
+			Y_test = Y_train if isInSample else Y_test,
+			embedDimensions = 1, step = step, predictionHorizon = predictionHorizon, knn = knn,
+			exclusionRadius = exclusionRadius if isInSample else 0,
+			isTieBreakDeterministic = isTieBreakDeterministic, scoringFunction = scoringFunction,
+			device = device, dtype = dtype)
+
+	# rank: first target's score, NaN last
+	rankInSample = isRankedInSample or X_test is None
+	rankScores = numpy.array([predict(combo, rankInSample).score[0] for combo in combos], dtype = float)
+	order = numpy.argsort(numpy.where(numpy.isnan(rankScores), -numpy.inf, rankScores))[::-1]
+	topCombos = [combos[i] for i in order[:numTopViews]]
+
+	# predict the requested rows with the top combinations and average
+	topResults = {combo: predict(combo, X_test is None) for combo in topCombos}
+	firstPrediction = next(iter(topResults.values())).Y_pred
+	if isinstance(firstPrediction, list):
+		Y_pred = [numpy.mean([topResults[c].Y_pred[r] for c in topCombos], axis = 0) for r in range(len(firstPrediction))]
+	else:
+		Y_pred = numpy.mean([topResults[c].Y_pred for c in topCombos], axis = 0)
+
+	yTrueColumns = numpy.concatenate(AsRuns(Y_true))[:, 0]
+	def firstColumn(prediction):
+		flat = numpy.concatenate(AsRuns(prediction))
+		return flat[:, 0]
+	topRankStats = {}
+	view = []
+	for combo in topCombos:
+		predicted = firstColumn(topResults[combo].Y_pred)
+		stats = [Correlation(yTrueColumns, predicted), MaxAbsoluteError(yTrueColumns, predicted),
+				 SumAbsoluteError(yTrueColumns, predicted), RootMeanSquareError(yTrueColumns, predicted)]
+		topRankStats[combo] = stats
+		view.append([str(combo)] + stats)
+
+	return MultiviewResult(
+		Y_pred = Y_pred,
+		view = view,
+		topRankPredictions = {combo: topResults[combo].Y_pred for combo in topCombos},
+		topRankStats = topRankStats,
+		columnsPerView = columnsPerView,
+		embedDimensions = embedDimensions,
+		predictionHorizon = predictionHorizon,
+		score = ScorePredictions(scoringFunction, Y_true, Y_pred))

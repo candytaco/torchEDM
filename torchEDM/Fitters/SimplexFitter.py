@@ -1,79 +1,38 @@
+import torch
 
-from typing import Optional
-
-import numpy
-
-from torchEDM.EDM.Simplex import Simplex
+from ..EDM.Predictors import SimplexPredict
 from .EDMFitter import EDMFitter
 
 
 class SimplexFitter(EDMFitter):
-	"""
-	Wrapper class for Simplex that provides sklearn-like API.
-	"""
+	"""Parameter holder for SimplexPredict."""
 
-	def __init__(self,
-				 EmbedDimensions: int = 0,
-				 PredictionHorizon: int = 1,
-				 KNN: int = 0,
-				 Step: int = -1,
-				 ExclusionRadius: int = 0,
-				 Embedded: bool = False,
-				 Verbose: bool = False):
+	def __init__(self, EmbedDimensions: int = 1, PredictionHorizon: int = 1, KNN: int = 0, Step: int = -1,
+				 ExclusionRadius: int = 0, IsTieBreakDeterministic: bool = False, device = None,
+				 dtype: torch.dtype = torch.float64):
 		"""
-		Initialize Simplex wrapper with sklearn-style separate arrays.
-
-		:param EmbedDimensions: 	Embedding dimension (E)
-		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param KNN: 				Number of nearest neighbors
-		:param Step: 				Time delay step size (tau)
-		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param Embedded: 			Whether data is already embedded
-		:param Verbose: 			Print diagnostic messages
+		:param EmbedDimensions:	copies of each feature column in the state; 1 uses the columns as given
+		:param PredictionHorizon:	rows between a state and the target it predicts
+		:param KNN:			neighbors; 0 means state size plus one
+		:param Step:		row offset between copies; negative reaches into the past
+		:param ExclusionRadius:	in-sample only; training states this close in rows are not neighbors
+		:param IsTieBreakDeterministic:	order exactly tied neighbor distances reproducibly
 		"""
-
 		super().__init__()
-
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
 		self.KNN = KNN
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
-		self.Embedded = Embedded
-		self.Verbose = Verbose
+		self.IsTieBreakDeterministic = IsTieBreakDeterministic
+		self.device = device
+		self.dtype = dtype
 
-		self.Simplex = None
-
-	def Fit(self, XTrain: numpy.ndarray, YTrain: numpy.ndarray, XTest: numpy.ndarray, YTest: numpy.ndarray,
-			TrainStart = 0, TrainEnd = 0, TestStart = 0, TestEnd = 0, TrainTime: Optional[numpy.ndarray] = None,
-			TestTime: Optional[numpy.ndarray] = None):
-		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
-
-		Data = self.GetEDMData()
-		TrainIndices = self.GetTrainIndices()
-		TestIndices = self.GetTestIndices()
-		YIndex = self.GetYIndex()
-		NoTime = not self.HasTime()
-
-		XStart, XEnd = self.GetXIndices()
-		Columns = list(range(XStart, XEnd))
-		Target = YIndex
-
-		self.Simplex = Simplex(
-			data = Data,
-			columns = Columns,
-			target = Target,
-			train = TrainIndices,
-			test = TestIndices,
-			embedDimensions = self.EmbedDimensions,
-			predictionHorizon = self.PredictionHorizon,
-			knn = self.KNN,
-			step = self.Step,
-			exclusionRadius = self.ExclusionRadius,
-			noTime = NoTime,
-			verbose = self.Verbose,
-			embedded = self.Embedded
-		)
-
-		self.Result = self.Simplex.Run()
+	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
+		self.Result = SimplexPredict(X_train, Y_train, X_test, Y_test,
+									 embedDimensions = self.EmbedDimensions, step = self.Step,
+									 predictionHorizon = self.PredictionHorizon, knn = self.KNN,
+									 exclusionRadius = self.ExclusionRadius,
+									 isTieBreakDeterministic = self.IsTieBreakDeterministic,
+									 device = self.device, dtype = self.dtype)
 		return self.Result

@@ -1,13 +1,9 @@
 """
 Auxiliary functions.
 
-ComputeError    Pearson correlation, RMSE, MAE, CAE
 Iterable        Is an object iterable?
-IsIterable      Is an object iterable and not a string?
+IsNonStringIterable   Is an object iterable and not a string?
 SurrogateData   ebisuzaki, random shuffle, seasonal
-PlotObsPred     Plot observations & predictions
-PlotCoef        Plot s-map coefficients
-Examples        Canonical examples
 """
 
 from cmath import exp
@@ -21,7 +17,6 @@ from numpy import absolute, arange, fft
 from numpy import mean, ptp, std, sqrt, zeros
 from scipy.interpolate import UnivariateSpline
 
-from torchEDM.Scoring import Correlation, MaxAbsoluteError, SumAbsoluteError, RootMeanSquareError
 
 
 def Iterable( obj ):
@@ -193,64 +188,3 @@ def SurrogateData( data     = None,
 			writer.writerows(result)
 
 	return result
-
-
-
-def PlotObsPred( data, dataName = "", embedDimensions = 0, predictionHorizon = 0, block = True ):
-	"""
-	Plot observations and predictions.
-
-	:param data: numpy array with shape (n_samples, 4). 
-		Column 0: Time, 
-		Column 1: Observations, 
-		Column 2: Predictions, 
-		Column 3: Pred_Variance
-	:param dataName: Plot title
-	:param embedDimensions: Embedding dimensions
-	:param predictionHorizon: Prediction horizon
-	:param block: Whether to block execution
-	"""
-	import matplotlib.pyplot as plt
-
-	# stats: {'MAE': 0., 'RMSE': 0., 'correlation': 0. }
-	stats = [Correlation(data[:, 1], data[:, 2]),
-			 MaxAbsoluteError(data[:, 1], data[:, 2]),
-			 SumAbsoluteError(data[:, 1], data[:, 2]),
-			 RootMeanSquareError(data[:, 1], data[:, 2])]
-
-	title = dataName + "\nEmbedding Dims = " + str(embedDimensions) + " predictionHorizon=" + str(predictionHorizon) +\
-			"  correlation="   + str( round( stats[0],  3 ) )   +\
-			" RMSE=" + str( round( stats[3], 3 ) )
-
-	plt.figure()
-	plt.plot(data[:, 0], data[:, 1], label='Observations', linewidth=3)
-	plt.plot(data[:, 0], data[:, 2], label='Predictions', linewidth=3)
-	plt.title(title)
-	plt.legend()
-	plt.show(block=block)
-
-
-
-def PlotCoeff( data, dataName = "", embedDimensions = 0, predictionHorizon = 0, block = True ):
-	"""
-	Plot S-Map coefficients.
-
-	:param data: numpy array with shape (n_samples, n_coeff + 1). Column 0: Time, Columns 1+: coefficients
-	:param dataName: Plot title
-	:param embedDimensions: Embedding dimensions
-	:param predictionHorizon: Prediction horizon
-	:param block: Whether to block execution
-	"""
-	import matplotlib.pyplot as plt
-
-	title = dataName + "\nEmbedding Dims = " + str(embedDimensions) + " predictionHorizon=" + str(predictionHorizon) +\
-			"  S-Map Coefficients"
-
-	plt.figure()
-	for i in range(1, data.shape[1]):
-		plt.subplot(data.shape[1] - 1, 1, i)
-		plt.plot(data[:, 0], data[:, i], linewidth=3)
-		plt.title(f'Coefficient {i-1}')
-	plt.suptitle(title)
-	plt.tight_layout()
-	plt.show(block=block)

@@ -1,8 +1,8 @@
-"""Loading of example data."""
+"""Loading of example data: one float array per sample set, the time column at index 0."""
 
 import importlib.resources  # Get data file pathnames from EDM package
 
-from pandas import read_csv
+from pandas import read_csv, to_numeric
 
 dataFileNames = [ ("TentMap.csv",             "TentMap"),
                   ("TentMapNoise.csv",        "TentMapNoise"),
@@ -15,7 +15,7 @@ dataFileNames = [ ("TentMap.csv",             "TentMap"),
                   ("LorenzData1000.csv",      "Lorenz5D"),
                   ("S12CD-S333-SumFlow_1980-2005.csv", "SumFlow_1980-2005") ]
 
-# Dictionary of module numpy arrays so user can access sample data
+# name -> [nRows, nColumns] float array; column 0 is the time column, which the functions never take
 sampleData = {}
 
 for fileName, dataName in dataFileNames:
@@ -25,9 +25,8 @@ for fileName, dataName in dataFileNames:
     ref = importlib.resources.files('torchEDM') / filePath
 
     with importlib.resources.as_file( ref ) as filePath_ :
-        # Read CSV using pandas, convert to numpy array
-        df = read_csv( filePath_ )
-        sampleData[ dataName ] = df
+        # a date-valued time column becomes NaN; the functions never take column 0
+        sampleData[ dataName ] = read_csv( filePath_ ).apply( to_numeric, errors = 'coerce' ).values.astype( float )
 
 if not len( sampleData ) :
     raise Warning( "torchEDM: Failed to find sample data in torchEDM package." )

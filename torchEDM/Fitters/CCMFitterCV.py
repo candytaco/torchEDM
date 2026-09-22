@@ -1,37 +1,34 @@
-from typing import Optional, List, Union
+from typing import List, Optional
 
 import numpy
 import torch
 from tqdm import tqdm as ProgressBar
 
-from .DataAdapter import DataAdapter
+from .CVSplitter import RunSplitter, SliceRuns
 from .EDMFitter import EDMFitter
-from .CVSplitter import EDMCVSplitter
-from torchEDM.EDM.ConvergentCrossMap import ConvergentCrossMap
-from torchEDM.EDM.Results import CCMCVResult
+from ..EDM.ConvergentCrossMap import ConvergentCrossMap
+from ..EDM.Results import CCMCVResult
+from ..EDM.Setup import AsRuns
 
 
 class CCMFitterCV(EDMFitter):
 	"""
-	CCM with cross-validation that supports both n-fold and leave-one-run-out CV.
-
-	Each fold runs CCM using the user-specified library size convergence curve, restricted
-	to only the training data for that fold. This tests whether the CCM convergence signal
-	is reproducible across different temporal subsets of the data.
+	ConvergentCrossMap across leave-one-run-out or n-fold splits of the training runs: does
+	the convergence signal reproduce across temporal subsets of the data?
 	"""
 
 	def __init__(self,
 				 TrainSizes: Optional[List[int]] = None,
 				 numRepeats: int = 10,
-				 EmbedDimensions: int = None,
+				 EmbedDimensions = None,
 				 MaxEmbedDimensions: int = 20,
 				 PredictionHorizon: int = 1,
 				 KNN: Optional[int] = None,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 device: str = 'cuda',
-				 x_batch: int = 1000,
-				 y_batch: Optional[int] = None,
+				 sourceBatchSize: int = 1000,
+				 targetBatchSize: Optional[int] = None,
 				 targetVRAM: Optional[float] = None,
 				 dtype: torch.dtype = torch.float32,
 				 batchMode: str = 'variables',
@@ -41,29 +38,11 @@ class CCMFitterCV(EDMFitter):
 				 LeaveOneRunOut: bool = True,
 				 progressBar: bool = True):
 		"""
-		Initialize CCM cross-validation fitter.
-
-		:param TrainSizes: 			Library sizes to evaluate for the convergence curve
-		:param numRepeats: 			Number of random subsamples at each library size
-		:param EmbedDimensions: 	Embedding dimension (E). None for auto-selection per fold.
-		:param MaxEmbedDimensions:	Maximum embedding dimension to explore when EmbedDimensions is None
-		:param PredictionHorizon: 	Prediction time horizon (Tp)
-		:param KNN: 				Number of nearest neighbors, if none will be set to embed dims + 1
-		:param Step: 				Time delay step size (tau)
-		:param ExclusionRadius: 	Temporal exclusion radius for neighbors
-		:param device: 				Device for torch tensors ('cpu', 'cuda', or torch.device object)
-		:param x_batch: 			Number of source variables to process per batch in 'variables' mode
-		:param y_batch:				Number of target variables to predict per batch
-		:param targetVRAM:			VRAM budget in GB for auto-tuning source batch size
-		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
-		:param batchMode: 			'variables' (batch over source variables) or 'sample' (batch over subsamples)
-		:param sampleBatchSize: 	Number of subsamples per batch in 'sample' mode
-		:param seed: 				Random seed for reproducible sampling
-		:param Folds: 				Number of cross-validation folds (ignored if LeaveOneRunOut is True)
-		:param LeaveOneRunOut: 		If True, use leave-one-run-out CV instead of n-fold
+		:param Folds:		folds per run when LeaveOneRunOut is False
+		:param LeaveOneRunOut:	hold out one whole run per split
+		Other parameters as in ConvergentCrossMap.
 		"""
 		super().__init__(progressBar)
-
 		self.TrainSizes = TrainSizes
 		self.Repeats = numRepeats
 		self.EmbedDimensions = EmbedDimensions
@@ -73,8 +52,8 @@ class CCMFitterCV(EDMFitter):
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.device = device
-		self.x_batch = x_batch
-		self.y_batch = y_batch
+		self.sourceBatchSize = sourceBatchSize
+		self.targetBatchSize = targetBatchSize if targetBatchSize is not None else 2000
 		self.targetVRAM = targetVRAM
 		self.dtype = dtype
 		self.batchMode = batchMode
@@ -82,64 +61,27 @@ class CCMFitterCV(EDMFitter):
 		self.seed = seed
 		self.Folds = Folds
 		self.LeaveOneRunOut = LeaveOneRunOut
-
-		self.trainDataAdapter = None
-		self.cvSplitter = None
+		self.splitter = None
 		self.foldResults = []
 
-	def Fit(self,
-			XTrain: Union[numpy.ndarray, List[numpy.ndarray]],
-			YTrain: Union[numpy.ndarray, List[numpy.ndarray], None] = None,
-			XTest: Optional[numpy.ndarray] = None,
-			YTest: Optional[numpy.ndarray] = None,
-			TrainStart: int = 0,
-			TrainEnd: int = 0,
-			TestStart: int = 0,
-			TestEnd: int = 0,
-			TrainTime: Optional[numpy.ndarray] = None,
-			TestTime: Optional[numpy.ndarray] = None):
+	def Fit(self, X_train, Y_train = None, X_test = None, Y_test = None) -> CCMCVResult:
 		"""
-		Fit cross-validated CCM
-
-		:param XTrain:		Source variables (single array or list of arrays for multiple runs)
-		:param YTrain:		Target variable (single array or list of arrays for multiple runs)
-		:param XTest:		Unused; included for API compatibility with EDMFitter
-		:param YTest:		Unused; included for API compatibility with EDMFitter
-		:param TrainStart:	Samples to exclude at the start of each run
-		:param TrainEnd:	Samples to exclude at the end of each run
-		:param TestStart:	Unused; included for API compatibility with EDMFitter
-		:param TestEnd:		Unused; included for API compatibility with EDMFitter
-		:param TrainTime:	Time labels for train data
-		:param TestTime:	Unused; included for API compatibility with EDMFitter
+		:param X_train:	source columns, an array or a list of runs
+		:param Y_train:	targets matching X_train; None cross-maps X onto itself
+		X_test and Y_test are unused; each fold predicts its own held-out slices.
 		"""
-		super().Fit(XTrain, YTrain, XTest, YTest, TrainStart, TrainEnd, TestStart, TestEnd, TrainTime, TestTime)
-
-		self.trainDataAdapter = DataAdapter.MakeDataAdapter(
-			XTrain, YTrain, None, None, TrainStart, TrainEnd, 0, 0, TrainTime, None
-		)
-
-		self.cvSplitter = EDMCVSplitter(
-			dataAdapter = self.trainDataAdapter,
-			nFolds = self.Folds,
-			leaveOneRunOut = self.LeaveOneRunOut,
-			edmStyleIndices = True
-		)
-
-		fullData = self.trainDataAdapter.fullData
-		xStart, xEnd = self.trainDataAdapter.XIndices
-		yColumnIndices = self.trainDataAdapter.YIndex
-
-		XArray = fullData[:, xStart:xEnd]
-		YArray = fullData[:, yColumnIndices] if yColumnIndices else None
+		xRuns = AsRuns(X_train)
+		yRuns = None if Y_train is None else AsRuns(Y_train)
+		self.splitter = RunSplitter([run.shape[0] for run in xRuns], self.Folds, self.LeaveOneRunOut)
 
 		self.foldResults = []
-		numSplits = self.cvSplitter.GetNSplits()
-		progressBarIterator = ProgressBar(total = numSplits, desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
-
-		for foldTrainIndices, foldTestIndices in self.cvSplitter.Split():
-			ccm = ConvergentCrossMap(
-				X = XArray,
-				Y = YArray,
+		progressBar = ProgressBar(total = self.splitter.GetNSplits(), desc = 'CCM CV Fold', leave = False, disable = self.hideProgress)
+		for trainSlices, testSlices in self.splitter.Split():
+			foldResult = ConvergentCrossMap(
+				SliceRuns(xRuns, trainSlices),
+				None if yRuns is None else SliceRuns(yRuns, trainSlices),
+				SliceRuns(xRuns, testSlices),
+				None if yRuns is None else SliceRuns(yRuns, testSlices),
 				trainSizes = self.TrainSizes,
 				repeats = self.Repeats,
 				embedDimensions = self.EmbedDimensions,
@@ -149,36 +91,24 @@ class CCMFitterCV(EDMFitter):
 				step = self.Step,
 				exclusionRadius = self.ExclusionRadius,
 				seed = self.seed,
-				trainIndices = foldTrainIndices,
-				testIndices = foldTestIndices,
 				device = self.device,
-				x_batch = self.x_batch,
-				y_batch = self.y_batch,
+				sourceBatchSize = self.sourceBatchSize,
+				targetBatchSize = self.targetBatchSize,
 				targetVRAM = self.targetVRAM,
 				dtype = self.dtype,
-				showProgress = False,
+				hasProgressBar = False,
 				batchMode = self.batchMode,
-				sampleBatchSize = self.sampleBatchSize
-			)
-
-			foldResult = ccm.Run()
+				sampleBatchSize = self.sampleBatchSize)
 			self.foldResults.append(foldResult)
-			progressBarIterator.update(1)
-
-		progressBarIterator.close()
+			progressBar.update(1)
+		progressBar.close()
 
 		foldForwardCorrelations = numpy.stack([r.forward_performance for r in self.foldResults], axis = 0)
-		foldForwardEmbedDimensions = [r.forward_embed_dimensions for r in self.foldResults]
-
-		meanForwardCorrelation = numpy.mean(foldForwardCorrelations, axis = 0) if foldForwardCorrelations is not None else None
-		stdForwardCorrelation = numpy.std(foldForwardCorrelations, axis = 0) if foldForwardCorrelations is not None else None
-
 		self.Result = CCMCVResult(
 			fold_results = self.foldResults,
 			fold_performances = foldForwardCorrelations,
-			mean_performance = meanForwardCorrelation,
-			std_performance = stdForwardCorrelation,
+			mean_performance = numpy.mean(foldForwardCorrelations, axis = 0),
+			std_performance = numpy.std(foldForwardCorrelations, axis = 0),
 			predictionHorizon = self.PredictionHorizon,
-			fold_forward_embed_dimensions = foldForwardEmbedDimensions,
-		)
+			fold_forward_embed_dimensions = [r.forward_embed_dimensions for r in self.foldResults])
 		return self.Result

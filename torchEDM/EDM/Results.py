@@ -1,612 +1,392 @@
 """
-Result classes for torchEDM predictions.
+Result records returned by the predictors, the variable-selection drivers, and the
+cross-map screen, plus ResultsIO for saving and loading them.
 
-This module provides dataclasses for structured prediction results from different EDM methods.
+Every prediction field is named Y_pred and has the shape of the Y_test it was scored
+against (a list of arrays when the test data came as a list of runs). Nothing here
+carries time; rows are sample positions.
 """
 
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple, Union
+from typing import Dict, List, Optional, Union
+
 import numpy as np
 
+ArrayOrList = Union[np.ndarray, List[np.ndarray]]
 
-@dataclass(frozen=True)
+
+@dataclass(frozen = True)
 class SimplexResult:
 	"""
-	Results from Simplex prediction.
+	Nearest-neighbor weighted-average prediction.
 
-	:param time: Time values, shape [N]
-	:param projection: Array with columns [Time, Observations, Predictions, Variance], or None if predictions were not requested
-	:param embedDimensions: Embedding dimension used
-	:param predictionHorizon: Prediction horizon used
-	:param score: Prediction score computed by the calling function, or None if not computed
+	:param Y_pred:		predictions shaped like Y_test (a list for multiple test runs); NaN where no complete state predicts the row
+	:param variance:	weighted spread of the neighbor targets around each prediction, same shape as Y_pred
+	:param score:		[nTargets] scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
+	:param embedDimensions:	copies of each feature column in the state
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param knn:			neighbors used
 	"""
-	time: np.ndarray
-	projection: Optional[np.ndarray]
+	Y_pred: ArrayOrList
+	variance: ArrayOrList
+	score: Optional[np.ndarray]
 	embedDimensions: int
 	predictionHorizon: int
-	score: Optional[float] = None
-
-	@property
-	def predictions(self) -> Optional[np.ndarray]:
-		"""
-		Predicted values from projection, or None if not populated.
-		"""
-		if self.projection is None:
-			return None
-		return self.projection[:, 2]
+	knn: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class SMapResult:
 	"""
-	Results from S-Map prediction.
+	Locally weighted linear prediction.
 
-	:param time: Time values, shape [N]
-	:param projection: Array with columns [Time, Observations, Predictions, Variance], or None if predictions were not requested
-	:param coefficients: S-Map coefficients for each prediction (N_pred, E+1)
-	:param singularValues: Singular values from SVD for each prediction (N_pred, E+1)
-	:param embedDimensions: Embedding dimension used
-	:param predictionHorizon: Prediction horizon used
-	:param theta: Localization parameter used
-	:param score: Prediction score computed by the calling function, or None if not computed
+	:param Y_pred:		predictions shaped like Y_test (a list for multiple test runs); NaN where no complete state predicts the row
+	:param variance:	weighted spread of the neighbor targets around each prediction, same shape as Y_pred
+	:param coefficients:	[nRows, stateSize + 1, nTargets] per predicted row, intercept first; NaN rows where nothing was predicted
+	:param singularValues:	[nRows, stateSize + 1, nTargets] of the weighted design matrices
+	:param score:		[nTargets] scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
+	:param embedDimensions:	copies of each feature column in the state
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param knn:			neighbors used
+	:param theta:		localization used
 	"""
-	time: np.ndarray
-	projection: Optional[np.ndarray]
-	coefficients: np.ndarray
-	singularValues: np.ndarray
+	Y_pred: ArrayOrList
+	variance: ArrayOrList
+	coefficients: ArrayOrList
+	singularValues: ArrayOrList
+	score: Optional[np.ndarray]
 	embedDimensions: int
 	predictionHorizon: int
+	knn: int
 	theta: float
-	score: Optional[float] = None
-
-	@property
-	def predictions(self) -> Optional[np.ndarray]:
-		"""
-		Predicted values from projection, or None if not populated.
-		"""
-		if self.projection is None:
-			return None
-		return self.projection[:, 2]
-
-	@property
-	def prediction_result(self) -> SimplexResult:
-		"""
-		Get prediction as SimplexResult for compatibility.
-		"""
-		return SimplexResult(
-			time=self.time,
-			projection=self.projection,
-			embedDimensions=self.embedDimensions,
-			predictionHorizon=self.predictionHorizon
-		)
 
 
-@dataclass(frozen=True)
-class CCMResult:
-	"""
-	Results from Convergent Cross Mapping.
-
-	:param libMeans: Mean correlation at each library size. Shape (n_lib_sizes, 2 or 3):
-		Column 0: Library size,
-		Column 1: Mean correlation for first direction,
-		Column 2: Mean correlation for second direction (if applicable)
-	:param embedDimensions: Embedding dimension used
-	:param predictionHorizon: Prediction horizon used
-	:param predictStats1: Detailed prediction statistics for first direction (only if includeData=True)
-	:param predictStats2: Detailed prediction statistics for second direction (only if includeData=True)
-	"""
-	libMeans: np.ndarray
-	embedDimensions: int
-	predictionHorizon: int
-	predictStats1: Optional[np.ndarray] = None
-	predictStats2: Optional[np.ndarray] = None
-
-	@property
-	def library_sizes(self) -> np.ndarray:
-		"""
-		Library sizes evaluated.
-		"""
-		return self.libMeans[:, 0]
-
-	@property
-	def correlations(self) -> np.ndarray:
-		"""
-		Correlation values (excludes library size column).
-		"""
-		return self.libMeans[:, 1:]
-
-
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class MultiviewResult:
 	"""
-	Results from Multiview prediction.
+	Ensemble of the top-ranked feature combinations.
 
-	:param time: Time values, shape [N]
-	:param view: Rankings of column combinations. Each element is [combo_string, correlation, MAE, CAE, RMSE]
-	:param topRankProjections: Dictionary mapping column combinations (tuples) to their prediction arrays [Time, Observations, Predictions, Variance]
-	:param topRankStats: Dictionary mapping column combinations (tuples) to their error statistics {'correlation', 'MAE', 'CAE', 'RMSE'}
-	:param D: State-space dimension used
-	:param embedDimensions: Embedding dimension for each variable
-	:param predictionHorizon: Prediction horizon used
-	:param predictions: Ensemble-averaged predictions, or None if predictions were not requested
-	:param score: Prediction score computed by the calling function, or None if not computed
+	:param Y_pred:		ensemble-averaged predictions shaped like Y_test
+	:param view:		one row per top-ranked combination: [combination, correlation, max abs error, sum abs error, RMSE]
+	:param topRankPredictions:	combination tuple -> that combination's Y_pred
+	:param topRankStats:		combination tuple -> [correlation, max abs error, sum abs error, RMSE]
+	:param columnsPerView:	columns of the stacked state used per combination
+	:param embedDimensions:	copies of each feature column in the stacked state
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param score:		[nTargets] scoringFunction over the ensemble (Y_test, Y_pred) pairs; None when Y_test was not given
 	"""
-	time: np.ndarray
+	Y_pred: ArrayOrList
 	view: List
-	topRankProjections: Dict
+	topRankPredictions: Dict
 	topRankStats: Dict
-	D: int
+	columnsPerView: int
 	embedDimensions: int
 	predictionHorizon: int
-	predictions: Optional[np.ndarray] = None
-	score: Optional[float] = None
+	score: Optional[np.ndarray] = None
 
 	@property
 	def top_combinations(self) -> List:
-		"""
-		Get list of top-ranked column combinations.
-		"""
-		return list(self.topRankProjections.keys())
+		return list(self.topRankPredictions.keys())
 
-	def get_combination_stats(self, combo: tuple) -> Dict[str, float]:
-		"""
-		Get error statistics for a specific column combination.
-
-		:param combo: Column combination (e.g., (0, 2, 4))
-		:return: Error statistics for this combination
-		:raises ValueError: if combination not in top-ranked results
-		"""
+	def get_combination_stats(self, combo: tuple) -> List[float]:
 		if combo not in self.topRankStats:
-			raise ValueError(f"Combination {combo} not in top-ranked results")
+			raise ValueError(f'Combination {combo} not in top-ranked results')
 		return self.topRankStats[combo]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class MDEResult:
 	"""
-	Results from Multivariate Dimensional expansion.
+	Greedy variable selection (manifold dimensional expansion).
 
-	:param time: Time values, shape [N]
-	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
-	:param selected_variables: Selected variable column indices, shape [K, maxD], padded with -1
-	:param performance: prediction performance at each variable addition step, shape [K, maxD], padded with NaN
-	:param ccm_values: CCM convergence slopes for selected variables, shape [K, maxD], padded with NaN
-	:param stepwise_performance: Performance of adding each candidate at each step, shape [target, dimensions, variables]
-	:param timeDelayResults: Time delay analysis results as list of (variable, delay, improvement, score) tuples
-	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
+	Column indices refer to the candidate view [X columns | target columns], so nColumns is
+	nFeatures + nTargets and a target's own column is nFeatures + targetIndex.
+
+	:param Y_pred:		final predictions shaped like Y_test, one column per target
+	:param selected_variables:	selected columns per target, shape [nTargets, maxVariables], padded with -1
+	:param performance:	score after each addition, shape [nTargets, maxVariables], padded with NaN
+	:param ccm_values:	convergence slopes of the selected variables, shape [nTargets, maxVariables], padded with NaN
+	:param stepwise_performance:	score of every candidate at every step, shape [nTargets, maxVariables, nColumns]
+	:param candidate_embed_dimensions:	best embedding dimension per (target, candidate), shape [nTargets, nColumns];
+		-1 where the search did not run
+	:param candidate_peak_scores:	the score at that embedding dimension, shape [nTargets, nColumns]; NaN where the search did not run
+	:param candidate_slopes:	convergence slope per (target, candidate), shape [nTargets, nColumns]; NaN for a
+		candidate the run never checked, -inf for a check whose slope was NaN
+	:param score:		[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
-	time: np.ndarray
-	predictions: Optional[np.ndarray]
+	Y_pred: Optional[ArrayOrList]
 	selected_variables: np.ndarray
 	performance: np.ndarray
 	ccm_values: np.ndarray
 	stepwise_performance: np.ndarray
-	timeDelayResults: List[Tuple[int, int, float, float]] = None
+	candidate_embed_dimensions: Optional[np.ndarray] = None
+	candidate_peak_scores: Optional[np.ndarray] = None
+	candidate_slopes: Optional[np.ndarray] = None
 	score: Optional[np.ndarray] = None
 
 
-@dataclass(frozen=True)
-class MDECVResult:
-	"""
-	Results from MDE Cross-Validation.
-
-	TODO: this should be combined with MDECVResults - this is from the EDM-style class, the other is from fitters
-
-	:param time: Time values, shape [N]
-	:param predictions: Predicted values, shape [N, K], or None if predictions were not requested
-	:param selected_variables: Final selected variable indices, shape [K, maxD] padded with -1
-	:param fold_results: Results from each cross-validation fold
-	:param fold_performances: Per-fold accuracy for the first target, shape [nFolds]
-	:param best_fold: Index of best performing fold
-	:param score: Per-target prediction score computed by the calling function, shape [K], or None if not computed
-	"""
-	time: np.ndarray
-	predictions: Optional[np.ndarray]
-	selected_variables: np.ndarray
-	fold_results: List[MDEResult]
-	fold_performances: np.ndarray
-	best_fold: np.ndarray
-	score: Optional[np.ndarray] = None
-
-
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class MDECVResults:
 	"""
-	Results from MDE Cross-Validation fitting.
+	Cross-validated variable selection from MDEFitterCV.
 
-	:param fold_selected_variables: Selected features per fold, shape [nFolds, nTargets, maxD] padded with -1
-	:param fold_stepwise_performances: Stepwise candidate performance per fold, shape [nFolds, nTargets, maxD, nCandidates]
-	:param fold_accuracies: Per-fold, per-target accuracy, shape [nFolds, nTargets]
-	:param best_fold: Index of best performing fold per target, shape [nTargets]
-	:param fold_predictions: predictions for each cross-validation fold
-	:param selected_variables: Final selected feature column indices, shape [nTargets, maxD] padded with -1
-	:param time: Time values for final prediction, shape [N] (None if no prediction computed)
-	:param predictions: Predicted values for final prediction, shape [N, nTargets] (None if no prediction computed)
-	:param score: Per-target prediction score computed by the calling function, shape [nTargets], or None if not computed
+	:param fold_selected_variables:	selected X columns per fold, shape [nFolds, nTargets, maxVariables], padded with -1
+	:param fold_stepwise_performances:	candidate scores per fold, shape [nFolds, nTargets, maxVariables, nColumns]
+	:param fold_accuracies:	score per fold and target, shape [nFolds, nTargets]
+	:param fold_Y_pred:		Y_pred of each fold's held-out data
+	:param best_fold:		best fold per target, shape [nTargets]
+	:param selected_variables:	final selected X columns, shape [nTargets, maxVariables], padded with -1
+	:param Y_pred:			final predictions shaped like Y_test, or None
+	:param score:			[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
 	fold_selected_variables: np.ndarray
 	fold_stepwise_performances: np.ndarray
 	fold_accuracies: np.ndarray
-	fold_predictions: Optional[List[np.ndarray]]
+	fold_Y_pred: Optional[List[ArrayOrList]]
 	best_fold: np.ndarray
 	selected_variables: np.ndarray
-	time: Optional[np.ndarray] = None
-	predictions: Optional[np.ndarray] = None
+	Y_pred: Optional[ArrayOrList] = None
 	score: Optional[np.ndarray] = None
 
 	@property
 	def selected_stepwise_performances(self) -> np.ndarray:
 		"""
-		Performance of the actually selected variable at each step, for each fold and target.
-		Condenses fold_stepwise_performances from shape [nFolds, nTargets, maxD, nCandidates]
-		to [nFolds, nTargets, maxD] by indexing into the candidate axis with the selected variable index.
-		Entries are NaN where fold_selected_variables is -1 (padding, i.e. no variable was selected at that step).
+		Score of the variable actually selected at each step, per fold and target:
+		fold_stepwise_performances [nFolds, nTargets, maxVariables, nColumns] indexed by
+		fold_selected_variables, NaN where nothing was selected.
 		"""
-		selected = self.fold_selected_variables  # [nFolds, nTargets, maxD]
+		selected = self.fold_selected_variables
 		mask = selected >= 0
 		performances = np.full(selected.shape, np.nan)
 		foldIndices, targetIndices, stepIndices = np.where(mask)
 		variableIndices = selected[foldIndices, targetIndices, stepIndices]
-		performances[foldIndices, targetIndices, stepIndices] = self.fold_stepwise_performances[foldIndices, targetIndices, stepIndices, variableIndices]
+		performances[foldIndices, targetIndices, stepIndices] = self.fold_stepwise_performances[
+			foldIndices, targetIndices, stepIndices, variableIndices]
 		return performances
 
 
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class BatchedCCMResult:
 	"""
-	Results from Batched Convergent Cross Mapping.
+	Cross-map skill of every source column against every target across training-subset sizes.
 
-	:param forward_performance: Forward direction correlations. Shape (n_lib_sizes, 1+M):
-		Column 0: Library size
-		Columns 1-M: Mean correlation for each predictor variable
-	:param predictionHorizon: Prediction horizon used
-	:param forward_embed_dimensions: Embedding dimensions used for the forward direction.
-		Shape [nSources] or [nSources, nTargets] if auto-selected, otherwise the scalar input value.
+	:param forward_performance:	mean skill per subset size, shape [nSizes, nSources, nTargets] with singleton axes squeezed
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param library_sizes:	the training-subset sizes evaluated
+	:param forward_embed_dimensions:	embedding dimensions used per source ([nSources] or [nSources, nTargets] when searched, else the scalar given)
 	"""
 	forward_performance: np.ndarray
 	predictionHorizon: int
 	library_sizes: Union[np.ndarray, List]
 	forward_embed_dimensions: Optional[Union[int, np.ndarray]] = None
 
-	def GetVariableCorrelations(self, variableIndex: int) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-		"""
-		Get correlations for a specific variable across all library sizes.
-
-		:param variableIndex: Index of the variable (0-based)
-		:return: Tuple of (forward_correlations, reverse_correlations) as 1D arrays
-		"""
+	def GetVariableCorrelations(self, variableIndex: int) -> np.ndarray:
 		return self.forward_performance[:, 1 + variableIndex]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen = True)
 class CCMCVResult:
 	"""
-	Results from cross-validated CCM.
+	Cross-validated cross-map screen.
 
-	:param fold_results: BatchedCCMResult for each cross-validation fold
-	:param fold_performances: Per-fold performance at for each X to each Y
-	:param mean_performance: Mean performance across folds.
-	:param std_performance: Standard deviation of performance across folds.
-	:param fold_forward_embed_dimensions: Per-fold embedding dimensions.
-	:param predictionHorizon: Prediction horizon used
+	:param fold_results:	BatchedCCMResult per fold
+	:param fold_performances:	[nFolds, nSources] or [nFolds, nSources, nTargets]
+	:param mean_performance:	mean over folds
+	:param std_performance:	standard deviation over folds
+	:param predictionHorizon:	rows between a state and the target it predicts
+	:param fold_forward_embed_dimensions:	embedding dimensions per fold
 	"""
 	fold_results: List['BatchedCCMResult']
-	fold_performances: Optional[np.ndarray] # Shape [nFolds, nSources] (single target) or [nFolds, nSources, nTargets]
-	mean_performance: Optional[np.ndarray]	# Shape [nSources] or [nSources, nTargets]
+	fold_performances: Optional[np.ndarray]
+	mean_performance: Optional[np.ndarray]
 	std_performance: Optional[np.ndarray]
 	predictionHorizon: int
-	fold_forward_embed_dimensions: Optional[List] = None # int or array of shape [nSources, nTargets]
+	fold_forward_embed_dimensions: Optional[List] = None
 
 
 class ResultsIO:
 	"""
-	Static class for saving and loading result objects to and from npz files.
-
-	The result type is stored in the file under the key 'result_type', allowing
-	Load to reconstruct the correct object without the caller specifying the type.
+	Save and load result records as npz files or as folders of npy objects in the cloud.
+	The record type is stored under 'result_type' so Load reconstructs the right class.
 	"""
+
+	@staticmethod
+	def _Arrays(result) -> dict:
+		if isinstance(result, SimplexResult):
+			return ResultsIO._SimplexArrays(result)
+		if isinstance(result, SMapResult):
+			return ResultsIO._SMapArrays(result)
+		if isinstance(result, MultiviewResult):
+			return ResultsIO._MultiviewArrays(result)
+		if isinstance(result, MDEResult):
+			return ResultsIO._MDEArrays(result)
+		if isinstance(result, MDECVResults):
+			return ResultsIO._MDECVResultsArrays(result)
+		if isinstance(result, BatchedCCMResult):
+			return ResultsIO._BatchedCCMArrays(result)
+		if isinstance(result, CCMCVResult):
+			return ResultsIO._CCMCVArrays(result)
+		raise TypeError(f'Unsupported result type: {type(result).__name__}')
+
+	@staticmethod
+	def _FromData(data):
+		result_type = str(data['result_type'])
+		loaders = {
+			'SimplexResult': ResultsIO._LoadSimplex,
+			'SMapResult': ResultsIO._LoadSMap,
+			'MultiviewResult': ResultsIO._LoadMultiview,
+			'MDEResult': ResultsIO._LoadMDE,
+			'MDECVResults': ResultsIO._LoadMDECVResults,
+			'BatchedCCMResult': ResultsIO._LoadBatchedCCM,
+			'CCMCVResult': ResultsIO._LoadCCMCV}
+		if result_type not in loaders:
+			raise ValueError(f'Unknown result type: {result_type}')
+		return loaders[result_type](data)
 
 	@staticmethod
 	def Save(result, path: str) -> None:
 		"""
-		Save any result object to an npz file.
-
-		:param result: A result object (SimplexResult, SMapResult, etc.)
-		:param path: Output file path (the .npz extension is added automatically if absent)
+		:param result:	any result record
+		:param path:	output file path (.npz is appended when absent)
 		"""
-		result_type = type(result).__name__
-
-		if isinstance(result, SimplexResult):
-			arrays = ResultsIO._SimplexArrays(result)
-		elif isinstance(result, SMapResult):
-			arrays = ResultsIO._SMapArrays(result)
-		elif isinstance(result, CCMResult):
-			arrays = ResultsIO._CCMArrays(result)
-		elif isinstance(result, MultiviewResult):
-			arrays = ResultsIO._MultiviewArrays(result)
-		elif isinstance(result, MDEResult):
-			arrays = ResultsIO._MDEArrays(result)
-		elif isinstance(result, MDECVResult):
-			arrays = ResultsIO._MDECVArrays(result)
-		elif isinstance(result, MDECVResults):
-			arrays = ResultsIO._MDECVResultsArrays(result)
-		elif isinstance(result, BatchedCCMResult):
-			arrays = ResultsIO._BatchedCCMArrays(result)
-		elif isinstance(result, CCMCVResult):
-			arrays = ResultsIO._CCMCVArrays(result)
-		else:
-			raise TypeError(f"Unsupported result type: {result_type}")
-
-		arrays['result_type'] = np.array(result_type)
+		arrays = ResultsIO._Arrays(result)
+		arrays['result_type'] = np.array(type(result).__name__)
 		np.savez(path, **arrays)
 
 	@staticmethod
 	def Load(path: str):
-		"""
-		Load a result object from an npz file.
-
-		:param path: Path to the npz file
-		:return: The reconstructed result object
-		"""
-		data = np.load(path, allow_pickle = True)
-		result_type = str(data['result_type'])
-
-		if result_type == 'SimplexResult':
-			return ResultsIO._LoadSimplex(data)
-		elif result_type == 'SMapResult':
-			return ResultsIO._LoadSMap(data)
-		elif result_type == 'CCMResult':
-			return ResultsIO._LoadCCM(data)
-		elif result_type == 'MultiviewResult':
-			return ResultsIO._LoadMultiview(data)
-		elif result_type == 'MDEResult':
-			return ResultsIO._LoadMDE(data)
-		elif result_type == 'MDECVResult':
-			return ResultsIO._LoadMDECV(data)
-		elif result_type == 'MDECVResults':
-			return ResultsIO._LoadMDECVResults(data)
-		elif result_type == 'BatchedCCMResult':
-			return ResultsIO._LoadBatchedCCM(data)
-		elif result_type == 'CCMCVResult':
-			return ResultsIO._LoadCCMCV(data)
-		else:
-			raise ValueError(f"Unknown result type in file: {result_type}")
+		return ResultsIO._FromData(np.load(path, allow_pickle = True))
 
 	@staticmethod
 	def SaveToCloud(result, path: str, cloud = None) -> None:
 		"""
-		Save any result object to S3, with each array stored as a separate object.
-
-		:param result: A result object (SimplexResult, SMapResult, etc.)
-		:param path: Folder-like S3 path; each array is uploaded as path/key
-		:param cloud: A cottoncandy interface object. If None, one is created via cottoncandy.get_interface()
+		:param path:	folder-like S3 path; every array is uploaded as path/key.npy
+		:param cloud:	a cottoncandy interface; created when None
 		"""
 		if cloud is None:
 			import cottoncandy
 			cloud = cottoncandy.get_interface()
-
-		result_type = type(result).__name__
-
-		if isinstance(result, SimplexResult):
-			arrays = ResultsIO._SimplexArrays(result)
-		elif isinstance(result, SMapResult):
-			arrays = ResultsIO._SMapArrays(result)
-		elif isinstance(result, CCMResult):
-			arrays = ResultsIO._CCMArrays(result)
-		elif isinstance(result, MultiviewResult):
-			arrays = ResultsIO._MultiviewArrays(result)
-		elif isinstance(result, MDEResult):
-			arrays = ResultsIO._MDEArrays(result)
-		elif isinstance(result, MDECVResult):
-			arrays = ResultsIO._MDECVArrays(result)
-		elif isinstance(result, MDECVResults):
-			arrays = ResultsIO._MDECVResultsArrays(result)
-		elif isinstance(result, BatchedCCMResult):
-			arrays = ResultsIO._BatchedCCMArrays(result)
-		elif isinstance(result, CCMCVResult):
-			arrays = ResultsIO._CCMCVArrays(result)
-		else:
-			raise TypeError(f"Unsupported result type: {result_type}")
-
-		arrays['result_type'] = np.array(result_type)
+		arrays = ResultsIO._Arrays(result)
+		arrays['result_type'] = np.array(type(result).__name__)
 		path = path.rstrip('/')
 		for key, value in arrays.items():
 			cloud.upload_npy_array(f'{path}/{key}.npy', value)
 
 	@staticmethod
 	def DownloadFromCloud(path: str, cloud = None):
-		"""
-		Load a result object from S3.
-
-		:param path: Folder-like S3 path used when saving
-		:param cloud: A cottoncandy interface object. If None, one is created via cottoncandy.get_interface()
-		:return: The reconstructed result object
-		"""
 		if cloud is None:
 			import cottoncandy
 			cloud = cottoncandy.get_interface(verbose = False)
-
 		path = path.rstrip('/')
-		object_names = cloud.ls(path)
-		data = {name.split('/')[-1].split('.')[0]: cloud.download_npy_array(name)
-		        for name in object_names}
+		data = {name.split('/')[-1].split('.')[0]: cloud.download_npy_array(name) for name in cloud.ls(path)}
+		return ResultsIO._FromData(data)
 
-		result_type = str(data['result_type'])
+	# --- run-list packing: a list of per-run arrays is stored as key_0, key_1, ... plus n_key ---
 
-		if result_type == 'SimplexResult':
-			return ResultsIO._LoadSimplex(data)
-		elif result_type == 'SMapResult':
-			return ResultsIO._LoadSMap(data)
-		elif result_type == 'CCMResult':
-			return ResultsIO._LoadCCM(data)
-		elif result_type == 'MultiviewResult':
-			return ResultsIO._LoadMultiview(data)
-		elif result_type == 'MDEResult':
-			return ResultsIO._LoadMDE(data)
-		elif result_type == 'MDECVResult':
-			return ResultsIO._LoadMDECV(data)
-		elif result_type == 'MDECVResults':
-			return ResultsIO._LoadMDECVResults(data)
-		elif result_type == 'BatchedCCMResult':
-			return ResultsIO._LoadBatchedCCM(data)
-		elif result_type == 'CCMCVResult':
-			return ResultsIO._LoadCCMCV(data)
+	@staticmethod
+	def _PackRuns(arrays: dict, key: str, value) -> None:
+		if value is None:
+			return
+		if isinstance(value, list):
+			arrays[f'n_{key}'] = np.array(len(value))
+			for i, run in enumerate(value):
+				arrays[f'{key}_{i}'] = run
 		else:
-			raise ValueError(f"Unknown result type in cloud folder: {result_type}")
+			arrays[key] = value
 
-	# --- internal helpers: arrays from result ---
+	@staticmethod
+	def _UnpackRuns(data, key: str):
+		if f'n_{key}' in data:
+			return [data[f'{key}_{i}'] for i in range(int(data[f'n_{key}']))]
+		return data[key] if key in data else None
+
+	# --- arrays from records ---
 
 	@staticmethod
 	def _SimplexArrays(result: SimplexResult) -> dict:
-		arrays = dict(
-			time = result.time,
-			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon))
-		if result.projection is not None:
-			arrays['projection'] = result.projection
+		arrays = dict(embedDimensions = np.array(result.embedDimensions),
+					  predictionHorizon = np.array(result.predictionHorizon),
+					  knn = np.array(result.knn))
+		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
+		ResultsIO._PackRuns(arrays, 'variance', result.variance)
 		if result.score is not None:
-			arrays['score'] = np.array(result.score)
+			arrays['score'] = np.asarray(result.score)
 		return arrays
 
 	@staticmethod
 	def _SMapArrays(result: SMapResult) -> dict:
-		arrays = dict(
-			time = result.time,
-			coefficients = result.coefficients,
-			singularValues = result.singularValues,
-			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon),
-			theta = np.array(result.theta))
-		if result.projection is not None:
-			arrays['projection'] = result.projection
-		if result.score is not None:
-			arrays['score'] = np.array(result.score)
-		return arrays
-
-	@staticmethod
-	def _CCMArrays(result: CCMResult) -> dict:
-		arrays = dict(
-			libMeans = result.libMeans,
-			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon))
-		if result.predictStats1 is not None:
-			arrays['predictStats1'] = result.predictStats1
-		if result.predictStats2 is not None:
-			arrays['predictStats2'] = result.predictStats2
+		arrays = ResultsIO._SimplexArrays(result)
+		arrays['theta'] = np.array(result.theta)
+		ResultsIO._PackRuns(arrays, 'coefficients', result.coefficients)
+		ResultsIO._PackRuns(arrays, 'singularValues', result.singularValues)
 		return arrays
 
 	@staticmethod
 	def _MultiviewArrays(result: MultiviewResult) -> dict:
-		combos = list(result.topRankProjections.keys())
-
+		combos = list(result.topRankPredictions.keys())
 		combo_keys = np.empty(len(combos), dtype = object)
-		for i, combo in enumerate(combos):
-			combo_keys[i] = combo
-
 		stats_values = np.empty(len(combos), dtype = object)
 		for i, combo in enumerate(combos):
+			combo_keys[i] = combo
 			stats_values[i] = result.topRankStats[combo]
-
 		view_array = np.empty(len(result.view), dtype = object)
 		for i, entry in enumerate(result.view):
 			view_array[i] = entry
-
-		arrays = dict(
-			time = result.time,
-			view = view_array,
-			combo_keys = combo_keys,
-			topRankStats_values = stats_values,
-			n_combos = np.array(len(combos)),
-			D = np.array(result.D),
-			embedDimensions = np.array(result.embedDimensions),
-			predictionHorizon = np.array(result.predictionHorizon))
-
-		if result.predictions is not None:
-			arrays['predictions'] = result.predictions
+		arrays = dict(view = view_array, combo_keys = combo_keys, topRankStats_values = stats_values,
+					  n_combos = np.array(len(combos)), columnsPerView = np.array(result.columnsPerView),
+					  embedDimensions = np.array(result.embedDimensions),
+					  predictionHorizon = np.array(result.predictionHorizon))
+		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
-			arrays['score'] = np.array(result.score)
-
+			arrays['score'] = np.asarray(result.score)
 		for i, combo in enumerate(combos):
-			arrays[f'topRankProj_{i}'] = result.topRankProjections[combo]
-
+			ResultsIO._PackRuns(arrays, f'topRankPred_{i}', result.topRankPredictions[combo])
 		return arrays
 
 	@staticmethod
 	def _MDEArrays(result: MDEResult) -> dict:
-		arrays = dict(
-			time = result.time,
-			selected_variables = result.selected_variables,
-			accuracy = result.performance,
-			ccm_values = result.ccm_values,
-			stepwise_performance = result.stepwise_performance)
-		if result.predictions is not None:
-			arrays['predictions'] = result.predictions
+		arrays = dict(selected_variables = result.selected_variables,
+					  accuracy = result.performance,
+					  ccm_values = result.ccm_values,
+					  stepwise_performance = result.stepwise_performance)
+		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
-			arrays['score'] = result.score
-		if result.timeDelayResults is not None:
-			arrays['timeDelayResults'] = np.array(result.timeDelayResults, dtype = float)
-		return arrays
-
-	@staticmethod
-	def _MDECVArrays(result: MDECVResult) -> dict:
-		n_folds = len(result.fold_results)
-		arrays = dict(
-			time = result.time,
-			selected_features = result.selected_variables,
-			fold_accuracies = result.fold_performances,
-			best_fold = result.best_fold,
-			n_folds = np.array(n_folds))
-
-		if result.predictions is not None:
-			arrays['predictions'] = result.predictions
-		if result.score is not None:
-			arrays['score'] = result.score
-
-		for i, fold in enumerate(result.fold_results):
-			fold_arrays = ResultsIO._MDEArrays(fold)
-			for key, value in fold_arrays.items():
-				arrays[f'fold_{i}_{key}'] = value
-
+			arrays['score'] = np.asarray(result.score)
+		for key in ('candidate_embed_dimensions', 'candidate_peak_scores', 'candidate_slopes'):
+			value = getattr(result, key)
+			if value is not None:
+				arrays[key] = np.asarray(value)
 		return arrays
 
 	@staticmethod
 	def _MDECVResultsArrays(result: MDECVResults) -> dict:
-		arrays = dict(
-			fold_selected_variables = result.fold_selected_variables,
-			fold_stepwise_performances = result.fold_stepwise_performances,
-			fold_accuracies = result.fold_accuracies,
-			best_fold = result.best_fold,
-			selected_variables = result.selected_variables)
-		if result.time is not None:
-			arrays['time'] = result.time
-		if result.predictions is not None:
-			arrays['predictions'] = result.predictions
+		arrays = dict(fold_selected_variables = result.fold_selected_variables,
+					  fold_stepwise_performances = result.fold_stepwise_performances,
+					  fold_accuracies = result.fold_accuracies,
+					  best_fold = result.best_fold,
+					  selected_variables = result.selected_variables)
+		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
-			arrays['score'] = result.score
-		if result.fold_predictions is not None:
-			arrays['n_fold_predictions'] = np.array(len(result.fold_predictions))
-			for i, foldPrediction in enumerate(result.fold_predictions):
-				arrays['fold_predictions_{}'.format(i)] = foldPrediction
+			arrays['score'] = np.asarray(result.score)
+		if result.fold_Y_pred is not None:
+			arrays['n_fold_Y_pred'] = np.array(len(result.fold_Y_pred))
+			for i, foldPrediction in enumerate(result.fold_Y_pred):
+				ResultsIO._PackRuns(arrays, f'fold_Y_pred_{i}', foldPrediction)
 		return arrays
 
 	@staticmethod
 	def _BatchedCCMArrays(result: BatchedCCMResult) -> dict:
-		arrays = {
-			'forward_performance': result.forward_performance,
-			'predictionHorizon': np.array(result.predictionHorizon),
-			'library_sizes': np.array(result.library_sizes)
-		}
+		arrays = dict(forward_performance = result.forward_performance,
+					  predictionHorizon = np.array(result.predictionHorizon),
+					  library_sizes = np.array(result.library_sizes))
 		if result.forward_embed_dimensions is not None:
 			arrays['forward_embed_dimensions'] = np.array(result.forward_embed_dimensions)
 		return arrays
 
 	@staticmethod
 	def _CCMCVArrays(result: CCMCVResult) -> dict:
-		nFolds = len(result.fold_results)
-		arrays = {
-			'predictionHorizon': np.array(result.predictionHorizon),
-			'n_folds': np.array(nFolds)
-		}
+		arrays = dict(predictionHorizon = np.array(result.predictionHorizon),
+					  n_folds = np.array(len(result.fold_results)))
 		if result.fold_performances is not None:
 			arrays['fold_performances'] = result.fold_performances
 		if result.mean_performance is not None:
@@ -615,150 +395,98 @@ class ResultsIO:
 			arrays['std_performance'] = result.std_performance
 		if result.fold_forward_embed_dimensions is not None:
 			for i, embedDimensions in enumerate(result.fold_forward_embed_dimensions):
-				arrays['fold_forward_embed_dimensions_{}'.format(i)] = np.array(embedDimensions)
+				arrays[f'fold_forward_embed_dimensions_{i}'] = np.array(embedDimensions)
 		for i, foldResult in enumerate(result.fold_results):
-			foldArrays = ResultsIO._BatchedCCMArrays(foldResult)
-			for key, value in foldArrays.items():
-				arrays['fold_{}_{}'.format(i, key)] = value
+			for key, value in ResultsIO._BatchedCCMArrays(foldResult).items():
+				arrays[f'fold_{i}_{key}'] = value
 		return arrays
 
-	# --- internal helpers: result from loaded data ---
+	# --- records from loaded data ---
 
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
-		return SimplexResult(
-			time = data['time'],
-			projection = data['projection'] if 'projection' in data else None,
-			embedDimensions = int(data['embedDimensions']),
-			predictionHorizon = int(data['predictionHorizon']),
-			score = float(data['score']) if 'score' in data else None)
+		return SimplexResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
+							 variance = ResultsIO._UnpackRuns(data, 'variance'),
+							 score = data['score'] if 'score' in data else None,
+							 embedDimensions = int(data['embedDimensions']),
+							 predictionHorizon = int(data['predictionHorizon']),
+							 knn = int(data['knn']))
 
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
-		return SMapResult(
-			time = data['time'],
-			projection = data['projection'] if 'projection' in data else None,
-			coefficients = data['coefficients'],
-			singularValues = data['singularValues'],
-			embedDimensions = int(data['embedDimensions']),
-			predictionHorizon = int(data['predictionHorizon']),
-			theta = float(data['theta']),
-			score = float(data['score']) if 'score' in data else None)
-
-	@staticmethod
-	def _LoadCCM(data) -> CCMResult:
-		return CCMResult(
-			libMeans = data['libMeans'],
-			embedDimensions = int(data['embedDimensions']),
-			predictionHorizon = int(data['predictionHorizon']),
-			predictStats1 = data['predictStats1'] if 'predictStats1' in data else None,
-			predictStats2 = data['predictStats2'] if 'predictStats2' in data else None)
+		return SMapResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
+						  variance = ResultsIO._UnpackRuns(data, 'variance'),
+						  coefficients = ResultsIO._UnpackRuns(data, 'coefficients'),
+						  singularValues = ResultsIO._UnpackRuns(data, 'singularValues'),
+						  score = data['score'] if 'score' in data else None,
+						  embedDimensions = int(data['embedDimensions']),
+						  predictionHorizon = int(data['predictionHorizon']),
+						  knn = int(data['knn']),
+						  theta = float(data['theta']))
 
 	@staticmethod
 	def _LoadMultiview(data) -> MultiviewResult:
 		n_combos = int(data['n_combos'])
 		combo_keys = list(data['combo_keys'])
 		stats_values = list(data['topRankStats_values'])
-
-		topRankProjections = {
-			combo_keys[i]: data[f'topRankProj_{i}']
-			for i in range(n_combos)}
-
-		topRankStats = {
-			combo_keys[i]: stats_values[i]
-			for i in range(n_combos)}
-
 		return MultiviewResult(
-			time = data['time'],
+			Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
 			view = list(data['view']),
-			topRankProjections = topRankProjections,
-			topRankStats = topRankStats,
-			D = int(data['D']),
+			topRankPredictions = {combo_keys[i]: ResultsIO._UnpackRuns(data, f'topRankPred_{i}') for i in range(n_combos)},
+			topRankStats = {combo_keys[i]: stats_values[i] for i in range(n_combos)},
+			columnsPerView = int(data['columnsPerView'] if 'columnsPerView' in data else data['D']),
 			embedDimensions = int(data['embedDimensions']),
 			predictionHorizon = int(data['predictionHorizon']),
-			predictions = data['predictions'] if 'predictions' in data else None,
-			score = float(data['score']) if 'score' in data else None)
+			score = data['score'] if 'score' in data else None)
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
-		time_delay = None
-		if 'timeDelayResults' in data:
-			time_delay = [
-				(int(row[0]), int(row[1]), float(row[2]), float(row[3]))
-				for row in data['timeDelayResults']]
-		return MDEResult(
-			time = data['time'],
-			predictions = data['predictions'] if 'predictions' in data else None,
-			selected_variables = data['selected_variables'],
-			performance = data['accuracy'],
-			ccm_values = data['ccm_values'],
-			stepwise_performance = data['stepwise_performance'],
-			timeDelayResults = time_delay,
-			score = data['score'] if 'score' in data else None)
-
-	@staticmethod
-	def _LoadMDECV(data) -> MDECVResult:
-		n_folds = int(data['n_folds'])
-
-		fold_results = []
-		for i in range(n_folds):
-			fold_data = {key[len(f'fold_{i}_'):]: data[key]
-			             for key in list(data)
-			             if key.startswith(f'fold_{i}_')}
-			fold_results.append(ResultsIO._LoadMDE(fold_data))
-
-		return MDECVResult(
-			time = data['time'],
-			predictions = data['predictions'] if 'predictions' in data else None,
-			selected_variables = data['selected_variables'],
-			fold_results = fold_results,
-			fold_performances = data['fold_accuracies'],
-			best_fold = data['best_fold'],
-			score = data['score'] if 'score' in data else None)
+		def optional(key):
+			return data[key] if key in data else None
+		return MDEResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
+						 selected_variables = data['selected_variables'],
+						 performance = data['accuracy'],
+						 ccm_values = data['ccm_values'],
+						 stepwise_performance = data['stepwise_performance'],
+						 candidate_embed_dimensions = optional('candidate_embed_dimensions'),
+						 candidate_peak_scores = optional('candidate_peak_scores'),
+						 candidate_slopes = optional('candidate_slopes'),
+						 score = optional('score'))
 
 	@staticmethod
 	def _LoadMDECVResults(data) -> MDECVResults:
 		foldPredictions = None
-		if 'n_fold_predictions' in data:
-			numFolds = int(data['n_fold_predictions'])
-			foldPredictions = [data['fold_predictions_{}'.format(i)] for i in range(numFolds)]
-		return MDECVResults(
-			fold_selected_variables = data['fold_selected_variables'],
-			fold_stepwise_performances = data['fold_stepwise_performances'],
-			fold_accuracies = data['fold_accuracies'],
-			best_fold = data['best_fold'],
-			fold_predictions = foldPredictions,
-			selected_variables = data['selected_variables'],
-			time = data['time'] if 'time' in data else None,
-			predictions = data['predictions'] if 'predictions' in data else None,
-			score = data['score'] if 'score' in data else None)
+		if 'n_fold_Y_pred' in data:
+			foldPredictions = [ResultsIO._UnpackRuns(data, f'fold_Y_pred_{i}') for i in range(int(data['n_fold_Y_pred']))]
+		return MDECVResults(fold_selected_variables = data['fold_selected_variables'],
+							fold_stepwise_performances = data['fold_stepwise_performances'],
+							fold_accuracies = data['fold_accuracies'],
+							fold_Y_pred = foldPredictions,
+							best_fold = data['best_fold'],
+							selected_variables = data['selected_variables'],
+							Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
+							score = data['score'] if 'score' in data else None)
 
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
-		return BatchedCCMResult(
-			forward_performance = data['forward_performance'],
-			predictionHorizon = int(data['predictionHorizon']),
-			library_sizes = data['library_sizes'],
-			forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None
-		)
+		return BatchedCCMResult(forward_performance = data['forward_performance'],
+								predictionHorizon = int(data['predictionHorizon']),
+								library_sizes = data['library_sizes'],
+								forward_embed_dimensions = data['forward_embed_dimensions'] if 'forward_embed_dimensions' in data else None)
 
 	@staticmethod
 	def _LoadCCMCV(data) -> CCMCVResult:
 		nFolds = int(data['n_folds'])
 		foldResults = []
 		for i in range(nFolds):
-			foldData = {key[len('fold_{}_'.format(i)):]: data[key]
-			            for key in list(data)
-			            if key.startswith('fold_{}_'.format(i))}
-			foldResults.append(ResultsIO._LoadBatchedCCM(foldData))
+			prefix = f'fold_{i}_'
+			foldResults.append(ResultsIO._LoadBatchedCCM({key[len(prefix):]: data[key] for key in list(data) if key.startswith(prefix)}))
 		foldForwardEmbedDimensions = None
 		if 'fold_forward_embed_dimensions_0' in data:
-			foldForwardEmbedDimensions = [data['fold_forward_embed_dimensions_{}'.format(i)] for i in range(nFolds)]
-		return CCMCVResult(
-			fold_results = foldResults,
-			fold_performances = data['fold_performances'] if 'fold_performances' in data else None,
-			mean_performance = data['mean_performance'] if 'mean_performance' in data else None,
-			std_performance = data['std_performance'] if 'std_performance' in data else None,
-			predictionHorizon = int(data['predictionHorizon']),
-			fold_forward_embed_dimensions = foldForwardEmbedDimensions
-		)
+			foldForwardEmbedDimensions = [data[f'fold_forward_embed_dimensions_{i}'] for i in range(nFolds)]
+		return CCMCVResult(fold_results = foldResults,
+						   fold_performances = data['fold_performances'] if 'fold_performances' in data else None,
+						   mean_performance = data['mean_performance'] if 'mean_performance' in data else None,
+						   std_performance = data['std_performance'] if 'std_performance' in data else None,
+						   predictionHorizon = int(data['predictionHorizon']),
+						   fold_forward_embed_dimensions = foldForwardEmbedDimensions)
