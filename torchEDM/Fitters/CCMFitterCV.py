@@ -38,9 +38,25 @@ class CCMFitterCV(EDMFitter):
 				 LeaveOneRunOut: bool = True,
 				 progressBar: bool = True):
 		"""
-		:param Folds:		folds per run when LeaveOneRunOut is False
-		:param LeaveOneRunOut:	hold out one whole run per split
-		Other parameters as in ConvergentCrossMap.
+		:param TrainSizes:	training-subset sizes at which the cross-map skill is measured; None uses 10, 25, 50, 75 and 90 percent of the training rows
+		:param numRepeats:	random subsets drawn per size; the reported skill is their mean
+		:param EmbedDimensions:	embedding dimensions per source column: an int, [nSources], or [nSources, nTargets]; None searches each source's up to MaxEmbedDimensions
+		:param MaxEmbedDimensions:	largest embedding dimension tried in that search
+		:param PredictionHorizon:	rows between a source state and the target value it predicts
+		:param KNN:	neighbors per source; None means the source's embedding dimensions + 1
+		:param Step:	row offset between the stacked copies; negative reaches into the past
+		:param ExclusionRadius:	in-sample only; training states within this many rows of a test state may not be its neighbors (the state itself never is)
+		:param device:	torch device; cuda falls back to cpu when unavailable
+		:param sourceBatchSize:	source columns per batch in 'variables' mode, and columns per batch in the embedding-dimension search
+		:param targetBatchSize:	target columns per batch within a source batch
+		:param targetVRAM:	GB budget that sizes both batches when given; None uses the sizes as given
+		:param dtype:	torch dtype of the distances and predictions
+		:param batchMode:	'variables' batches over source columns and predicts the test rows; 'sample' batches over subsets and scores the training rows predicting themselves
+		:param sampleBatchSize:	subsets per batch in 'sample' mode; None takes all at once
+		:param seed:	seed of the random subset draws; None draws fresh subsets every call
+		:param Folds:	contiguous blocks each run is cut into when LeaveOneRunOut is False; fold k holds out block k of every run
+		:param LeaveOneRunOut:	True holds out one whole run per split; False uses the n-fold blocks
+		:param progressBar:	show a progress bar over the folds
 		"""
 		super().__init__(progressBar)
 		self.TrainSizes = TrainSizes
@@ -66,9 +82,14 @@ class CCMFitterCV(EDMFitter):
 
 	def Fit(self, X_train, Y_train = None, X_test = None, Y_test = None) -> CCMCVResult:
 		"""
-		:param X_train:	source columns, an array or a list of runs
-		:param Y_train:	targets matching X_train; None cross-maps X onto itself
-		X_test and Y_test are unused; each fold predicts its own held-out slices.
+		Run ConvergentCrossMap once per split, each split's training slices predicting its held-out
+		slices, and keep the CCMCVResult in Result.
+
+		:param X_train:	[nTrain, nSources] or a list of runs: the columns whose stacked histories predict the targets
+		:param Y_train:	[nTrain, nTargets] or a list of runs; None cross-maps every X column onto every X column
+		:param X_test:	unused; each fold predicts its own held-out slices
+		:param Y_test:	unused
+		:return: CCMCVResult with every fold's BatchedCCMResult and the mean and standard deviation of the skill over folds
 		"""
 		xRuns = AsRuns(X_train)
 		yRuns = None if Y_train is None else AsRuns(Y_train)

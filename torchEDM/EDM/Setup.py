@@ -27,7 +27,10 @@ ArrayOrRuns = Union[numpy.ndarray, Sequence[numpy.ndarray]]
 
 def AsRuns(arrays: ArrayOrRuns) -> List[numpy.ndarray]:
 	"""
-	One 2-D float array per run. A single array is one run; a 1-D array is one column.
+	One 2-D float array per run.
+
+	:param arrays:	one array, or a list or tuple of arrays with one per run; a 1-D array is one column
+	:return: list of [nSamples, nColumns] float64 arrays, one per run
 	"""
 	runs = list(arrays) if isinstance(arrays, (list, tuple)) else [arrays]
 	out = []
@@ -42,6 +45,11 @@ def AsRuns(arrays: ArrayOrRuns) -> List[numpy.ndarray]:
 
 
 def IsListOfRuns(arrays) -> bool:
+	"""
+	Whether an X, Y or mask argument is a list or tuple of runs rather than a single array.
+
+	:param arrays:	the argument as the caller passed it
+	"""
 	return isinstance(arrays, (list, tuple))
 
 
@@ -51,9 +59,9 @@ def StackHistory(X: numpy.ndarray, embedDimensions: int, step: int) -> numpy.nda
 	copies, column-major (all lags of column 0, then all lags of column 1, ...). Rows whose
 	history falls outside the run hold NaN.
 
-	:param X:				[nSamples, nColumns]
-	:param embedDimensions:	copies of each column in the state; 1 uses the columns as given
-	:param step:			row offset between copies; negative reaches into the past
+	:param X:	[nSamples, nColumns] one run
+	:param embedDimensions:	copies of each column in the state; 1 returns X as given
+	:param step:	row offset between the stacked copies; negative reaches into the past
 	:return: [nSamples, nColumns * embedDimensions]
 	"""
 	if embedDimensions < 1:
@@ -71,8 +79,13 @@ def BuildTrainingPairs(X_train: numpy.ndarray, Y_train: numpy.ndarray, embedDime
 	Every row of one run whose state is complete and whose horizon-shifted target lies
 	inside the run. The target itself may be NaN; the predictors decide what that means.
 
+	:param X_train:	[nSamples, nFeatures] one run of the columns that form the states
+	:param Y_train:	[nSamples, nTargets] the same run's targets
+	:param embedDimensions:	copies of each column in the state; 1 uses the columns as given
+	:param step:	row offset between the stacked copies; negative reaches into the past
+	:param predictionHorizon:	rows between a state and the target it is paired with
 	:param rowMask:	optional bool [nSamples]; False bars the row from serving as a training state
-	:return: (states [nPairs, stateSize], targets [nPairs, nTargets], stateRows [nPairs])
+	:return: (states [nPairs, stateSize], targets [nPairs, nTargets], stateRows [nPairs]): the pairs and the row of each state within the run
 	"""
 	states = StackHistory(X_train, embedDimensions, step)
 	nRows = X_train.shape[0]
@@ -93,7 +106,11 @@ def BuildTestStates(X_test: numpy.ndarray, embedDimensions: int, step: int, pred
 	The complete states of one run that predict one of its rows: output row i is predicted
 	from the state at row i - predictionHorizon.
 
-	:return: (states [nStates, stateSize], stateRows [nStates], outputRows [nStates])
+	:param X_test:	[nSamples, nFeatures] one run of the columns that form the states
+	:param embedDimensions:	copies of each column in the state; 1 uses the columns as given
+	:param step:	row offset between the stacked copies; negative reaches into the past
+	:param predictionHorizon:	rows between a state and the output row it predicts
+	:return: (states [nStates, stateSize], stateRows [nStates], outputRows [nStates]): the row each state sits at and the row it predicts
 	"""
 	states = StackHistory(X_test, embedDimensions, step)
 	nRows = X_test.shape[0]
@@ -112,6 +129,11 @@ def BuildExclusionMask(trainRows: numpy.ndarray, trainRuns: numpy.ndarray,
 	In-sample neighbor exclusion: a training state within exclusionRadius rows of a test
 	state in the same run (the test state itself at radius 0) may not be its neighbor.
 
+	:param trainRows:	[nTrain] row of each training state within its run
+	:param trainRuns:	[nTrain] run index of each training state
+	:param testRows:	[nTest] row of each test state within its run
+	:param testRuns:	[nTest] run index of each test state
+	:param exclusionRadius:	largest row distance that is still excluded
 	:return: bool [nTrain, nTest], True = excluded; None when nothing is excluded
 	"""
 	isSameRun = trainRuns[:, None] == testRuns[None, :]
@@ -123,10 +145,22 @@ def BuildExclusionMask(trainRows: numpy.ndarray, trainRuns: numpy.ndarray,
 @dataclass(frozen = True)
 class PredictionInputs:
 	"""
-	Training pairs and test states gathered across runs.
+	Training pairs and test states gathered across runs. Rows are positions within their own
+	run; runs are indices into the run lists.
 
-	Rows are positions within their own run; runs are indices into the run lists.
-	outputRows[j] is the row of Y_pred (within run testRuns[j]) that test state j predicts.
+	:param trainStates:	[nTrain, stateSize] complete training states
+	:param trainTargets:	[nTrain, nTargets] the horizon-shifted target of each training state; may hold NaN
+	:param trainRows:	[nTrain] row of each training state within its run
+	:param trainRuns:	[nTrain] run index of each training state
+	:param testStates:	[nTest, stateSize] complete test states
+	:param testRows:	[nTest] row of each test state within its run
+	:param testRuns:	[nTest] run index of each test state
+	:param outputRows:	[nTest] the row of Y_pred (within run testRuns[j]) that test state j predicts
+	:param outputLengths:	rows of Y_pred per test run
+	:param numTargets:	columns of Y
+	:param isInSample:	True when the training rows predict themselves (X_test omitted)
+	:param isSingleTestRun:	True when the test data came as one array, so Y_pred is one array rather than a list
+	:param exclusionMask:	bool [nTrain, nTest] pairs that may not be neighbors, or None when nothing is excluded
 	"""
 	trainStates: numpy.ndarray		# [nTrain, stateSize]
 	trainTargets: numpy.ndarray		# [nTrain, nTargets]
@@ -144,10 +178,12 @@ class PredictionInputs:
 
 	@property
 	def stateSize(self) -> int:
+		"""Columns of a state: nFeatures * embedDimensions."""
 		return self.trainStates.shape[1]
 
 	@property
 	def numTrainingPairs(self) -> int:
+		"""Training states available before exclusions."""
 		return self.trainStates.shape[0]
 
 	@property
@@ -159,9 +195,11 @@ class PredictionInputs:
 
 	def SharedAxisRows(self):
 		"""
-		Row positions of training and test states on one axis (in-sample only), for
-		ordering tied distances by temporal proximity. Runs are spaced apart by more than
-		any run length so cross-run pairs never look close.
+		Row positions of training and test states on one axis (in-sample only), for ordering
+		tied distances by temporal proximity. Runs are spaced apart by more than any run length
+		so cross-run pairs never look close.
+
+		:return: (trainPositions [nTrain], testPositions [nTest])
 		"""
 		span = int(max(self.outputLengths)) + 1
 		return self.trainRows + self.trainRuns * span, self.testRows + self.testRuns * span
@@ -173,14 +211,15 @@ def PreparePrediction(X_train: ArrayOrRuns, Y_train: ArrayOrRuns, X_test: Option
 	"""
 	Gather training pairs and test states for the predictors.
 
-	:param X_train:		[nTrain, nFeatures] or a list of runs
-	:param Y_train:		[nTrain, nTargets] (1-D is one target) or a list matching X_train
-	:param X_test:		[nTest, nFeatures] or a list of runs; None predicts the training rows in-sample
-	:param embedDimensions:	copies of each feature column in the state
-	:param step:		row offset between copies; negative reaches into the past
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param exclusionRadius:	in-sample only; training states within this many rows of a test state are not its neighbors
-	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
+	:param X_train:	[nTrain, nFeatures] or a list of runs: the columns that form the states
+	:param Y_train:	[nTrain, nTargets] (1-D for one target) or a list of runs aligned row by row with X_train; a NaN target is allowed
+	:param X_test:	[nTest, nFeatures] or a list of runs whose rows are predicted; None predicts the training rows in-sample
+	:param embedDimensions:	copies of each feature column in the state, each shifted step rows from the last; 1 uses the columns as given
+	:param step:	row offset between the stacked copies; negative reaches into the past
+	:param predictionHorizon:	rows between a state and the target value it predicts
+	:param exclusionRadius:	in-sample only; training states within this many rows of a test state may not be its neighbors (the state itself never is)
+	:param trainRowMask:	optional bool [nTrain] (or a list with one per run); False bars that row from serving as a training state
+	:return: PredictionInputs; raises ValueError when the arrays disagree in runs, rows or columns, when exclusionRadius is given with a separate X_test, or when no usable training or test state remains
 	"""
 	xRuns = AsRuns(X_train)
 	yRuns = AsRuns(Y_train)
@@ -261,8 +300,10 @@ def PreparePrediction(X_train: ArrayOrRuns, Y_train: ArrayOrRuns, X_test: Option
 
 def TestTargets(Y_true: ArrayOrRuns, inputs: PredictionInputs) -> numpy.ndarray:
 	"""
-	The target rows that the test states predict, gathered from Y_true (Y_test, or Y_train
-	in-sample) in the order of inputs.testStates.
+	The target rows that the test states predict, gathered in the order of inputs.testStates.
+
+	:param Y_true:	Y_test, or Y_train in-sample: [nRows, nTargets] per test run, laid out like the test data
+	:param inputs:	the PredictionInputs the test states came from
 	:return: [nTest, nTargets]
 	"""
 	runs = AsRuns(Y_true)
@@ -279,8 +320,12 @@ def TestTargets(Y_true: ArrayOrRuns, inputs: PredictionInputs) -> numpy.ndarray:
 
 def ResolveNeighborCount(knn: Optional[int], inputs: PredictionInputs, isEveryNeighborDefault: bool = False) -> int:
 	"""
-	The neighbor count a predictor will use. Zero or None means the default: the state size
-	plus one, or every available training state when isEveryNeighborDefault.
+	The neighbor count a predictor will use.
+
+	:param knn:	the caller's request; 0 or None asks for the default
+	:param inputs:	the PredictionInputs, for the state size and the neighbors available after exclusions
+	:param isEveryNeighborDefault:	False makes the default the state size plus one; True makes it every available training state
+	:return: the neighbor count; raises ValueError when it exceeds the training states available to every test state
 	"""
 	available = inputs.numAvailableNeighbors
 	if knn is None or knn <= 0:
@@ -292,8 +337,11 @@ def ResolveNeighborCount(knn: Optional[int], inputs: PredictionInputs, isEveryNe
 
 def ScatterPredictions(values: numpy.ndarray, inputs: PredictionInputs) -> Union[numpy.ndarray, List[numpy.ndarray]]:
 	"""
-	Place per-test-state values [nTest, ...] at the rows they predict in NaN-filled arrays
-	of [nRows, ...] per test run. A single test run comes back as one array.
+	Place per-test-state values at the rows they predict, in NaN-filled arrays per test run.
+
+	:param values:	[nTest, ...] one entry per test state, in the order of inputs.testStates
+	:param inputs:	the PredictionInputs the test states came from
+	:return: [nRows, ...] per test run; one array for a single test run, a list for several
 	"""
 	values = numpy.asarray(values)
 	outputs = []
@@ -306,7 +354,13 @@ def ScatterPredictions(values: numpy.ndarray, inputs: PredictionInputs) -> Union
 
 
 def MatchTargetLayout(arrays, isTargetOneDimensional: bool):
-	"""Drop the trailing target axis when Y was given as a 1-D array, per run."""
+	"""
+	Drop the trailing target axis when Y was given as a 1-D array.
+
+	:param arrays:	an array [nRows, ..., nTargets] or a list of them, one per run
+	:param isTargetOneDimensional:	True when the caller's Y had no target axis
+	:return: the arrays with their last axis removed when isTargetOneDimensional, else unchanged
+	"""
 	if not isTargetOneDimensional:
 		return arrays
 	if isinstance(arrays, list):
@@ -316,9 +370,12 @@ def MatchTargetLayout(arrays, isTargetOneDimensional: bool):
 
 def ScorePredictions(scoringFunction: Callable, Y_true: ArrayOrRuns, Y_pred: ArrayOrRuns) -> numpy.ndarray:
 	"""
-	scoringFunction(actual, predicted) per target column over all runs; the scoring
-	functions drop non-finite pairs themselves. A score the function declines to compute
-	is NaN.
+	Score the predictions per target column over all runs. The scoring functions drop
+	non-finite pairs themselves; a score the function declines to compute is NaN.
+
+	:param scoringFunction:	scoringFunction(actual, predicted) -> float on two 1-D arrays
+	:param Y_true:	truth, an array or a list of runs
+	:param Y_pred:	predictions laid out like Y_true
 	:return: [nTargets]
 	"""
 	actual = numpy.concatenate(AsRuns(Y_true))

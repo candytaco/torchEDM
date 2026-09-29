@@ -7,7 +7,13 @@ import numpy
 
 def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 	"""
-	Make delayed copies of the columns of the data
+	Shifted copies of every column, column-major: all shifts of column 0, then of column 1, ...
+
+	:param data:	[nRows, nColumns], or [nRows] for one column
+	:param num_delays:	copies of each column, the first unshifted
+	:param stepSize:	row offset between consecutive copies; negative shifts each copy further into the past
+	:param fill:	value of the rows a shift moves outside the array
+	:return: [nRows, nColumns * num_delays]
 	"""
 	if data.ndim < 2:
 		data = data[:, None]
@@ -41,8 +47,13 @@ def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 
 def _get_embedding_dimension(embedDims, sourceIndex, targetIndex):
 	"""
-	Return the optimal embedding dimension for source sourceIndex predicting target targetIndex.
-	Small handler to deal with both 1D and 2D source:target matrices and also just an int
+	The embedding dimension for one (source, target) pair from any of the layouts
+	ConvergentCrossMap accepts.
+
+	:param embedDims:	an int for every pair, [nSources] per source, or [nSources, nTargets] per pair
+	:param sourceIndex:	the source column
+	:param targetIndex:	the target column
+	:return: int
 	"""
 	if isinstance(embedDims, int):
 		return embedDims

@@ -86,9 +86,20 @@ class MultiviewResult:
 
 	@property
 	def top_combinations(self) -> List:
+		"""
+		The top-ranked combinations in rank order.
+
+		:return: list of column-index tuples into the stacked state
+		"""
 		return list(self.topRankPredictions.keys())
 
 	def get_combination_stats(self, combo: tuple) -> List[float]:
+		"""
+		The statistics of one top-ranked combination.
+
+		:param combo:	column-index tuple into the stacked state, as listed by top_combinations
+		:return: [correlation, max abs error, sum abs error, RMSE]; raises ValueError for a combination outside the top ranks
+		"""
 		if combo not in self.topRankStats:
 			raise ValueError(f'Combination {combo} not in top-ranked results')
 		return self.topRankStats[combo]
@@ -181,7 +192,13 @@ class BatchedCCMResult:
 	forward_embed_dimensions: Optional[Union[int, np.ndarray]] = None
 
 	def GetVariableCorrelations(self, variableIndex: int) -> np.ndarray:
-		return self.forward_performance[:, 1 + variableIndex]
+		"""
+		The skill curve of one source against every subset size.
+
+		:param variableIndex:	index of the source column
+		:return: [nSizes] (or [nSizes, nTargets] with several targets)
+		"""
+		return self.forward_performance[:, variableIndex]
 
 
 @dataclass(frozen = True)
@@ -212,6 +229,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _Arrays(result) -> dict:
+		"""
+		The arrays a record is stored as.
+
+		:param result:	any result record
+		:return: dict of name -> numpy array
+		"""
 		if isinstance(result, SimplexResult):
 			return ResultsIO._SimplexArrays(result)
 		if isinstance(result, SMapResult):
@@ -230,6 +253,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _FromData(data):
+		"""
+		The record stored in a mapping of arrays.
+
+		:param data:	name -> array, as loaded from a file or the cloud, including 'result_type'
+		:return: the reconstructed result record
+		"""
 		result_type = str(data['result_type'])
 		loaders = {
 			'SimplexResult': ResultsIO._LoadSimplex,
@@ -246,6 +275,8 @@ class ResultsIO:
 	@staticmethod
 	def Save(result, path: str) -> None:
 		"""
+		Write a record to an npz file.
+
 		:param result:	any result record
 		:param path:	output file path (.npz is appended when absent)
 		"""
@@ -255,11 +286,20 @@ class ResultsIO:
 
 	@staticmethod
 	def Load(path: str):
+		"""
+		Read a record written by Save.
+
+		:param path:	the npz file
+		:return: the result record
+		"""
 		return ResultsIO._FromData(np.load(path, allow_pickle = True))
 
 	@staticmethod
 	def SaveToCloud(result, path: str, cloud = None) -> None:
 		"""
+		Upload a record as one npy object per array.
+
+		:param result:	any result record
 		:param path:	folder-like S3 path; every array is uploaded as path/key.npy
 		:param cloud:	a cottoncandy interface; created when None
 		"""
@@ -274,6 +314,13 @@ class ResultsIO:
 
 	@staticmethod
 	def DownloadFromCloud(path: str, cloud = None):
+		"""
+		Read a record written by SaveToCloud.
+
+		:param path:	the folder-like S3 path given to SaveToCloud
+		:param cloud:	a cottoncandy interface; created when None
+		:return: the result record
+		"""
 		if cloud is None:
 			import cottoncandy
 			cloud = cottoncandy.get_interface(verbose = False)
@@ -285,6 +332,13 @@ class ResultsIO:
 
 	@staticmethod
 	def _PackRuns(arrays: dict, key: str, value) -> None:
+		"""
+		Store a per-run list as key_0, key_1, ... plus n_key, or a single array under key.
+
+		:param arrays:	the dict being filled
+		:param key:	field name
+		:param value:	an array, a list of per-run arrays, or None (stored as nothing)
+		"""
 		if value is None:
 			return
 		if isinstance(value, list):
@@ -296,6 +350,13 @@ class ResultsIO:
 
 	@staticmethod
 	def _UnpackRuns(data, key: str):
+		"""
+		Read back what _PackRuns stored.
+
+		:param data:	name -> array
+		:param key:	field name
+		:return: the list of per-run arrays, the single array, or None when absent
+		"""
 		if f'n_{key}' in data:
 			return [data[f'{key}_{i}'] for i in range(int(data[f'n_{key}']))]
 		return data[key] if key in data else None
@@ -304,6 +365,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _SimplexArrays(result: SimplexResult) -> dict:
+		"""
+		The arrays a SimplexResult is stored as.
+
+		:param result:	the SimplexResult
+		:return: dict of name -> numpy array
+		"""
 		arrays = dict(embedDimensions = np.array(result.embedDimensions),
 					  predictionHorizon = np.array(result.predictionHorizon),
 					  knn = np.array(result.knn))
@@ -315,6 +382,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _SMapArrays(result: SMapResult) -> dict:
+		"""
+		The arrays a SMapResult is stored as.
+
+		:param result:	the SMapResult
+		:return: dict of name -> numpy array
+		"""
 		arrays = ResultsIO._SimplexArrays(result)
 		arrays['theta'] = np.array(result.theta)
 		ResultsIO._PackRuns(arrays, 'coefficients', result.coefficients)
@@ -323,6 +396,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _MultiviewArrays(result: MultiviewResult) -> dict:
+		"""
+		The arrays a MultiviewResult is stored as.
+
+		:param result:	the MultiviewResult
+		:return: dict of name -> numpy array
+		"""
 		combos = list(result.topRankPredictions.keys())
 		combo_keys = np.empty(len(combos), dtype = object)
 		stats_values = np.empty(len(combos), dtype = object)
@@ -345,6 +424,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _MDEArrays(result: MDEResult) -> dict:
+		"""
+		The arrays a MDEResult is stored as.
+
+		:param result:	the MDEResult
+		:return: dict of name -> numpy array
+		"""
 		arrays = dict(selected_variables = result.selected_variables,
 					  accuracy = result.performance,
 					  ccm_values = result.ccm_values,
@@ -360,6 +445,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _MDECVResultsArrays(result: MDECVResults) -> dict:
+		"""
+		The arrays a MDECVResults is stored as.
+
+		:param result:	the MDECVResults
+		:return: dict of name -> numpy array
+		"""
 		arrays = dict(fold_selected_variables = result.fold_selected_variables,
 					  fold_stepwise_performances = result.fold_stepwise_performances,
 					  fold_accuracies = result.fold_accuracies,
@@ -376,6 +467,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _BatchedCCMArrays(result: BatchedCCMResult) -> dict:
+		"""
+		The arrays a BatchedCCMResult is stored as.
+
+		:param result:	the BatchedCCMResult
+		:return: dict of name -> numpy array
+		"""
 		arrays = dict(forward_performance = result.forward_performance,
 					  predictionHorizon = np.array(result.predictionHorizon),
 					  library_sizes = np.array(result.library_sizes))
@@ -385,6 +482,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _CCMCVArrays(result: CCMCVResult) -> dict:
+		"""
+		The arrays a CCMCVResult is stored as.
+
+		:param result:	the CCMCVResult
+		:return: dict of name -> numpy array
+		"""
 		arrays = dict(predictionHorizon = np.array(result.predictionHorizon),
 					  n_folds = np.array(len(result.fold_results)))
 		if result.fold_performances is not None:
@@ -405,6 +508,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
+		"""
+		A SimplexResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: SimplexResult
+		"""
 		return SimplexResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
 							 variance = ResultsIO._UnpackRuns(data, 'variance'),
 							 score = data['score'] if 'score' in data else None,
@@ -414,6 +523,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
+		"""
+		A SMapResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: SMapResult
+		"""
 		return SMapResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
 						  variance = ResultsIO._UnpackRuns(data, 'variance'),
 						  coefficients = ResultsIO._UnpackRuns(data, 'coefficients'),
@@ -426,6 +541,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadMultiview(data) -> MultiviewResult:
+		"""
+		A MultiviewResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: MultiviewResult
+		"""
 		n_combos = int(data['n_combos'])
 		combo_keys = list(data['combo_keys'])
 		stats_values = list(data['topRankStats_values'])
@@ -441,7 +562,19 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
+		"""
+		A MDEResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: MDEResult
+		"""
 		def optional(key):
+			"""
+			A field that older files may lack.
+
+			:param key:	array name
+			:return: the array, or None when absent
+			"""
 			return data[key] if key in data else None
 		return MDEResult(Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
 						 selected_variables = data['selected_variables'],
@@ -455,6 +588,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadMDECVResults(data) -> MDECVResults:
+		"""
+		A MDECVResults from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: MDECVResults
+		"""
 		foldPredictions = None
 		if 'n_fold_Y_pred' in data:
 			foldPredictions = [ResultsIO._UnpackRuns(data, f'fold_Y_pred_{i}') for i in range(int(data['n_fold_Y_pred']))]
@@ -469,6 +608,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
+		"""
+		A BatchedCCMResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: BatchedCCMResult
+		"""
 		return BatchedCCMResult(forward_performance = data['forward_performance'],
 								predictionHorizon = int(data['predictionHorizon']),
 								library_sizes = data['library_sizes'],
@@ -476,6 +621,12 @@ class ResultsIO:
 
 	@staticmethod
 	def _LoadCCMCV(data) -> CCMCVResult:
+		"""
+		A CCMCVResult from its stored arrays.
+
+		:param data:	name -> array as written by Save or SaveToCloud
+		:return: CCMCVResult
+		"""
 		nFolds = int(data['n_folds'])
 		foldResults = []
 		for i in range(nFolds):

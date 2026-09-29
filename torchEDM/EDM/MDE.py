@@ -46,6 +46,7 @@ def MDE(X_train: ArrayOrRuns,
 		candidateMetric: str = 'correlation',
 		batchSize: int = 1000,
 		isVerbose: bool = False,
+		hasProgressBar: bool = True,
 		scoringFunction: Callable = Correlation,
 		device = None,
 		dtype: torch.dtype = torch.float32) -> MDEResult:
@@ -63,7 +64,9 @@ def MDE(X_train: ArrayOrRuns,
 	:param embedDimensions:	fixed embedding dimensions for the convergence check; 0 searches each candidate's embedding dimension
 	:param step:		row offset between stacked copies in the convergence check and embedding-dimension search
 	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors for the final prediction and the convergence check; 0 means the default
+	:param knn:			neighbors in the convergence check and in a final SMapPredict, 0 meaning each one's default
+		(the target's embedding dimensions + 1, every training state); the final SimplexPredict always uses the
+		number of selected columns plus one
 	:param exclusionRadius:	training states this close in rows are not neighbors. Always applied in the
 		convergence check, which runs on the training rows; applied to the selection and the final
 		prediction only when X_test is omitted, since a separate test array shares no sample axis
@@ -89,7 +92,8 @@ def MDE(X_train: ArrayOrRuns,
 	:param theta:		localization for isUsingSMap
 	:param candidateMetric:	'correlation' or 'r2' for candidate scoring
 	:param batchSize:	candidates per batch
-	:param isVerbose:	print progress details
+	:param isVerbose:	print when a target stops expanding and other progress details
+	:param hasProgressBar:	show a progress bar over the selection steps
 	:param scoringFunction:	scoringFunction(actual, predicted) -> float for the final score
 	:param device:		torch device; None picks cuda when available
 	:param dtype:		torch dtype for the selection tensors
@@ -143,7 +147,8 @@ def MDE(X_train: ArrayOrRuns,
 		convergenceMaxEmbedDimensions = convergenceMaxEmbedDimensions,
 		isIterativeDimensionSearch = isIterativeDimensionSearch,
 		isUsingSMap = isUsingSMap, theta = theta, candidateScoreFunction = candidateScoreFunction,
-		batchSize = batchSize, isVerbose = isVerbose, device = ResolveDevice(device), dtype = dtype)
+		batchSize = batchSize, isVerbose = isVerbose, hasProgressBar = hasProgressBar,
+		device = ResolveDevice(device), dtype = dtype)
 
 	state = _SelectVariables(problem)
 	Y_pred, scores = _PredictSelected(problem, state, scoringFunction)
@@ -212,6 +217,7 @@ class _SelectionProblem:
 	candidateScoreFunction: Callable
 	batchSize: int
 	isVerbose: bool
+	hasProgressBar: bool
 	device: torch.device
 	dtype: torch.dtype
 
@@ -235,12 +241,24 @@ class _SelectionState:
 
 
 def _RunsOfColumns(runs: List[numpy.ndarray], columns, isSingle: bool):
+	"""
+	The given columns of every run.
+
+	:param runs:	list of [nRows, nColumns] arrays
+	:param columns:	column indices to keep
+	:param isSingle:	True returns the one run as an array, False the list
+	"""
 	selected = [run[:, list(columns)] for run in runs]
 	return selected[0] if isSingle else selected
 
 
 def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
-	"""Greedy selection for all targets together."""
+	"""
+	Greedy selection for all targets together.
+
+	:param problem:	the data views and settings
+	:return: the finished _SelectionState: selected columns, their scores and slopes, and the per-candidate diagnostics
+	"""
 	nTargets = problem.numTargets
 	nVars = problem.numFeatures + problem.numTargets
 
@@ -319,7 +337,7 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 	candidateDistances = torch.empty([batchSize, nTrain, nTest], device = device, dtype = dtype)
 	candidateScores = torch.zeros([nTargets, batchSize], device = device, dtype = dtype)
 
-	progressBar = ProgressBar(total = problem.maxVariables, desc = 'Selecting variables', leave = False, disable = not problem.isVerbose)
+	progressBar = ProgressBar(total = problem.maxVariables, desc = 'Selecting variables', leave = False, disable = not problem.hasProgressBar)
 
 	# a target that selects nothing in a round can never select anything later
 	activeTargets = [True] * nTargets
@@ -423,6 +441,9 @@ def _PredictSelected(problem: _SelectionProblem, state: _SelectionState, scoring
 	Predict every test row of every target from its selected columns with SimplexPredict
 	(or SMapPredict). A target that selected nothing has NaN predictions and score.
 
+	:param problem:	the data views and settings
+	:param state:	the finished selection
+	:param scoringFunction:	scoringFunction(actual, predicted) -> float applied per target
 	:return: (Y_pred shaped like Y_test with one column per target, scores [nTargets])
 	"""
 	nTargets = problem.numTargets
@@ -457,8 +478,12 @@ def _SearchCandidateEmbedDimensions(problem: _SelectionProblem, state: _Selectio
 	"""
 	Per-candidate embedding-dimension search: each candidate column, stacked at every embedding
 	dimension up to convergenceMaxEmbedDimensions, predicts each target over the test rows. The
-	best embedding dimension and its peak score are stored per (target, candidate) for the
-	convergence check.
+	best embedding dimension and its peak score are written into the state per (target,
+	candidate) for the convergence check.
+
+	:param problem:	the data views and settings
+	:param state:	the selection state whose candidateEmbedDimensions and candidatePeakScores are filled
+	:param remainingVariables:	candidate pool per target; the union is swept
 	"""
 	from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 
@@ -487,13 +512,29 @@ def _SearchCandidateEmbedDimensions(problem: _SelectionProblem, state: _Selectio
 
 
 def _SubsetSizes(problem: _SelectionProblem, state: _SelectionState) -> List[int]:
-	"""Training-subset sizes of the convergence check: percentiles of the training states."""
+	"""
+	Training-subset sizes of the convergence check: percentiles of the training states.
+
+	:param problem:	the settings, for the percentiles
+	:param state:	the selection state, for the number of training states
+	:return: list of subset sizes in rows
+	"""
 	return [int(percentile / 100 * state.numTrainStates) for percentile in problem.convergenceSubsetPercentiles]
 
 
 def _ConvergenceCheck(problem: _SelectionProblem, candidateColumns, target: int, embeddingDimensions, subsetSizes,
 					  sourceBatchSize: int = 1000) -> BatchedCCMResult:
-	"""The target's stacked history cross-maps each candidate on the training rows."""
+	"""
+	The target's stacked history cross-maps each candidate on the training rows.
+
+	:param problem:	the data views and settings
+	:param candidateColumns:	columns of the candidate view that the target's history cross-maps
+	:param target:	column of the target in the candidate view
+	:param embeddingDimensions:	embedding dimensions of the target's history: an int, [1, nCandidates] with one per candidate, or None to search
+	:param subsetSizes:	training-subset sizes at which the skill is measured
+	:param sourceBatchSize:	batch size handed to ConvergentCrossMap
+	:return: BatchedCCMResult whose forward_performance is [nSizes, nCandidates] with singleton axes squeezed
+	"""
 	return ConvergentCrossMap(
 		X_train = _RunsOfColumns(problem.allTrainRuns, [target], problem.isSingleTrainRun),
 		Y_train = _RunsOfColumns(problem.allTrainRuns, candidateColumns, problem.isSingleTrainRun),
@@ -515,7 +556,15 @@ def _ConvergenceCheck(problem: _SelectionProblem, candidateColumns, target: int,
 
 
 def _FilterConvergentVariables(problem: _SelectionProblem, state: _SelectionState, candidateColumns, target: int):
-	"""Keep the candidates whose cross-map skill grows with the training-subset size."""
+	"""
+	Keep the candidates whose cross-map skill grows with the training-subset size.
+
+	:param problem:	the data views and settings
+	:param state:	the selection state, for the candidate embedding dimensions and training-state count
+	:param candidateColumns:	candidate pool of one target
+	:param target:	column of the target in the candidate view
+	:return: the convergent subset of candidateColumns as an int array
+	"""
 	if len(candidateColumns) == 0:
 		return numpy.asarray(candidateColumns, dtype = int)
 
@@ -555,6 +604,11 @@ def _CandidateConvergence(problem: _SelectionProblem, state: _SelectionState, ca
 	"""
 	Cross-map convergence of one candidate, cached per run: a rejected candidate stays
 	rejected at later steps.
+
+	:param problem:	the data views and settings
+	:param state:	the selection state holding the slope cache and candidate embedding dimensions
+	:param candidate:	column of the candidate in the candidate view
+	:param target:	column of the target in the candidate view
 	:return: (isConvergent, slope)
 	"""
 	targetPosition = problem.targets.index(target)

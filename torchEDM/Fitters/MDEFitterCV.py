@@ -31,7 +31,7 @@ class MDEFitterCV(EDMFitter):
 				 FinalVariableSelection: str = "best_fold",
 				 EmbedDimensions: int = 0,
 				 PredictionHorizon: int = 1,
-				 knn: int = 0,
+				 KNN: int = 0,
 				 Step: int = -1,
 				 ExclusionRadius: int = 0,
 				 Verbose: bool = False,
@@ -49,11 +49,34 @@ class MDEFitterCV(EDMFitter):
 				 progressBar: bool = True,
 				 device = None):
 		"""
-		:param Folds:		folds per run when LeaveOneRunOut is False
-		:param LeaveOneRunOut:	hold out one whole run per split
-		:param FinalVariableSelection:	'best_fold', 'frequency', or 'reselect' (rerun the selection on all
-			training runs over the union of fold selections, without the convergence check)
-		Other parameters as in MDE.
+		:param MaxD:	columns to select per target; the target's own column counts when IncludeTarget
+		:param IncludeTarget:	start with the target series itself selected, so its own value is part of every state; it then appears in selected_variables as column nFeatures + targetIndex
+		:param Convergent:	'pre' screens every candidate for cross-map convergence before selection, 'post' checks candidates in score order at each step, False skips the check
+		:param Metric:	'correlation' or 'r2': the score that ranks candidates at each step
+		:param BatchSize:	candidate columns whose distance matrices are held on the device at once
+		:param dtype:	torch dtype of the selection tensors
+		:param EmbedDimensions:	fixed embedding dimensions of the target's history in the convergence check; 0 searches each candidate's own
+		:param PredictionHorizon:	rows between a state and the target value it predicts
+		:param KNN:	neighbors in the convergence check, in a final SMapPredict within each fold, and in Predict, 0 meaning each one's default (the target's embedding dimensions + 1, every training state, the number of selected columns plus one); each fold's final SimplexPredict always uses the number of selected columns plus one
+		:param Step:	row offset between the stacked copies in the convergence check and the embedding-dimension search; negative reaches into the past
+		:param ExclusionRadius:	training states within this many rows of a test state may not be its neighbors; always applied in the convergence check, which runs on the training rows, and to selection and prediction only in-sample
+		:param Verbose:	print when a target stops expanding and other progress details
+		:param UseSMap:	final prediction with SMapPredict instead of SimplexPredict
+		:param Theta:	localization of that final SMapPredict; 0 fits one global linear map
+		:param stdThreshold:	candidates whose standard deviation over the training rows is below this are dropped from the pool
+		:param CCMLibraryPercentiles:	training-subset sizes of the convergence check, as percentages of the training states
+		:param CCMNumSamples:	random subsets drawn per size in the convergence check
+		:param CCMConvergenceThreshold:	minimum slope of cross-map skill against subset fraction for a candidate to count as convergent
+		:param CCMSeed:	seed of the convergence check's subset draws; None draws fresh subsets
+		:param CCMMaxEmbeddingDimensions:	largest embedding dimension tried in the per-candidate search
+		:param MinPredictionThreshold:	minimum score a candidate must reach at a step to be selectable
+		:param MinCandidatePerformance:	minimum peak score a candidate alone (at its best embedding dimension) must reach predicting the target to stay in the pool; 0 disables
+		:param IterativeDimensionSearch:	True evaluates each embedding dimension of the per-candidate search on its own complete rows (slower, reproduces the reference); False shares the rows complete at the largest one in one pass
+		:param Folds:	contiguous blocks each run is cut into when LeaveOneRunOut is False; fold k holds out block k of every run
+		:param LeaveOneRunOut:	True holds out one whole run per split; False uses the n-fold blocks
+		:param FinalVariableSelection:	how Predict chooses its columns: 'best_fold' takes the selection of the fold with the best score per target, 'frequency' the columns selected in the most folds, 'reselect' reruns the selection on all training runs over the union of the fold selections, without the convergence check
+		:param progressBar:	show a progress bar over the folds
+		:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
 		"""
 		super().__init__(progressBar)
 		self.MaxD = MaxD
@@ -67,7 +90,7 @@ class MDEFitterCV(EDMFitter):
 		self.FinalVariableSelection = FinalVariableSelection
 		self.EmbedDimensions = EmbedDimensions
 		self.PredictionHorizon = PredictionHorizon
-		self.KNN = knn
+		self.KNN = KNN
 		self.Step = Step
 		self.ExclusionRadius = ExclusionRadius
 		self.Verbose = Verbose
@@ -96,6 +119,13 @@ class MDEFitterCV(EDMFitter):
 		self.bestFoldAccuracy = None
 
 	def MDEKeywords(self, candidateColumns = None, convergenceCheck = None) -> dict:
+		"""
+		The keyword arguments of MDE that these settings map onto.
+
+		:param candidateColumns:	candidate X columns for this run; None uses all
+		:param convergenceCheck:	override of Convergent for this run; None keeps it
+		:return: dict ready to unpack into MDE(X_train, Y_train, X_test, Y_test, **keywords)
+		"""
 		return dict(maxVariables = self.MaxD, isTargetIncluded = self.IncludeTarget,
 					convergenceCheck = self.Convergent if convergenceCheck is None else convergenceCheck,
 					candidateMetric = self.Metric, batchSize = self.BatchSize, dtype = self.dtype, candidateColumns = candidateColumns,
@@ -108,17 +138,21 @@ class MDEFitterCV(EDMFitter):
 					minPredictionScore = self.MinPredictionThreshold,
 					minCandidateScore = self.MinCandidatePerformance,
 					isIterativeDimensionSearch = self.IterativeDimensionSearch,
+					hasProgressBar = False,
 					device = self.device)
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None, initialVariables: Optional[List[int]] = None,
 			scoringFunction = Correlation) -> MDECVResults:
 		"""
-		:param X_train:	candidate columns, an array or a list of runs
-		:param Y_train:	targets matching X_train
-		:param X_test:	kept for Predict; optional
+		Run MDE on every split of the training runs and keep the per-fold selections in Result.
+
+		:param X_train:	[nTrain, nFeatures] or a list of runs: the candidate columns; the splits are made over these runs
+		:param Y_train:	[nTrain, nTargets] (1-D for one target) or a list of runs aligned with X_train
+		:param X_test:	kept for Predict, which uses it when called without test data; optional
 		:param Y_test:	kept for Predict; optional
 		:param initialVariables:	candidate X columns; None uses all
-		:param scoringFunction:	scoringFunction(actual, predicted) -> float
+		:param scoringFunction:	scoringFunction(actual, predicted) -> float scoring each fold's held-out prediction per target
+		:return: MDECVResults with the selected columns, candidate scores, held-out predictions and score of every fold, and the best fold's selection per target
 		"""
 		self.xRuns = AsRuns(X_train)
 		self.yRuns = AsRuns(Y_train)
@@ -162,11 +196,27 @@ class MDEFitterCV(EDMFitter):
 
 	def FitSingleFold(self, X_train, Y_train, X_test, Y_test, candidateColumns = None, convergenceCheck = None,
 					  scoringFunction = Correlation) -> MDEResult:
+		"""
+		Run MDE on one split.
+
+		:param X_train:	the split's training runs of candidate columns
+		:param Y_train:	the split's training runs of targets
+		:param X_test:	the held-out runs; None scores the training rows in-sample
+		:param Y_test:	targets of the held-out runs; None with X_test None
+		:param candidateColumns:	candidate X columns; None uses all
+		:param convergenceCheck:	override of Convergent; None keeps it
+		:param scoringFunction:	scoringFunction(actual, predicted) -> float for the final score
+		:return: MDEResult of the split
+		"""
 		return MDE(X_train, Y_train, X_test, Y_test, scoringFunction = scoringFunction,
 				   **self.MDEKeywords(candidateColumns, convergenceCheck))
 
 	def SelectedVariables(self) -> numpy.ndarray:
-		"""Final [nTargets, MaxD] selection per FinalVariableSelection, padded with -1."""
+		"""
+		The final selection per FinalVariableSelection.
+
+		:return: [nTargets, MaxD] column indices, padded with -1
+		"""
 		nTargets = self.yRuns[0].shape[1]
 		if self.FinalVariableSelection == 'frequency':
 			return self.GetMostFrequentVariables()
@@ -183,10 +233,13 @@ class MDEFitterCV(EDMFitter):
 
 	def Predict(self, X_test = None, Y_test = None, scoringFunction = Correlation) -> MDECVResults:
 		"""
-		Predict test data from all training runs with the final variables.
+		Predict test data from all training runs with the final variables, one SimplexPredict per
+		target over its selected columns, and keep the updated MDECVResults in Result.
 
-		:param X_test:	an array or list of runs; None uses the X_test given to Fit
-		:param Y_test:	targets for X_test; None uses the Y_test given to Fit
+		:param X_test:	[nTest, nFeatures] or a list of runs; None uses the X_test given to Fit
+		:param Y_test:	truth for the rows of X_test, laid out like Y_train; None uses the Y_test given to Fit
+		:param scoringFunction:	scoringFunction(actual, predicted) -> float applied per target
+		:return: MDECVResults carrying the fold fields of Fit plus the final selection, Y_pred shaped like Y_test, and the score per target
 		"""
 		if len(self.foldResults) == 0:
 			raise RuntimeError('Model not fitted. Call Fit() first.')
@@ -233,7 +286,11 @@ class MDEFitterCV(EDMFitter):
 		Recompute each fold's held-out predictions from the variable selections stored in a
 		saved MDECVResults, for files that predate fold_Y_pred.
 
-		:return: (foldPredictions, foldAccuracies): per fold the Y_pred of its held-out data, and [nFolds, nTargets]
+		:param results:	the saved MDECVResults whose fold_selected_variables drive the predictions
+		:param X_train:	the training runs Fit was given, so the same splits are rebuilt
+		:param Y_train:	the matching target runs
+		:param scoringFunction:	scoringFunction(actual, predicted) -> float applied per target and fold
+		:return: (foldPredictions, foldAccuracies): per fold the Y_pred of its held-out runs, and [nFolds, nTargets] scores
 		"""
 		xRuns = AsRuns(X_train)
 		yRuns = AsRuns(Y_train)
@@ -265,7 +322,11 @@ class MDEFitterCV(EDMFitter):
 		return foldPredictions, numpy.array(foldAccuracyRows)
 
 	def GetMostFrequentVariables(self) -> numpy.ndarray:
-		"""Per target, the MaxD columns selected in the most folds, [nTargets, MaxD] padded with -1."""
+		"""
+		Per target, the MaxD columns selected in the most folds.
+
+		:return: [nTargets, MaxD] column indices, padded with -1
+		"""
 		nTargets = self.yRuns[0].shape[1]
 		result = numpy.full([nTargets, self.MaxD], -1, dtype = int)
 		for j in range(nTargets):

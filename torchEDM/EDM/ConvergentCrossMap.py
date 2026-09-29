@@ -20,7 +20,21 @@ from ..Hyperparameters import FindSelfPredictionEmbeddingDimension
 
 @dataclass(frozen = True)
 class _CrossMapSettings:
-	"""The settings the batch helpers read."""
+	"""
+	The settings the batch helpers read.
+
+	:param trainSizes:	training-subset sizes at which the cross-map skill is measured
+	:param repeats:	random subsets drawn per size
+	:param knn:	neighbors per source; None means the source's embedding dimensions + 1
+	:param exclusionRadius:	in-sample row radius within which training states may not be neighbors ('sample' mode)
+	:param sourceBatchSize:	source columns per batch in 'variables' mode
+	:param targetBatchSize:	target columns per batch within a source batch
+	:param sampleBatchSize:	subsets per batch in 'sample' mode; None takes all at once
+	:param targetVRAM:	GB budget that sizes the batches when given
+	:param hasProgressBar:	show progress bars
+	:param device:	torch device of the computation
+	:param dtype:	torch dtype of the distances and predictions
+	"""
 	trainSizes: list
 	repeats: int
 	knn: Optional[int]
@@ -148,9 +162,17 @@ def _CrossMapVariableBatched(X_train, Y_train, X_test, Y_test, performance, RNG,
 							 exclusion = None):
 	"""
 	Batch over source columns: one distance matrix per source, reused across every
-	(subset size, repeat, target). X_train/X_test hold every source stacked to
-	the largest embedding dimension, source-major; Y_train/Y_test are [nTrain, nTargets] and
-	[nTest, nTargets] tensors.
+	(subset size, repeat, target).
+
+	:param X_train:	[nTrain, nSources * maxEmbedDimensions] every source stacked to the largest embedding dimension, source-major
+	:param Y_train:	[nTrain, nTargets] tensor of the targets of the training states
+	:param X_test:	[nTest, nSources * maxEmbedDimensions] the test states, stacked the same way
+	:param Y_test:	[nTest, nTargets] tensor of the truth for the test states
+	:param performance:	[nSizes, repeats, nSources, nTargets] array filled in place with the skill of every draw
+	:param RNG:	numpy Generator drawing the training subsets
+	:param embedDims:	embedding dimensions per source: an int, [nSources], or [nSources, nTargets], of which the largest over targets is used per source
+	:param settings:	the subset sizes, repeats, neighbor count, batch sizes, device and dtype
+	:param exclusion:	optional bool [nTrain, nTest] pairs that may not be neighbors
 	"""
 	numTrain = X_train.shape[0]
 	numTest = X_test.shape[0]
@@ -269,9 +291,16 @@ def _CrossMapSampleBatched(inputs: PredictionInputs, Y_train, performance, RNG, 
 	"""
 	Batch over subsets per size; the training rows predict themselves. Efficient when
 	there are few source columns. Cumulative per-lag squared distances are built once per
-	source so each (source, target) pair reads its own embedding dimension off the prefix sum. Without a
-	user-set knn, each pair uses embedding dimensions + 1 neighbors, enforced by masking the extra
-	neighbors to zero weight after one shared topk.
+	source so each (source, target) pair reads its own embedding dimension off the prefix
+	sum. Without a user-set knn, each pair uses embedding dimensions + 1 neighbors, enforced
+	by masking the extra neighbors to zero weight after one shared topk.
+
+	:param inputs:	PreparePrediction's output at the largest embedding dimension: source-major stacked training states and their row positions
+	:param Y_train:	[nTrain, nTargets] tensor of the targets of the training states
+	:param performance:	[nSizes, repeats, nSources, nTargets] array filled in place with the skill of every draw
+	:param RNG:	numpy Generator drawing the training subsets
+	:param embedDims:	embedding dimensions per (source, target): an int, [nSources], or [nSources, nTargets]
+	:param settings:	the subset sizes, repeats, neighbor count, exclusion radius, subset batch size, device and dtype
 	"""
 	numSamplesInBatch = settings.sampleBatchSize if settings.sampleBatchSize is not None else settings.repeats
 	numTargets = Y_train.shape[1]

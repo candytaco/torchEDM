@@ -37,23 +37,23 @@ def MultiviewPredict(X_train: ArrayOrRuns,
 	columnsPerView stacked columns predicts the target with SimplexPredict and is ranked by
 	score; the top numTopViews combinations are averaged.
 
-	:param X_train:		[nTrain, nFeatures] or a list of runs
-	:param Y_train:		[nTrain, nTargets] or a list of runs
-	:param X_test:		[nTest, nFeatures] or a list of runs; None predicts the training rows in-sample
-	:param Y_test:		targets for X_test; required with X_test
-	:param embedDimensions:	copies of each feature column in the stacked state
-	:param step:		row offset between copies; negative reaches into the past
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors per combination; 0 means columnsPerView + 1
-	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
-	:param columnsPerView:	stacked columns per combination; 0 means the number of feature columns
-	:param numTopViews:	combinations averaged; 0 means the square root of the number of combinations
-	:param isRankedInSample:	True ranks combinations on the training rows predicting themselves
-						(faster, optimistic); False ranks them on X_test/Y_test
-	:param scoringFunction:	scoringFunction(actual, predicted) -> float used for ranking and the score
-	:param isTieBreakDeterministic:	order exactly tied neighbor distances reproducibly
-	:param device:		torch device; None picks cuda when available
-	:param dtype:		torch dtype for the computation
+	:param X_train:	[nTrain, nFeatures] or a list of runs: the columns that form the states
+	:param Y_train:	[nTrain, nTargets] (1-D for one target) or a list of runs aligned row by row with X_train
+	:param X_test:	[nTest, nFeatures] or a list of runs whose rows are predicted; None predicts the training rows in-sample
+	:param Y_test:	truth for the rows of X_test, laid out like Y_train; required with X_test, and a NaN row is predicted but never scored or ranked on
+	:param embedDimensions:	copies of each feature column, each shifted step rows from the last; the combinations are drawn from the nFeatures * embedDimensions stacked columns
+	:param step:	row offset between the stacked copies; negative reaches into the past
+	:param predictionHorizon:	rows between a state and the target value it predicts
+	:param knn:	neighbors per combination; 0 means columnsPerView + 1
+	:param exclusionRadius:	in-sample only; training states within this many rows of a test state may not be its neighbors (the state itself never is)
+	:param columnsPerView:	stacked columns in each combination; 0 means the number of feature columns
+	:param numTopViews:	top-ranked combinations whose predictions are averaged; 0 means the square root of the number of combinations
+	:param isRankedInSample:	True ranks the combinations on the training rows predicting themselves (faster, optimistic); False ranks them on X_test and Y_test
+	:param isTieBreakDeterministic:	order exactly tied neighbor distances by row (and in-sample by row proximity first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param scoringFunction:	scoringFunction(actual, predicted) -> float used for the ranking (first target) and the final score per target
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: MultiviewResult with the ensemble Y_pred, each top combination's own Y_pred and statistics, and the score per target
 	"""
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score predictions on X_test')
@@ -79,10 +79,23 @@ def MultiviewPredict(X_train: ArrayOrRuns,
 		numTopViews = len(combos)
 
 	def selectColumns(stacked, isList, combo):
+		"""
+		The columns of one combination from every stacked run.
+
+		:param stacked:	list of stacked arrays, one per run
+		:param isList:	True returns a list of arrays (the caller passed runs), False the single array
+		:param combo:	indices into the stacked columns
+		"""
 		selected = [s[:, list(combo)] for s in stacked]
 		return selected if isList else selected[0]
 
 	def predict(combo, isInSample):
+		"""
+		SimplexPredict with the combination's stacked columns as the state.
+
+		:param combo:	indices into the stacked columns
+		:param isInSample:	True predicts the training rows from themselves (with exclusionRadius), False predicts X_test
+		"""
 		return SimplexPredict(
 			X_train = selectColumns(stackedTrain, isTrainList, combo), Y_train = Y_train,
 			X_test = None if isInSample else selectColumns(stackedTest, isTestList, combo),
@@ -108,6 +121,11 @@ def MultiviewPredict(X_train: ArrayOrRuns,
 
 	yTrueColumns = numpy.concatenate(AsRuns(Y_true))[:, 0]
 	def firstColumn(prediction):
+		"""
+		The first target column of a prediction with its runs concatenated, for the per-combination statistics.
+
+		:param prediction:	a Y_pred array or list of runs
+		"""
 		flat = numpy.concatenate(AsRuns(prediction))
 		return flat[:, 0]
 	topRankStats = {}

@@ -9,11 +9,22 @@ import torch
 
 def _promoteDimensions(scoringFunction: Callable[[torch.tensor, torch.tensor, Optional[torch.tensor]], torch.tensor]):
 	"""
-	Decorator that reshape score functions inputs to handle multiple prediction targets
-	:param scoringFunction:
-	:return:
+	Decorator giving the torch scoring functions one calling convention. target may be
+	[nTime] or [nTime, nTargets]; predictions may be [nTime], [nSources, nTime] or
+	[nSources, nTime, nTargets]; integer inputs are converted to floats. Everything is promoted
+	to the 3-D form the function expects, and a 1-D prediction vector's score comes back as a
+	0-d tensor.
+
+	:param scoringFunction:	scoringFunction(target [nTime, nTargets], predictions [nSources, nTime, nTargets], out) -> out
+	:return: the wrapped function
 	"""
 	def wrapper(target, predictions, out = None):
+		"""
+		:param target:	[nTime] or [nTime, nTargets] true values
+		:param predictions:	[nTime], [nSources, nTime] or [nSources, nTime, nTargets] predicted values
+		:param out:	optional output buffer, promoted to [nSources, nTargets]
+		:return: the wrapped function's result, reduced to a 0-d tensor for a 1-D prediction vector
+		"""
 		target = torch.as_tensor(target)
 		predictions = torch.as_tensor(predictions)
 		# Integer input would reach torch.mean, which rejects integer dtypes
@@ -41,11 +52,12 @@ def _promoteDimensions(scoringFunction: Callable[[torch.tensor, torch.tensor, Op
 @_promoteDimensions
 def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	Correlation between target time series and batched predictions.
-	:param target:		[n_time, n_targets] tensor of true values
-	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
-	:param out:			[n_sources, n_targets] output tensor
-	:return: out tensor with correlations
+	Pearson correlation of every prediction series with its target series.
+
+	:param target:	[nTime, nTargets] true values
+	:param predictions:	[nSources, nTime, nTargets] predicted values, one series per source
+	:param out:	[nSources, nTargets] buffer the correlations are written into; allocated when None
+	:return: out with singleton axes squeezed
 	"""
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
@@ -63,16 +75,14 @@ def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[t
 @_promoteDimensions
 def CorrelationInPlace(target: torch.tensor, predictions: torch.tensor, out: torch.tensor):
 	"""
-	Correlation between target and batched predictions. Centers predictions in-place to avoid
-	allocating a separate centered copy. Uses .norm() for std to avoid materializing the squared
-	tensor in global memory. Caller must not use predictions after this call.
+	Pearson correlation of every prediction series with its target series, centering the
+	predictions in place so no second copy of them is allocated. Peak memory is two
+	[nSources, nTime, nTargets] tensors instead of three. The caller must not use predictions
+	afterwards. Inputs must already be 3-D.
 
-	Expects fully 3D inputs — no dimension promotion. Peak memory is 2x [n_sources, n_time, n_targets]
-	instead of 3x for the standard Correlation.
-
-	:param target:		[n_time, n_targets]
-	:param predictions:	[n_sources, n_time, n_targets] — modified in-place
-	:param out:			[n_sources, n_targets] output tensor
+	:param target:	[nTime, nTargets] true values
+	:param predictions:	[nSources, nTime, nTargets] predicted values; overwritten
+	:param out:	[nSources, nTargets] buffer the correlations are written into
 	"""
 	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
 	targetStd = targetCentered.norm(dim = 0)
@@ -86,11 +96,12 @@ def CorrelationInPlace(target: torch.tensor, predictions: torch.tensor, out: tor
 @_promoteDimensions
 def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	R2 (variance explained) between target time series and batched predictions.
-	:param target:		[n_time, n_targets] tensor of true values
-	:param predictions:	[n_sources, n_time, n_targets] tensor of predicted values
-	:param out:			[n_sources, n_targets] output tensor
-	:return: out tensor with R2 values
+	Variance explained (R squared) by every prediction series of its target series.
+
+	:param target:	[nTime, nTargets] true values
+	:param predictions:	[nSources, nTime, nTargets] predicted values, one series per source
+	:param out:	[nSources, nTargets] buffer the values are written into; allocated when None
+	:return: out with singleton axes squeezed
 	"""
 	if out is None:
 		out = torch.zeros(predictions.shape[0], predictions.shape[2], device = target.device)
@@ -264,17 +275,18 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 									performanceOut: Optional[torch.tensor] = None,
 									trainIndices: Optional[torch.tensor] = None):
 	"""
-	Batched multiple predictions and score via simplex. Each distance matrix is used to make a separate prediction on Y.
-	These predictions are then scored
-	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
-	:param numNeighbors:		number of nearest neighbors to use
-	:param Y_train:				[nTrain] or [nTrain, nTargets] targets of the training rows
-	:param Y_test:				[nTest] or [nTest, nTargets] truth for the test rows
-	:param scoringFunction:		score function to evaluate performance
-	:param predictions:			tensor write prediction into
-	:param performanceOut:			array to write the performance into
-	:param trainIndices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
-	:return:
+	Neighbor-averaging prediction from each of a batch of distance matrices, scored against
+	the truth.
+
+	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state
+	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
+	:param Y_train:	[nTrain] or [nTrain, nTargets] targets of the training states
+	:param Y_test:	[nTest] or [nTest, nTargets] truth for the test states
+	:param scoringFunction:	one of the torch scorers above, called as scoringFunction(Y_test, predictions, performanceOut)
+	:param predictions:	optional [nMatrices, nTest, nTargets] buffer the predictions are written into
+	:param performanceOut:	optional [nMatrices, nTargets] buffer the scores are written into
+	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
+	:return: the scores, [nMatrices, nTargets] with singleton axes squeezed
 	"""
 	predictions = batch_simplex_predict(distanceMatrices, numNeighbors, Y_train, predictions, trainIndices)
 	return scoringFunction(Y_test, predictions, performanceOut)
@@ -284,13 +296,14 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 						  Y_train: torch.tensor, predictions: Optional[torch.tensor] = None,
 						  trainIndices: Optional[torch.tensor] = None) -> torch.tensor:
 	"""
-	Batched multiple predictions via simplex. Each distance matrix is used to make a separate prediction on Y.
-	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
-	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
-	:param Y_train:				[nTrain] or [nTrain, nTargets] targets of the training rows
-	:param predictions:			array to write the predictions into
-	:param trainIndices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
-	:return: predicted Y in <source, n_test, target>
+	Neighbor-averaging prediction from each of a batch of distance matrices.
+
+	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state
+	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
+	:param Y_train:	[nTrain] or [nTrain, nTargets] targets of the training states
+	:param predictions:	optional [nMatrices, nTest, nTargets] buffer the predictions are written into
+	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
+	:return: [nMatrices, nTest, nTargets] predictions
 	"""
 	neighbor_indices, weights = batch_get_simplex_weights(distanceMatrices, numNeighbors, trainIndices)
 
@@ -308,12 +321,13 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 
 def batch_get_simplex_weights(distanceMatrices, numNeighbors, trainIndices = None):
 	"""
-	Given distance matrices, get neighbor indices and weights per timepoint in the test set.
-	Useful for making custom predictions
-	:param distanceMatrices:	distance matrices of shape <source, n_train, n_test>
-	:param numNeighbors:		number of nearest neighbors to use, can be a single shared n or one per distance matrix
-	:param trainIndices:		actual indices for each entry in the 2nd dim in the distance matrices; for CCM subsampling
-	:return: neighbor_dist and weights <source, k, n_test> nearst neighbors and weights in train for each test point
+	Nearest neighbors and their normalized exponential weights per test column of each
+	distance matrix, for building custom predictions.
+
+	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state; the weights are computed from their square roots
+	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
+	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
+	:return: (neighborIndices [nMatrices, k, nTest] rows of the training set, weights [nMatrices, k, nTest] summing to one per test column), nearest first
 	"""
 	sharedNeighbors = isinstance(numNeighbors, int)
 	if sharedNeighbors:

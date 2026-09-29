@@ -5,15 +5,21 @@ from .EDMFitter import EDMFitter
 
 
 class SMapFitter(EDMFitter):
-	"""Parameter holder for SMapPredict."""
+	"""Parameter holder for SMapPredict, the locally weighted linear predictor."""
 
 	def __init__(self, EmbedDimensions: int = 1, PredictionHorizon: int = 1, KNN: int = 0, Step: int = -1,
 				 Theta: float = 0.0, ExclusionRadius: int = 0, IsTieBreakDeterministic: bool = False,
 				 device = None, dtype: torch.dtype = torch.float64):
 		"""
-		:param KNN:		neighbors; 0 means every available training state
-		:param Theta:	localization; 0 fits one global linear map
-		Other parameters as in SimplexFitter.
+		:param EmbedDimensions:	copies of each feature column in the state, each shifted Step rows from the last; 1 uses the columns as given
+		:param PredictionHorizon:	rows between a state and the target value it predicts
+		:param KNN:	neighbors whose equations enter each local linear fit; 0 means every available training state
+		:param Step:	row offset between the stacked copies; negative reaches into the past
+		:param Theta:	localization: neighbor weights are exp(-Theta * d / mean(d)); 0 fits one global linear map, larger values weight near neighbors more
+		:param ExclusionRadius:	in-sample only; training states within this many rows of a test state may not be its neighbors (the state itself never is)
+		:param IsTieBreakDeterministic:	order exactly tied neighbor distances by row so repeated runs pick the same neighbors; False leaves the order to torch.topk
+		:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+		:param dtype:	torch dtype of the distances, weights and predictions
 		"""
 		super().__init__()
 		self.EmbedDimensions = EmbedDimensions
@@ -27,6 +33,15 @@ class SMapFitter(EDMFitter):
 		self.dtype = dtype
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
+		"""
+		Predict with SMapPredict and keep the SMapResult in Result.
+
+		:param X_train:	[nTrain, nFeatures] or a list of runs: the columns that form the states
+		:param Y_train:	[nTrain, nTargets] (1-D for one target) or a list of runs aligned row by row with X_train
+		:param X_test:	[nTest, nFeatures] or a list of runs whose rows are predicted; None predicts the training rows in-sample
+		:param Y_test:	truth for the rows of X_test, laid out like Y_train; when given, the result carries a score per target
+		:return: SMapResult with Y_pred shaped like Y_test and the per-row coefficients of the local fits
+		"""
 		self.Result = SMapPredict(X_train, Y_train, X_test, Y_test,
 								  embedDimensions = self.EmbedDimensions, step = self.Step,
 								  predictionHorizon = self.PredictionHorizon, knn = self.KNN, theta = self.Theta,

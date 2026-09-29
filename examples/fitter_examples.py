@@ -14,6 +14,12 @@ from plots import plot_prediction, plot_smap_coefficients, plot_ccm
 
 
 def RunFitterExamples():
+	"""
+	Fit each wrapper on a sample data set and plot its result: two SimplexFitter setups on
+	the three-species block data, a MultiviewFitter ensemble on the same data, an SMapFitter
+	on the circle with its coefficients, and a CCMFitter screen of anchovy against sea-surface
+	temperature. Each plot blocks until its window is closed.
+	"""
 	# 1: three columns as the state, no history stacking
 	data = sampleData["block_3sp"]
 	X_train, Y_train = data[0:100, [1, 4, 7]], data[0:100, 1]
