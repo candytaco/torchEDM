@@ -84,7 +84,7 @@ def plot_ccm(result, title: str = "", block: bool = True):
 	"""
 	Plot the cross-map performance against training-subset size, one line per source (and target).
 
-	:param result:	a BatchedCCMResult, or an array [nSizes, 1 + nLines] with the sizes in column 0
+	:param result:	a BatchedCCMResult, or an array [nSizes, 1 + nLines] holding, per size, the size itself and then one performance value per line
 	:param title:	plot title
 	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
@@ -142,8 +142,7 @@ def _plot_sweep(x: np.ndarray, lines: np.ndarray, labels: Optional[List[str]], x
 
 def _SweepWithLeadingColumn(result, xlabel: str, title: str, block: bool):
 	"""
-	Plot a sweep table whose first column holds the sweep values and the other columns one
-	target each.
+	Plot a sweep table holding, per sweep value, the value itself and then the performance per target.
 
 	:param result:	sweep table, [nX, 1 + nTargets]
 	:param xlabel:	name of the sweep value
@@ -185,7 +184,7 @@ def plot_predict_interval(result, title: str = "", block: bool = True):
 	"""
 	Plot the performance from FindOptimalPredictionHorizon against the horizon.
 
-	:param result:	sweep table, [maxHorizon, 1 + nTargets], the horizon in column 0
+	:param result:	sweep table, [maxHorizon, 1 + nTargets]: per horizon, the horizon itself and then the performance per target
 	:param title:	plot title
 	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
@@ -196,7 +195,7 @@ def plot_predict_nonlinear(result, title: str = "", block: bool = True):
 	"""
 	Plot the performance from FindSMapNeighborhood against the localization strength.
 
-	:param result:	sweep table, [nTheta, 1 + nTargets], theta in column 0
+	:param result:	sweep table, [nTheta, 1 + nTargets]: per localization strength, theta itself and then the performance per target
 	:param title:	plot title
 	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
