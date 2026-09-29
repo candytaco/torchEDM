@@ -1,6 +1,7 @@
 """
-Tensor kernels shared by every predictor, batched scoring, and the batched neighbor-averaging
-prediction used by the sweeps and the variable selection.
+Tensor kernels shared by every predictor: batched performance metrics, distance and
+neighbor selection, and the batched nearest-neighbor prediction used by the parameter
+sweeps and the variable selection.
 """
 from typing import Optional, Union, Callable
 
@@ -9,21 +10,21 @@ import torch
 
 def _promoteDimensions(scoringFunction: Callable[[torch.tensor, torch.tensor, Optional[torch.tensor]], torch.tensor]):
 	"""
-	Decorator giving the torch scoring functions one calling convention. target may be
-	[nTime] or [nTime, nTargets]; predictions may be [nTime], [nSources, nTime] or
-	[nSources, nTime, nTargets]; integer inputs are converted to floats. Everything is promoted
-	to the 3-D form the function expects, and a 1-D prediction vector's score comes back as a
-	0-d tensor.
+	Give the torch performance metrics one calling convention. target may be [nTime] or
+	[nTime, nTargets]; predictions may be [nTime], [nSources, nTime] or
+	[nSources, nTime, nTargets]; integer inputs are converted to floats. Everything is
+	promoted to the 3-D form the metric expects, and the score of a 1-D prediction vector
+	comes back as a 0-d tensor.
 
-	:param scoringFunction:	scoringFunction(target [nTime, nTargets], predictions [nSources, nTime, nTargets], out) -> out
-	:return: the wrapped function
+	:param scoringFunction:	metric called as scoringFunction(target [nTime, nTargets], predictions [nSources, nTime, nTargets], out) -> out
+	:return: the wrapped metric
 	"""
 	def wrapper(target, predictions, out = None):
 		"""
-		:param target:	[nTime] or [nTime, nTargets] true values
-		:param predictions:	[nTime], [nSources, nTime] or [nSources, nTime, nTargets] predicted values
+		:param target:	true data, [nTime] or [nTime, nTargets]
+		:param predictions:	predicted data, [nTime], [nSources, nTime] or [nSources, nTime, nTargets]
 		:param out:	optional output buffer, promoted to [nSources, nTargets]
-		:return: the wrapped function's result, reduced to a 0-d tensor for a 1-D prediction vector
+		:return: the metric's result, reduced to a 0-d tensor for a 1-D prediction vector
 		"""
 		target = torch.as_tensor(target)
 		predictions = torch.as_tensor(predictions)
@@ -52,11 +53,11 @@ def _promoteDimensions(scoringFunction: Callable[[torch.tensor, torch.tensor, Op
 @_promoteDimensions
 def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	Pearson correlation of every prediction series with its target series.
+	Compute the Pearson correlation between the true data and each series of predicted data.
 
-	:param target:	[nTime, nTargets] true values
-	:param predictions:	[nSources, nTime, nTargets] predicted values, one series per source
-	:param out:	[nSources, nTargets] buffer the correlations are written into; allocated when None
+	:param target:	true data, [nTime, nTargets]
+	:param predictions:	predicted data, [nSources, nTime, nTargets], one series per source
+	:param out:	output buffer for the correlations, [nSources, nTargets]; allocated when None
 	:return: out with singleton axes squeezed
 	"""
 	if out is None:
@@ -75,14 +76,14 @@ def Correlation(target: torch.tensor, predictions: torch.tensor, out: Optional[t
 @_promoteDimensions
 def CorrelationInPlace(target: torch.tensor, predictions: torch.tensor, out: torch.tensor):
 	"""
-	Pearson correlation of every prediction series with its target series, centering the
-	predictions in place so no second copy of them is allocated. Peak memory is two
+	Compute the Pearson correlation between the true data and each series of predicted data,
+	centering the predictions in place so no second copy is allocated. Peak memory is two
 	[nSources, nTime, nTargets] tensors instead of three. The caller must not use predictions
 	afterwards. Inputs must already be 3-D.
 
-	:param target:	[nTime, nTargets] true values
-	:param predictions:	[nSources, nTime, nTargets] predicted values; overwritten
-	:param out:	[nSources, nTargets] buffer the correlations are written into
+	:param target:	true data, [nTime, nTargets]
+	:param predictions:	predicted data, [nSources, nTime, nTargets]; overwritten
+	:param out:	output buffer for the correlations, [nSources, nTargets]
 	"""
 	targetCentered = target - torch.mean(target, dim = 0, keepdim = True)
 	targetStd = targetCentered.norm(dim = 0)
@@ -96,11 +97,11 @@ def CorrelationInPlace(target: torch.tensor, predictions: torch.tensor, out: tor
 @_promoteDimensions
 def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tensor] = None):
 	"""
-	Variance explained (R squared) by every prediction series of its target series.
+	Compute the variance explained in the true data by each series of predicted data (R squared).
 
-	:param target:	[nTime, nTargets] true values
-	:param predictions:	[nSources, nTime, nTargets] predicted values, one series per source
-	:param out:	[nSources, nTargets] buffer the values are written into; allocated when None
+	:param target:	true data, [nTime, nTargets]
+	:param predictions:	predicted data, [nSources, nTime, nTargets], one series per source
+	:param out:	output buffer for the values, [nSources, nTargets]; allocated when None
 	:return: out with singleton axes squeezed
 	"""
 	if out is None:
@@ -122,9 +123,10 @@ def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tens
 
 def ComputePairwiseDistances(X_train: torch.Tensor, X_test: torch.Tensor) -> torch.Tensor:
 	"""
-	Euclidean distance from every training state to every test state.
-	:param X_train:	[nTrain, stateSize]
-	:param X_test:	[nTest, stateSize]
+	Compute the Euclidean distance from every training state to every test state.
+
+	:param X_train:	training states, [nTrain, stateSize]
+	:param X_test:	test states, [nTest, stateSize]
 	:return: [nTrain, nTest]
 	"""
 	return torch.cdist(X_train, X_test, p = 2)
@@ -135,19 +137,14 @@ def SelectNearestNeighbors(distanceMatrix: torch.Tensor, numNeighbors: int,
 						   trainRows: Optional[torch.Tensor] = None,
 						   testRows: Optional[torch.Tensor] = None):
 	"""
-	The numNeighbors smallest entries of every test column of a distance matrix.
+	Select, for every test sample, the numNeighbors smallest distances in a distance matrix.
 
-	:param distanceMatrix:	[..., nTrain, nTest]; excluded pairs hold inf
-	:param numNeighbors:	neighbors kept per test column
-	:param isTieBreakDeterministic:	False: torch.topk, whose ordering of exactly tied
-		distances is unspecified. True: tied distances are ordered by training position,
-		and when trainRows and testRows are given (a shared sample axis, i.e. in-sample),
-		by |testRow - trainRow| first, reproducing the reference selection. Needs a
-		2-D matrix.
-	:param trainRows:	[nTrain] sample positions of the training states on the shared axis
-	:param testRows:	[nTest] sample positions of the test states on the same axis
-	:return: (neighborDistances, neighborIndices), both [..., numNeighbors, nTest], nearest
-		first; indices are positions along the nTrain axis
+	:param distanceMatrix:	distances, [..., nTrain, nTest]; excluded pairs hold inf
+	:param numNeighbors:	number of neighbors kept per test state
+	:param isTieBreakDeterministic:	False uses torch.topk, whose ordering of exactly tied distances is unspecified. True orders tied distances by training position, and when trainRows and testRows are given (a shared sample axis, i.e. in-sample), by |testRow - trainRow| first, reproducing the reference selection. Needs a 2-D matrix
+	:param trainRows:	positions of the training states on the shared sample axis, [nTrain]
+	:param testRows:	positions of the test states on the same axis, [nTest]
+	:return: (neighborDistances, neighborIndices), both [..., numNeighbors, nTest], nearest first; indices are positions along the nTrain axis
 	"""
 	if not isTieBreakDeterministic:
 		return torch.topk(distanceMatrix, numNeighbors, dim = -2, largest = False)
@@ -174,12 +171,12 @@ def SelectNearestNeighbors(distanceMatrix: torch.Tensor, numNeighbors: int,
 
 def ComputeSimplexWeights(neighborDistances: torch.Tensor) -> torch.Tensor:
 	"""
-	Exponential weights exp(-d / dNearest) for the neighbor-averaging predictor.
-	The nearest distance is floored at 1e-6 for the division only; the distances
-	themselves are not altered, so an exact zero-distance neighbor keeps weight 1.
+	Compute the exponential weights exp(-d / dNearest) of the nearest-neighbor predictor.
+	The nearest distance is floored at 1e-6 for the division only; the distances themselves
+	are not altered, so an exact zero-distance neighbor keeps weight 1.
 
-	:param neighborDistances:	[..., k, nTest] Euclidean distances
-	:return: [..., k, nTest] weights, not normalized
+	:param neighborDistances:	Euclidean distances of the selected neighbors, [..., k, nTest]
+	:return: weights, [..., k, nTest], not normalized
 	"""
 	nearest = torch.clamp_min(torch.amin(neighborDistances, dim = -2, keepdim = True), 1e-6)
 	return torch.exp(-neighborDistances / nearest)
@@ -187,10 +184,10 @@ def ComputeSimplexWeights(neighborDistances: torch.Tensor) -> torch.Tensor:
 
 def ProjectSimplex(weights: torch.Tensor, neighborTargets: torch.Tensor):
 	"""
-	Weighted average of neighbor targets, and the weighted variance around it.
+	Compute the weighted average of the neighbor targets and the weighted variance around it.
 
-	:param weights:			[..., k, nTest]
-	:param neighborTargets:	[..., k, nTest, nTargets]
+	:param weights:	neighbor weights, [..., k, nTest]
+	:param neighborTargets:	targets of the selected neighbors, [..., k, nTest, nTargets]
 	:return: (predictions, variance), both [..., nTest, nTargets]
 	"""
 	weightSum = weights.sum(dim = -2)[..., None]
@@ -202,11 +199,11 @@ def ProjectSimplex(weights: torch.Tensor, neighborTargets: torch.Tensor):
 
 def ComputeSMapWeights(neighborDistances: torch.Tensor, theta: float) -> torch.Tensor:
 	"""
-	Localization weights exp(-theta * d / mean(d)) for the locally linear predictor.
+	Compute the localization weights exp(-theta * d / mean(d)) of the locally linear predictor.
 
-	:param neighborDistances:	[..., k, nTest]
-	:param theta:				0 gives uniform weights (one global linear map)
-	:return: [..., k, nTest]
+	:param neighborDistances:	distances of the selected neighbors, [..., k, nTest]
+	:param theta:	localization strength; 0 gives uniform weights, one global linear map
+	:return: weights, [..., k, nTest]
 	"""
 	if theta == 0:
 		return torch.ones_like(neighborDistances)
@@ -217,20 +214,16 @@ def ComputeSMapWeights(neighborDistances: torch.Tensor, theta: float) -> torch.T
 def SolveWeightedLinearMap(weights: torch.Tensor, neighborStates: torch.Tensor,
 						   neighborTargets: torch.Tensor, X_test: torch.Tensor):
 	"""
-	Per test state, solve the weighted least-squares map from neighbor states to
-	neighbor targets (with an intercept) and apply it to the test state.
-	A NaN neighbor target drops that neighbor's equation for that target only; a target
-	with no finite neighbor target has no equations, and its coefficients, prediction,
-	variance, and singular values are NaN.
+	Solve, per test state, the weighted least-squares map from neighbor states to neighbor
+	targets (with an intercept) and apply it to the test state. A NaN neighbor target drops
+	that neighbor's equation for that target only; a target with no finite neighbor target
+	has no equations, and its coefficients, prediction, variance, and singular values are NaN.
 
-	:param weights:			[nTest, k]
-	:param neighborStates:	[nTest, k, stateSize]
-	:param neighborTargets:	[nTest, k, nTargets]
-	:param X_test:		[nTest, stateSize]
-	:return: coefficients [nTest, stateSize + 1, nTargets] (intercept first),
-		predictions [nTest, nTargets], variance [nTest, nTargets],
-		singularValues [nTest, stateSize + 1, nTargets] of the weighted design matrices,
-		NaN-padded when k < stateSize + 1
+	:param weights:	neighbor weights, [nTest, k]
+	:param neighborStates:	states of the selected neighbors, [nTest, k, stateSize]
+	:param neighborTargets:	targets of the selected neighbors, [nTest, k, nTargets]
+	:param X_test:	test states, [nTest, stateSize]
+	:return: coefficients [nTest, stateSize + 1, nTargets] with the intercept first, predictions [nTest, nTargets], variance [nTest, nTargets], and singularValues [nTest, stateSize + 1, nTargets] of the weighted design matrices, NaN-padded when k < stateSize + 1
 	"""
 	nTest, k, stateSize = neighborStates.shape
 	nTargets = neighborTargets.shape[-1]
@@ -275,17 +268,17 @@ def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors
 									performanceOut: Optional[torch.tensor] = None,
 									trainIndices: Optional[torch.tensor] = None):
 	"""
-	Neighbor-averaging prediction from each of a batch of distance matrices, scored against
-	the truth.
+	Predict with the nearest-neighbor predictor from each of a batch of distance matrices and
+	score the predictions against the true data.
 
-	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state
-	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
-	:param Y_train:	[nTrain] or [nTrain, nTargets] targets of the training states
-	:param Y_test:	[nTest] or [nTest, nTargets] truth for the test states
-	:param scoringFunction:	one of the torch scorers above, called as scoringFunction(Y_test, predictions, performanceOut)
-	:param predictions:	optional [nMatrices, nTest, nTargets] buffer the predictions are written into
-	:param performanceOut:	optional [nMatrices, nTargets] buffer the scores are written into
-	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
+	:param distanceMatrices:	squared distances, [nMatrices, nTrain, nTest], one matrix per candidate variable or embedding dimension
+	:param numNeighbors:	number of nearest neighbors per test sample: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's surplus neighbors get zero weight
+	:param Y_train:	targets of the training states, [nTrain] or [nTrain, nTargets]
+	:param Y_test:	true data for the test states, [nTest] or [nTest, nTargets]
+	:param scoringFunction:	one of the torch metrics above, called as scoringFunction(Y_test, predictions, performanceOut)
+	:param predictions:	optional output buffer for the predictions, [nMatrices, nTest, nTargets]
+	:param performanceOut:	optional output buffer for the scores, [nMatrices, nTargets]
+	:param trainIndices:	optional map from an index along the training axis of the matrices to the training sample it stands for, [nTrain], when the matrices are a subset view of a larger training set
 	:return: the scores, [nMatrices, nTargets] with singleton axes squeezed
 	"""
 	predictions = batch_simplex_predict(distanceMatrices, numNeighbors, Y_train, predictions, trainIndices)
@@ -296,14 +289,14 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 						  Y_train: torch.tensor, predictions: Optional[torch.tensor] = None,
 						  trainIndices: Optional[torch.tensor] = None) -> torch.tensor:
 	"""
-	Neighbor-averaging prediction from each of a batch of distance matrices.
+	Predict with the nearest-neighbor predictor from each of a batch of distance matrices.
 
-	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state
-	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
-	:param Y_train:	[nTrain] or [nTrain, nTargets] targets of the training states
-	:param predictions:	optional [nMatrices, nTest, nTargets] buffer the predictions are written into
-	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
-	:return: [nMatrices, nTest, nTargets] predictions
+	:param distanceMatrices:	squared distances, [nMatrices, nTrain, nTest], one matrix per candidate variable or embedding dimension
+	:param numNeighbors:	number of nearest neighbors per test sample: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's surplus neighbors get zero weight
+	:param Y_train:	targets of the training states, [nTrain] or [nTrain, nTargets]
+	:param predictions:	optional output buffer for the predictions, [nMatrices, nTest, nTargets]
+	:param trainIndices:	optional map from an index along the training axis of the matrices to the training sample it stands for, [nTrain], when the matrices are a subset view of a larger training set
+	:return: predictions, [nMatrices, nTest, nTargets]
 	"""
 	neighbor_indices, weights = batch_get_simplex_weights(distanceMatrices, numNeighbors, trainIndices)
 
@@ -321,13 +314,13 @@ def batch_simplex_predict(distanceMatrices: torch.tensor, numNeighbors: Union[in
 
 def batch_get_simplex_weights(distanceMatrices, numNeighbors, trainIndices = None):
 	"""
-	Nearest neighbors and their normalized exponential weights per test column of each
-	distance matrix, for building custom predictions.
+	Select the nearest neighbors and compute their normalized exponential weights per test
+	sample of each distance matrix, for building custom predictions.
 
-	:param distanceMatrices:	[nMatrices, nTrain, nTest] squared distances, one matrix per candidate state; the weights are computed from their square roots
-	:param numNeighbors:	neighbors per test column: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's extra neighbors get zero weight
-	:param trainIndices:	optional [nTrain] map from a matrix row to the row of Y_train it stands for, when the matrices are a subset view of a larger training set
-	:return: (neighborIndices [nMatrices, k, nTest] rows of the training set, weights [nMatrices, k, nTest] summing to one per test column), nearest first
+	:param distanceMatrices:	squared distances, [nMatrices, nTrain, nTest], one matrix per candidate variable or embedding dimension; the weights are computed from their square roots
+	:param numNeighbors:	number of nearest neighbors per test sample: one int shared by every matrix, or a long tensor [nMatrices] with one count per matrix, in which case the largest count is selected and each matrix's surplus neighbors get zero weight
+	:param trainIndices:	optional map from an index along the training axis of the matrices to the training sample it stands for, [nTrain], when the matrices are a subset view of a larger training set
+	:return: (neighborIndices [nMatrices, k, nTest] into the training samples, weights [nMatrices, k, nTest] summing to one per test sample), nearest first
 	"""
 	sharedNeighbors = isinstance(numNeighbors, int)
 	if sharedNeighbors:

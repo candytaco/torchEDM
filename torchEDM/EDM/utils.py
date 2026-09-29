@@ -1,19 +1,20 @@
 """
-Stacking shifted copies of columns, and reading a per-pair embedding dimension out of the shapes
-ConvergentCrossMap accepts.
+Stack lagged copies of variables, and read a per-pair embedding dimension out of the
+layouts ConvergentCrossMap accepts.
 """
 import numpy
 
 
 def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 	"""
-	Shifted copies of every column, column-major: all shifts of column 0, then of column 1, ...
+	Stack lagged copies of every variable, grouped by variable: all lags of variable 0, then
+	of variable 1, and so on.
 
-	:param data:	[nRows, nColumns], or [nRows] for one column
-	:param num_delays:	copies of each column, the first unshifted
-	:param stepSize:	row offset between consecutive copies; negative shifts each copy further into the past
-	:param fill:	value of the rows a shift moves outside the array
-	:return: [nRows, nColumns * num_delays]
+	:param data:	the series, [nSamples, nVariables], or [nSamples] for one variable
+	:param num_delays:	number of copies of each variable, the first unshifted
+	:param stepSize:	sample offset between consecutive copies; a negative offset shifts each copy further into the past
+	:param fill:	value of the samples a shift moves outside the series
+	:return: [nSamples, nVariables * num_delays]
 	"""
 	if data.ndim < 2:
 		data = data[:, None]
@@ -47,12 +48,12 @@ def MakeDelays(data, num_delays, stepSize = -1, fill = numpy.nan):
 
 def _get_embedding_dimension(embedDims, sourceIndex, targetIndex):
 	"""
-	The embedding dimension for one (source, target) pair from any of the layouts
+	Return the embedding dimension of one (source, target) pair from any of the layouts
 	ConvergentCrossMap accepts.
 
 	:param embedDims:	an int for every pair, [nSources] per source, or [nSources, nTargets] per pair
-	:param sourceIndex:	the source column
-	:param targetIndex:	the target column
+	:param sourceIndex:	index of the source variable
+	:param targetIndex:	index of the target variable
 	:return: int
 	"""
 	if isinstance(embedDims, int):

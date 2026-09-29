@@ -1,7 +1,7 @@
 """
-Scores of a prediction against its truth, on numpy arrays. Every metric first drops the
-pairs where either value is not finite and declines (returns None) when fewer than five
-pairs remain.
+Score predicted data against true data on numpy arrays. Every metric first drops the pairs
+where either value is not finite and declines (returns None) when fewer than five pairs
+remain.
 """
 import functools
 import warnings
@@ -13,8 +13,8 @@ def _FilterNonFinite(actual, predicted):
 	"""
 	Keep only the pairs where both values are finite.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: (actual, predicted) filtered the same way
 	"""
 	notNan = numpy.isfinite(predicted)
@@ -32,17 +32,16 @@ def _FilterNonFinite(actual, predicted):
 
 def _CheckLength(function):
 	"""
-	Decorator applying _FilterNonFinite before a metric and declining when fewer than five
-	pairs remain.
+	Apply _FilterNonFinite before a metric and decline when fewer than five pairs remain.
 
-	:param function:	function(actual, predicted) -> float on filtered 1-D arrays
-	:return: the wrapped function, which returns None instead of a score when it declines
+	:param function:	metric called as function(actual, predicted) on filtered 1-D arrays
+	:return: the wrapped metric, which returns None instead of a score when it declines
 	"""
 	@functools.wraps(function)
 	def wrapper(actual, predicted):
 		"""
-		:param actual:	[n] true values
-		:param predicted:	[n] predictions aligned with actual
+		:param actual:	true data, [n]
+		:param predicted:	predicted data aligned with the true data, [n]
 		:return: the metric over the finite pairs, or None when fewer than five remain
 		"""
 		actual, predicted = _FilterNonFinite(actual, predicted)
@@ -57,10 +56,11 @@ def _CheckLength(function):
 @_CheckLength
 def Correlation(actual, predicted):
 	"""
-	Pearson correlation; a constant series gives 0 rather than NaN.
+	Compute the Pearson correlation between the true data and the predicted data; a constant
+	series gives 0 rather than NaN.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: float in [-1, 1], or None when fewer than five finite pairs remain
 	"""
 	actual_centered = actual - numpy.mean(actual)
@@ -73,10 +73,10 @@ def Correlation(actual, predicted):
 @_CheckLength
 def MaxAbsoluteError(actual, predicted):
 	"""
-	Largest absolute difference between a prediction and its truth.
+	Compute the largest absolute difference between the predicted data and the true data.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: float, or None when fewer than five finite pairs remain
 	"""
 	error = numpy.abs(actual - predicted)
@@ -86,10 +86,10 @@ def MaxAbsoluteError(actual, predicted):
 @_CheckLength
 def SumAbsoluteError(actual, predicted):
 	"""
-	Sum of the absolute differences between predictions and truth.
+	Compute the sum of the absolute differences between the predicted data and the true data.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: float, or None when fewer than five finite pairs remain
 	"""
 	error = actual - predicted
@@ -99,10 +99,10 @@ def SumAbsoluteError(actual, predicted):
 @_CheckLength
 def RootMeanSquareError(actual, predicted):
 	"""
-	Root mean square of the differences between predictions and truth.
+	Compute the root mean square of the differences between the predicted data and the true data.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: float, or None when fewer than five finite pairs remain
 	"""
 	error = actual - predicted
@@ -112,11 +112,12 @@ def RootMeanSquareError(actual, predicted):
 @_CheckLength
 def R2(actual, predicted):
 	"""
-	Variance of the truth explained by the predictions (1 minus residual over total sum of
-	squares); the undefined ratio of a constant truth passes through numpy.nan_to_num.
+	Compute the variance explained in the true data by the predicted data (1 minus residual
+	over total sum of squares); the undefined ratio of a constant truth passes through
+	numpy.nan_to_num.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:return: float, or None when fewer than five finite pairs remain
 	"""
 	residual_sum_of_squares = numpy.sum((actual - predicted) ** 2)
@@ -126,10 +127,10 @@ def R2(actual, predicted):
 
 def ComputeError(actual, predicted, metric):
 	"""
-	Deprecated dispatcher kept for old callers; call the metric functions directly.
+	Dispatch to a metric by name; deprecated, call the metric functions directly.
 
-	:param actual:	[n] true values
-	:param predicted:	[n] predictions aligned with actual
+	:param actual:	true data, [n]
+	:param predicted:	predicted data aligned with the true data, [n]
 	:param metric:	None for Correlation, 'MAE' for MaxAbsoluteError, 'CAE' for SumAbsoluteError, 'RMSE' for RootMeanSquareError
 	:return: the chosen metric's score
 	"""

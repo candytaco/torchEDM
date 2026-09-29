@@ -1,11 +1,12 @@
 """
-The prediction core: array-in, array-out functions, all taking X_train, Y_train, X_test, Y_test.
+The prediction core: functions that take X_train, Y_train, X_test, Y_test arrays and return
+result records.
 
 - Predictors: SimplexPredict, SimplexGenerate, SMapPredict, SMapGenerate
 - Multiview: MultiviewPredict
-- ConvergentCrossMap: cross-map skill of many source columns across training-subset sizes
+- ConvergentCrossMap: cross-map performance of many source variables across training-subset sizes
 - MDE: greedy variable selection with an optional convergence gate
-- Setup: turning X/Y arrays into training pairs and test states
+- Setup: turning X and Y arrays into training pairs and test states
 - _core: the tensor kernels every predictor shares
 - Results: the result records and ResultsIO
 """

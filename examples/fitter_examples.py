@@ -1,11 +1,11 @@
 """
-The parameter-holding wrappers on the packaged sample data, each result plotted with the
-helpers in plots.py. Run from this directory:
+Run the parameter-holding wrappers on the packaged sample data and plot each result with
+the helpers in plots.py. Run from this directory:
 
     python fitter_examples.py
 
-Every sample array has a time column at index 0, which the functions never see. The test
-arrays start two rows before the rows of interest so those rows have history.
+Every sample array has time as variable 0, which the functions never see. The test arrays
+start two samples before the samples of interest so those samples have lagged history.
 """
 from torchEDM.ExampleData import sampleData
 from torchEDM.Fitters import CCMFitter, MultiviewFitter, SimplexFitter, SMapFitter

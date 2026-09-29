@@ -1,7 +1,7 @@
 """
-Greedy variable selection: candidate columns of X are added one at a time to the state that
-predicts each target, keeping the candidate whose addition scores best, optionally gated by a
-cross-map convergence test.
+Select variables greedily: candidate input variables are added one at a time to the state
+that predicts each target, keeping the candidate whose addition performs best, optionally
+gated by a cross-map convergence test.
 """
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Union
@@ -51,53 +51,44 @@ def MDE(X_train: ArrayOrRuns,
 		device = None,
 		dtype: torch.dtype = torch.float32) -> MDEResult:
 	"""
-	Each target independently selects up to maxVariables columns of X. The state of a
-	candidate set is those columns as given (no history stacking); the horizon shift applies.
-	Several targets are handled together, sharing the candidate distance computations. The
-	selection then predicts the test rows.
+	Select, for each target independently, up to maxVariables input variables, then predict
+	the test samples with them. The state of a candidate set is those variables as given (no
+	lagged copies); the prediction horizon applies. Several targets are handled together,
+	sharing the candidate distance computations.
 
-	:param X_train:		[nTrain, nFeatures] or a list of runs: the candidate columns
-	:param Y_train:		[nTrain, nTargets] or a list of runs
-	:param X_test:		[nTest, nFeatures] or a list of runs; candidates are scored on these rows.
-		None scores the training rows in-sample.
-	:param Y_test:		targets for X_test; required with X_test. A NaN target row is predicted but never scored.
-	:param embedDimensions:	fixed embedding dimensions for the convergence check; 0 searches each candidate's embedding dimension
-	:param step:		row offset between stacked copies in the convergence check and embedding-dimension search
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors in the convergence check and in a final SMapPredict, 0 meaning each one's default
-		(the target's embedding dimensions + 1, every training state); the final SimplexPredict always uses the
-		number of selected columns plus one
-	:param exclusionRadius:	training states this close in rows are not neighbors. Always applied in the
-		convergence check, which runs on the training rows; applied to the selection and the final
-		prediction only when X_test is omitted, since a separate test array shares no sample axis
-	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
-	:param maxVariables:	columns to select per target (the target itself counts when isTargetIncluded)
-	:param candidateColumns:	candidate X columns; None uses all
-	:param isTargetIncluded:	start with the target series itself selected; it then appears in
-		selected_variables as column index nFeatures + targetIndex
-	:param convergenceCheck:	'pre' screens every candidate for convergence before selection, 'post' checks
-		candidates in score order at each step, False skips the check
-	:param minPredictionScore:	minimum candidate score to be selectable
-	:param minCandidateScore:	minimum score a candidate alone (at its best embedding dimension) must reach predicting
-		the target to stay in the pool; applied when the convergence check is on and the embedding dimension is searched. 0 disables.
-	:param stdThreshold:	candidates with standard deviation below this are dropped
-	:param convergenceSubsetPercentiles:	training-subset sizes of the convergence check, percent of training states
-	:param convergenceRepeats:	random subsets per size
-	:param convergenceSlopeThreshold:	minimum skill-versus-size slope to count as convergent
-	:param convergenceSeed:	random seed for the convergence check
+	:param X_train:	candidate input data, [nTrain, nFeatures] or a list of such arrays with one per run
+	:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; candidates are scored and the final prediction made on these samples. None scores the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; required with X_test, and a NaN sample is predicted but not scored
+	:param embedDimensions:	fixed embedding dimensions of the target's lagged history in the convergence check; 0 searches each candidate's own
+	:param step:	sample offset between consecutive lagged copies in the convergence check and the embedding-dimension search; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param knn:	number of nearest neighbors in the convergence check and in a final SMapPredict, 0 meaning each one's default (the target's embedding dimensions + 1, every training state); the final SimplexPredict always uses the number of selected variables plus one
+	:param exclusionRadius:	training states within this many samples of a test state are excluded from its neighbors; always applied in the convergence check, which runs on the training samples, and to selection and prediction only in-sample, since a separate test array shares no sample axis
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param maxVariables:	number of variables to select per target; the target's own variable counts when isTargetIncluded
+	:param candidateColumns:	indices of the candidate input variables; None uses all
+	:param isTargetIncluded:	True starts with the target series itself selected; it then appears in selected_variables as index nFeatures + targetIndex
+	:param convergenceCheck:	'pre' screens every candidate for convergence before selection, 'post' checks candidates in performance order at each step, False skips the check
+	:param minPredictionScore:	minimum performance a candidate must reach at a step to be selectable
+	:param minCandidateScore:	minimum peak performance a candidate alone (at its best embedding dimension) must reach predicting the target to stay in the pool; applied when the convergence check is on and the embedding dimension is searched. 0 disables
+	:param stdThreshold:	candidates whose standard deviation over the training samples is below this are dropped from the pool
+	:param convergenceSubsetPercentiles:	training-subset sizes of the convergence check, as percentages of the number of training states
+	:param convergenceRepeats:	number of random subsets drawn per size
+	:param convergenceSlopeThreshold:	minimum slope of cross-map performance against subset fraction for a candidate to count as convergent
+	:param convergenceSeed:	seed of the convergence check's subset draws; None draws fresh subsets
 	:param convergenceMaxEmbedDimensions:	largest embedding dimension tried in the per-candidate embedding-dimension search
-	:param isIterativeDimensionSearch:	True evaluates each embedding dimension on its own complete rows (slower, reproduces the
-		reference); False shares the rows complete at the largest embedding dimension in one pass
-	:param isUsingSMap:	final prediction with SMapPredict instead of SimplexPredict
-	:param theta:		localization for isUsingSMap
-	:param candidateMetric:	'correlation' or 'r2' for candidate scoring
-	:param batchSize:	candidates per batch
-	:param isVerbose:	print when a target stops expanding and other progress details
-	:param hasProgressBar:	show a progress bar over the selection steps
-	:param scoringFunction:	scoringFunction(actual, predicted) -> float for the final score
-	:param device:		torch device; None picks cuda when available
-	:param dtype:		torch dtype for the selection tensors
-	:return: MDEResult; the candidate_* fields index the candidate view [X columns | target columns]
+	:param isIterativeDimensionSearch:	True evaluates each embedding dimension on its own complete samples (slower, reproduces the reference); False shares the samples complete at the largest embedding dimension in one pass
+	:param isUsingSMap:	True makes the final prediction with SMapPredict instead of SimplexPredict
+	:param theta:	localization strength of that final SMapPredict; 0 fits one global linear map
+	:param candidateMetric:	'correlation' or 'r2': the performance metric that ranks candidates at each step
+	:param batchSize:	number of candidate variables whose distance matrices are held on the device at once
+	:param isVerbose:	True prints when a target stops expanding and other progress details
+	:param hasProgressBar:	True shows a progress bar over the selection steps
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData) for the final score
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the selection tensors
+	:return: MDEResult; the candidate_* fields index the candidate view [input variables | target variables]
 	"""
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score candidates on X_test')
@@ -175,8 +166,10 @@ def MDE(X_train: ArrayOrRuns,
 
 @dataclass(frozen = True)
 class _SelectionProblem:
-	"""The data views and settings the selection helpers share. Column indices refer to the
-	candidate view [X columns | target columns]."""
+	"""
+	Hold the data views and settings shared by the selection helpers. Variable indices refer
+	to the candidate view [input variables | target variables].
+	"""
 	xRuns: List[numpy.ndarray]
 	yRuns: List[numpy.ndarray]
 	xTestRuns: List[numpy.ndarray]
@@ -225,10 +218,10 @@ class _SelectionProblem:
 @dataclass
 class _SelectionState:
 	"""
-	Working state of the greedy loop. The per-candidate arrays are [nTargets, nColumns] over
-	the candidate view: candidateEmbedDimensions is -1 and candidatePeakScores NaN where the
-	search did not run; slopeCache is NaN for a candidate never checked and -inf for a computed
-	NaN slope, so a rejected candidate stays rejected at later steps.
+	Hold the working state of the greedy loop. The per-candidate arrays are [nTargets,
+	nCandidates] over the candidate view: candidateEmbedDimensions is -1 and candidatePeakScores
+	NaN where the search did not run; slopeCache is NaN for a candidate never checked and -inf
+	for a computed NaN slope, so a rejected candidate stays rejected at later steps.
 	"""
 	numTrainStates: int
 	selectedVariables: List[List[int]]
@@ -242,10 +235,10 @@ class _SelectionState:
 
 def _RunsOfColumns(runs: List[numpy.ndarray], columns, isSingle: bool):
 	"""
-	The given columns of every run.
+	Extract the given variables from every run.
 
-	:param runs:	list of [nRows, nColumns] arrays
-	:param columns:	column indices to keep
+	:param runs:	list of [nSamples, nVariables] arrays
+	:param columns:	indices of the variables to keep
 	:param isSingle:	True returns the one run as an array, False the list
 	"""
 	selected = [run[:, list(columns)] for run in runs]
@@ -254,10 +247,10 @@ def _RunsOfColumns(runs: List[numpy.ndarray], columns, isSingle: bool):
 
 def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 	"""
-	Greedy selection for all targets together.
+	Run the greedy selection for all targets together.
 
 	:param problem:	the data views and settings
-	:return: the finished _SelectionState: selected columns, their scores and slopes, and the per-candidate diagnostics
+	:return: the finished _SelectionState: selected variables, their performance and slopes, and the per-candidate diagnostics
 	"""
 	nTargets = problem.numTargets
 	nVars = problem.numFeatures + problem.numTargets
@@ -438,13 +431,13 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 
 def _PredictSelected(problem: _SelectionProblem, state: _SelectionState, scoringFunction: Callable):
 	"""
-	Predict every test row of every target from its selected columns with SimplexPredict
-	(or SMapPredict). A target that selected nothing has NaN predictions and score.
+	Predict every test sample of every target from its selected variables with SimplexPredict
+	(or SMapPredict). A target that selected nothing has NaN predictions and performance.
 
 	:param problem:	the data views and settings
 	:param state:	the finished selection
-	:param scoringFunction:	scoringFunction(actual, predicted) -> float applied per target
-	:return: (Y_pred shaped like Y_test with one column per target, scores [nTargets])
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData), applied per target
+	:return: (Y_pred with the same shape as Y_test and one variable per target, performance [nTargets])
 	"""
 	nTargets = problem.numTargets
 	testLengths = [run.shape[0] for run in problem.yTestRuns]
@@ -476,10 +469,10 @@ def _PredictSelected(problem: _SelectionProblem, state: _SelectionState, scoring
 
 def _SearchCandidateEmbedDimensions(problem: _SelectionProblem, state: _SelectionState, remainingVariables) -> None:
 	"""
-	Per-candidate embedding-dimension search: each candidate column, stacked at every embedding
-	dimension up to convergenceMaxEmbedDimensions, predicts each target over the test rows. The
-	best embedding dimension and its peak score are written into the state per (target,
-	candidate) for the convergence check.
+	Search each candidate's embedding dimension: each candidate variable, stacked at every
+	embedding dimension up to convergenceMaxEmbedDimensions, predicts each target over the test
+	samples. The best embedding dimension and its peak performance are written into the state
+	per (target, candidate) for the convergence check.
 
 	:param problem:	the data views and settings
 	:param state:	the selection state whose candidateEmbedDimensions and candidatePeakScores are filled
@@ -513,11 +506,12 @@ def _SearchCandidateEmbedDimensions(problem: _SelectionProblem, state: _Selectio
 
 def _SubsetSizes(problem: _SelectionProblem, state: _SelectionState) -> List[int]:
 	"""
-	Training-subset sizes of the convergence check: percentiles of the training states.
+	Compute the training-subset sizes of the convergence check as percentiles of the number of
+	training states.
 
 	:param problem:	the settings, for the percentiles
 	:param state:	the selection state, for the number of training states
-	:return: list of subset sizes in rows
+	:return: list of subset sizes in samples
 	"""
 	return [int(percentile / 100 * state.numTrainStates) for percentile in problem.convergenceSubsetPercentiles]
 
@@ -525,13 +519,13 @@ def _SubsetSizes(problem: _SelectionProblem, state: _SelectionState) -> List[int
 def _ConvergenceCheck(problem: _SelectionProblem, candidateColumns, target: int, embeddingDimensions, subsetSizes,
 					  sourceBatchSize: int = 1000) -> BatchedCCMResult:
 	"""
-	The target's stacked history cross-maps each candidate on the training rows.
+	Cross-map each candidate from the target's lagged history on the training samples.
 
 	:param problem:	the data views and settings
-	:param candidateColumns:	columns of the candidate view that the target's history cross-maps
-	:param target:	column of the target in the candidate view
+	:param candidateColumns:	indices in the candidate view of the variables the target's history cross-maps
+	:param target:	index of the target in the candidate view
 	:param embeddingDimensions:	embedding dimensions of the target's history: an int, [1, nCandidates] with one per candidate, or None to search
-	:param subsetSizes:	training-subset sizes at which the skill is measured
+	:param subsetSizes:	training-subset sizes at which the performance is measured
 	:param sourceBatchSize:	batch size handed to ConvergentCrossMap
 	:return: BatchedCCMResult whose forward_performance is [nSizes, nCandidates] with singleton axes squeezed
 	"""
@@ -557,12 +551,12 @@ def _ConvergenceCheck(problem: _SelectionProblem, candidateColumns, target: int,
 
 def _FilterConvergentVariables(problem: _SelectionProblem, state: _SelectionState, candidateColumns, target: int):
 	"""
-	Keep the candidates whose cross-map skill grows with the training-subset size.
+	Keep the candidates whose cross-map performance grows with the training-subset size.
 
 	:param problem:	the data views and settings
-	:param state:	the selection state, for the candidate embedding dimensions and training-state count
+	:param state:	the selection state, for the candidate embedding dimensions and the number of training states
 	:param candidateColumns:	candidate pool of one target
-	:param target:	column of the target in the candidate view
+	:param target:	index of the target in the candidate view
 	:return: the convergent subset of candidateColumns as an int array
 	"""
 	if len(candidateColumns) == 0:
@@ -602,13 +596,13 @@ def _FilterConvergentVariables(problem: _SelectionProblem, state: _SelectionStat
 
 def _CandidateConvergence(problem: _SelectionProblem, state: _SelectionState, candidate: int, target: int) -> Tuple[bool, float]:
 	"""
-	Cross-map convergence of one candidate, cached per run: a rejected candidate stays
-	rejected at later steps.
+	Test the cross-map convergence of one candidate, cached per run so that a rejected candidate
+	stays rejected at later steps.
 
 	:param problem:	the data views and settings
 	:param state:	the selection state holding the slope cache and candidate embedding dimensions
-	:param candidate:	column of the candidate in the candidate view
-	:param target:	column of the target in the candidate view
+	:param candidate:	index of the candidate in the candidate view
+	:param target:	index of the target in the candidate view
 	:return: (isConvergent, slope)
 	"""
 	targetPosition = problem.targets.index(target)

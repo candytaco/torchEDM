@@ -1,10 +1,4 @@
-"""
-Auxiliary functions.
-
-Iterable        Is an object iterable?
-IsNonStringIterable   Is an object iterable and not a string?
-SurrogateData   ebisuzaki, random shuffle, seasonal
-"""
+"""Auxiliary functions: iterability checks and surrogate data generation."""
 
 from cmath import exp
 # python modules
@@ -21,7 +15,7 @@ from scipy.interpolate import UnivariateSpline
 
 def Iterable( obj ):
 	"""
-	Whether an object can be iterated over.
+	Return whether an object can be iterated over.
 
 	:param obj:	any object
 	:return: True when iter(obj) succeeds
@@ -37,7 +31,7 @@ def Iterable( obj ):
 
 def IsNonStringIterable(obj):
 	"""
-	Whether an object can be iterated over and is not a string.
+	Return whether an object can be iterated over and is not a string.
 
 	:param obj:	any object
 	:return: True for iterables other than str
@@ -60,27 +54,27 @@ def SurrogateData( data     = None,
 				   smooth        = 0.8,
 				   outputFile    = None ):
 	"""
-	Surrogate series of one column for significance testing, by one of three methods:
+	Generate surrogate series of one variable for significance testing, by one of three methods.
 
-	random_shuffle: the column's values in random order, which keeps the distribution and
-	destroys the serial correlation.
+	random_shuffle puts the variable's values in random order, which keeps the distribution
+	and destroys the serial correlation.
 
-	ebisuzaki (Journal of Climate, doi.org/10.1175/1520-0442(1997)010<2147:AMTETS>2.0.CO;2):
-	the column's Fourier amplitudes with random phases, which keeps the power spectrum, and so
-	the autocorrelation, but not the distribution of values; each surrogate is rescaled to the
-	column's standard deviation.
+	ebisuzaki (Journal of Climate, doi.org/10.1175/1520-0442(1997)010<2147:AMTETS>2.0.CO;2)
+	keeps the variable's Fourier amplitudes and draws random phases, which keeps the power
+	spectrum, and so the autocorrelation, but not the distribution of values; each surrogate
+	is rescaled to the variable's standard deviation.
 
-	seasonal: a smoothing spline is taken as the seasonal trend; each surrogate is the trend
-	plus the residuals in random order plus Gaussian noise.
+	seasonal takes a smoothing spline as the seasonal trend; each surrogate is the trend plus
+	the residuals in random order plus Gaussian noise.
 
-	:param data:	[nSamples, nColumns] array whose column 0 is copied into the output as is
-	:param column:	index of the column to resample
+	:param data:	data array, [nSamples, nVariables]; variable 0 is copied into the output as is
+	:param column:	index of the variable to resample
 	:param method:	'random_shuffle', 'ebisuzaki', or 'seasonal'
-	:param numSurrogates:	surrogate series to generate
-	:param alpha:	standard deviation of the Gaussian noise in 'seasonal'; None uses the column's range divided by 5
+	:param numSurrogates:	number of surrogate series to generate
+	:param alpha:	standard deviation of the Gaussian noise in 'seasonal'; None uses the variable's range divided by 5
 	:param smooth:	smoothing factor of the spline in 'seasonal'
 	:param outputFile:	optional CSV path the result is also written to, with a header
-	:return: [nSamples, 1 + numSurrogates]: column 0 of data, then one surrogate per column
+	:return: [nSamples, 1 + numSurrogates]: variable 0 of data, followed by the surrogates
 	"""
 
 	if data is None :

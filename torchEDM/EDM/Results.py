@@ -1,10 +1,10 @@
 """
-Result records returned by the predictors, the variable-selection drivers, and the
-cross-map screen, plus ResultsIO for saving and loading them.
+Result records returned by the predictors, the variable selection, and the cross-map
+screen, plus ResultsIO for saving and loading them.
 
 Every prediction field is named Y_pred and has the shape of the Y_test it was scored
 against (a list of arrays when the test data came as a list of runs). Nothing here
-carries time; rows are sample positions.
+carries time; positions count samples.
 """
 
 from dataclasses import dataclass
@@ -18,14 +18,14 @@ ArrayOrList = Union[np.ndarray, List[np.ndarray]]
 @dataclass(frozen = True)
 class SimplexResult:
 	"""
-	Nearest-neighbor weighted-average prediction.
+	Hold the output of the nearest-neighbor weighted-average predictor.
 
-	:param Y_pred:		predictions shaped like Y_test (a list for multiple test runs); NaN where no complete state predicts the row
+	:param Y_pred:	predicted data with the same shape as Y_test (a list for multiple test runs); NaN where no complete state predicts the sample
 	:param variance:	weighted spread of the neighbor targets around each prediction, same shape as Y_pred
-	:param score:		[nTargets] scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
-	:param embedDimensions:	copies of each feature column in the state
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors used
+	:param score:	performance per target, [nTargets], from scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
+	:param embedDimensions:	number of lagged copies of each input variable in the state
+	:param predictionHorizon:	number of samples between a state and the target it predicts
+	:param knn:	number of nearest neighbors used
 	"""
 	Y_pred: ArrayOrList
 	variance: ArrayOrList
@@ -38,17 +38,17 @@ class SimplexResult:
 @dataclass(frozen = True)
 class SMapResult:
 	"""
-	Locally weighted linear prediction.
+	Hold the output of the locally weighted linear predictor.
 
-	:param Y_pred:		predictions shaped like Y_test (a list for multiple test runs); NaN where no complete state predicts the row
+	:param Y_pred:	predicted data with the same shape as Y_test (a list for multiple test runs); NaN where no complete state predicts the sample
 	:param variance:	weighted spread of the neighbor targets around each prediction, same shape as Y_pred
-	:param coefficients:	[nRows, stateSize + 1, nTargets] per predicted row, intercept first; NaN rows where nothing was predicted
-	:param singularValues:	[nRows, stateSize + 1, nTargets] of the weighted design matrices
-	:param score:		[nTargets] scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
-	:param embedDimensions:	copies of each feature column in the state
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors used
-	:param theta:		localization used
+	:param coefficients:	coefficients of each predicted sample's fit, [nSamples, stateSize + 1, nTargets], intercept first; NaN where nothing was predicted
+	:param singularValues:	singular values of each sample's weighted design matrix, [nSamples, stateSize + 1, nTargets]
+	:param score:	performance per target, [nTargets], from scoringFunction over the (Y_test, Y_pred) pairs; None when Y_test was not given
+	:param embedDimensions:	number of lagged copies of each input variable in the state
+	:param predictionHorizon:	number of samples between a state and the target it predicts
+	:param knn:	number of nearest neighbors used
+	:param theta:	localization strength used
 	"""
 	Y_pred: ArrayOrList
 	variance: ArrayOrList
@@ -64,16 +64,16 @@ class SMapResult:
 @dataclass(frozen = True)
 class MultiviewResult:
 	"""
-	Ensemble of the top-ranked feature combinations.
+	Hold the ensemble prediction over the top-ranked combinations of state dimensions.
 
-	:param Y_pred:		ensemble-averaged predictions shaped like Y_test
-	:param view:		one row per top-ranked combination: [combination, correlation, max abs error, sum abs error, RMSE]
+	:param Y_pred:	ensemble-averaged predicted data with the same shape as Y_test
+	:param view:	one entry per top-ranked combination: [combination, correlation, max abs error, sum abs error, RMSE]
 	:param topRankPredictions:	combination tuple -> that combination's Y_pred
-	:param topRankStats:		combination tuple -> [correlation, max abs error, sum abs error, RMSE]
-	:param columnsPerView:	columns of the stacked state used per combination
-	:param embedDimensions:	copies of each feature column in the stacked state
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param score:		[nTargets] scoringFunction over the ensemble (Y_test, Y_pred) pairs; None when Y_test was not given
+	:param topRankStats:	combination tuple -> [correlation, max abs error, sum abs error, RMSE]
+	:param columnsPerView:	number of state dimensions in each combination
+	:param embedDimensions:	number of lagged copies of each input variable in the state
+	:param predictionHorizon:	number of samples between a state and the target it predicts
+	:param score:	performance per target, [nTargets], from scoringFunction over the ensemble (Y_test, Y_pred) pairs; None when Y_test was not given
 	"""
 	Y_pred: ArrayOrList
 	view: List
@@ -87,17 +87,17 @@ class MultiviewResult:
 	@property
 	def top_combinations(self) -> List:
 		"""
-		The top-ranked combinations in rank order.
+		Return the top-ranked combinations in rank order.
 
-		:return: list of column-index tuples into the stacked state
+		:return: list of tuples of state-dimension indices
 		"""
 		return list(self.topRankPredictions.keys())
 
 	def get_combination_stats(self, combo: tuple) -> List[float]:
 		"""
-		The statistics of one top-ranked combination.
+		Return the statistics of one top-ranked combination.
 
-		:param combo:	column-index tuple into the stacked state, as listed by top_combinations
+		:param combo:	tuple of state-dimension indices, as listed by top_combinations
 		:return: [correlation, max abs error, sum abs error, RMSE]; raises ValueError for a combination outside the top ranks
 		"""
 		if combo not in self.topRankStats:
@@ -108,22 +108,20 @@ class MultiviewResult:
 @dataclass(frozen = True)
 class MDEResult:
 	"""
-	Greedy variable selection (manifold dimensional expansion).
+	Hold the output of the greedy variable selection.
 
-	Column indices refer to the candidate view [X columns | target columns], so nColumns is
-	nFeatures + nTargets and a target's own column is nFeatures + targetIndex.
+	Variable indices refer to the candidate view [input variables | target variables], so
+	nCandidates is nFeatures + nTargets and a target's own index is nFeatures + targetIndex.
 
-	:param Y_pred:		final predictions shaped like Y_test, one column per target
-	:param selected_variables:	selected columns per target, shape [nTargets, maxVariables], padded with -1
-	:param performance:	score after each addition, shape [nTargets, maxVariables], padded with NaN
-	:param ccm_values:	convergence slopes of the selected variables, shape [nTargets, maxVariables], padded with NaN
-	:param stepwise_performance:	score of every candidate at every step, shape [nTargets, maxVariables, nColumns]
-	:param candidate_embed_dimensions:	best embedding dimension per (target, candidate), shape [nTargets, nColumns];
-		-1 where the search did not run
-	:param candidate_peak_scores:	the score at that embedding dimension, shape [nTargets, nColumns]; NaN where the search did not run
-	:param candidate_slopes:	convergence slope per (target, candidate), shape [nTargets, nColumns]; NaN for a
-		candidate the run never checked, -inf for a check whose slope was NaN
-	:param score:		[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
+	:param Y_pred:	final predicted data with the same shape as Y_test, one variable per target
+	:param selected_variables:	indices of the selected variables per target, [nTargets, maxVariables], padded with -1
+	:param performance:	performance after each addition, [nTargets, maxVariables], padded with NaN
+	:param ccm_values:	convergence slopes of the selected variables, [nTargets, maxVariables], padded with NaN
+	:param stepwise_performance:	performance of every candidate at every step, [nTargets, maxVariables, nCandidates]
+	:param candidate_embed_dimensions:	best embedding dimension per (target, candidate), [nTargets, nCandidates]; -1 where the search did not run
+	:param candidate_peak_scores:	performance at that embedding dimension, [nTargets, nCandidates]; NaN where the search did not run
+	:param candidate_slopes:	convergence slope per (target, candidate), [nTargets, nCandidates]; NaN for a candidate the run never checked, -inf for a check whose slope was NaN
+	:param score:	performance per target, [nTargets], from scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
 	Y_pred: Optional[ArrayOrList]
 	selected_variables: np.ndarray
@@ -139,16 +137,16 @@ class MDEResult:
 @dataclass(frozen = True)
 class MDECVResults:
 	"""
-	Cross-validated variable selection from MDEFitterCV.
+	Hold the output of the cross-validated variable selection of MDEFitterCV.
 
-	:param fold_selected_variables:	selected X columns per fold, shape [nFolds, nTargets, maxVariables], padded with -1
-	:param fold_stepwise_performances:	candidate scores per fold, shape [nFolds, nTargets, maxVariables, nColumns]
-	:param fold_accuracies:	score per fold and target, shape [nFolds, nTargets]
-	:param fold_Y_pred:		Y_pred of each fold's held-out data
-	:param best_fold:		best fold per target, shape [nTargets]
-	:param selected_variables:	final selected X columns, shape [nTargets, maxVariables], padded with -1
-	:param Y_pred:			final predictions shaped like Y_test, or None
-	:param score:			[nTargets] scoringFunction over the final (Y_test, Y_pred) pairs, or None
+	:param fold_selected_variables:	indices of the selected variables per fold, [nFolds, nTargets, maxVariables], padded with -1
+	:param fold_stepwise_performances:	performance of every candidate per fold, [nFolds, nTargets, maxVariables, nCandidates]
+	:param fold_accuracies:	performance per fold and target, [nFolds, nTargets]
+	:param fold_Y_pred:	predicted data of each fold's held-out data
+	:param best_fold:	index of the best fold per target, [nTargets]
+	:param selected_variables:	indices of the final selected variables, [nTargets, maxVariables], padded with -1
+	:param Y_pred:	final predicted data with the same shape as Y_test, or None
+	:param score:	performance per target, [nTargets], from scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
 	fold_selected_variables: np.ndarray
 	fold_stepwise_performances: np.ndarray
@@ -162,9 +160,11 @@ class MDECVResults:
 	@property
 	def selected_stepwise_performances(self) -> np.ndarray:
 		"""
-		Score of the variable actually selected at each step, per fold and target:
-		fold_stepwise_performances [nFolds, nTargets, maxVariables, nColumns] indexed by
-		fold_selected_variables, NaN where nothing was selected.
+		Return the performance of the variable selected at each step, per fold and target:
+		fold_stepwise_performances indexed by fold_selected_variables, NaN where nothing was
+		selected.
+
+		:return: [nFolds, nTargets, maxVariables]
 		"""
 		selected = self.fold_selected_variables
 		mask = selected >= 0
@@ -179,12 +179,13 @@ class MDECVResults:
 @dataclass(frozen = True)
 class BatchedCCMResult:
 	"""
-	Cross-map skill of every source column against every target across training-subset sizes.
+	Hold the cross-map performance of every source variable against every target variable
+	across training-subset sizes.
 
-	:param forward_performance:	mean skill per subset size, shape [nSizes, nSources, nTargets] with singleton axes squeezed
-	:param predictionHorizon:	rows between a state and the target it predicts
+	:param forward_performance:	mean performance per subset size, [nSizes, nSources, nTargets] with singleton axes squeezed
+	:param predictionHorizon:	number of samples between a state and the target it predicts
 	:param library_sizes:	the training-subset sizes evaluated
-	:param forward_embed_dimensions:	embedding dimensions used per source ([nSources] or [nSources, nTargets] when searched, else the scalar given)
+	:param forward_embed_dimensions:	embedding dimensions used per source, [nSources] or [nSources, nTargets] when searched, else the scalar given
 	"""
 	forward_performance: np.ndarray
 	predictionHorizon: int
@@ -193,10 +194,10 @@ class BatchedCCMResult:
 
 	def GetVariableCorrelations(self, variableIndex: int) -> np.ndarray:
 		"""
-		The skill curve of one source against every subset size.
+		Return the performance curve of one source variable across the subset sizes.
 
-		:param variableIndex:	index of the source column
-		:return: [nSizes] (or [nSizes, nTargets] with several targets)
+		:param variableIndex:	index of the source variable
+		:return: [nSizes], or [nSizes, nTargets] with several targets
 		"""
 		return self.forward_performance[:, variableIndex]
 
@@ -204,13 +205,13 @@ class BatchedCCMResult:
 @dataclass(frozen = True)
 class CCMCVResult:
 	"""
-	Cross-validated cross-map screen.
+	Hold the cross-validated cross-map screen.
 
 	:param fold_results:	BatchedCCMResult per fold
-	:param fold_performances:	[nFolds, nSources] or [nFolds, nSources, nTargets]
+	:param fold_performances:	performance per fold, [nFolds, nSources] or [nFolds, nSources, nTargets]
 	:param mean_performance:	mean over folds
 	:param std_performance:	standard deviation over folds
-	:param predictionHorizon:	rows between a state and the target it predicts
+	:param predictionHorizon:	number of samples between a state and the target it predicts
 	:param fold_forward_embed_dimensions:	embedding dimensions per fold
 	"""
 	fold_results: List['BatchedCCMResult']
@@ -224,13 +225,13 @@ class CCMCVResult:
 class ResultsIO:
 	"""
 	Save and load result records as npz files or as folders of npy objects in the cloud.
-	The record type is stored under 'result_type' so Load reconstructs the right class.
+	The record type is stored under 'result_type' so Load rebuilds the right class.
 	"""
 
 	@staticmethod
 	def _Arrays(result) -> dict:
 		"""
-		The arrays a record is stored as.
+		Convert a record to the arrays it is stored as.
 
 		:param result:	any result record
 		:return: dict of name -> numpy array
@@ -254,10 +255,10 @@ class ResultsIO:
 	@staticmethod
 	def _FromData(data):
 		"""
-		The record stored in a mapping of arrays.
+		Rebuild the record stored in a mapping of arrays.
 
 		:param data:	name -> array, as loaded from a file or the cloud, including 'result_type'
-		:return: the reconstructed result record
+		:return: the result record
 		"""
 		result_type = str(data['result_type'])
 		loaders = {
@@ -366,7 +367,7 @@ class ResultsIO:
 	@staticmethod
 	def _SimplexArrays(result: SimplexResult) -> dict:
 		"""
-		The arrays a SimplexResult is stored as.
+		Convert a SimplexResult to the arrays it is stored as.
 
 		:param result:	the SimplexResult
 		:return: dict of name -> numpy array
@@ -383,7 +384,7 @@ class ResultsIO:
 	@staticmethod
 	def _SMapArrays(result: SMapResult) -> dict:
 		"""
-		The arrays a SMapResult is stored as.
+		Convert a SMapResult to the arrays it is stored as.
 
 		:param result:	the SMapResult
 		:return: dict of name -> numpy array
@@ -397,7 +398,7 @@ class ResultsIO:
 	@staticmethod
 	def _MultiviewArrays(result: MultiviewResult) -> dict:
 		"""
-		The arrays a MultiviewResult is stored as.
+		Convert a MultiviewResult to the arrays it is stored as.
 
 		:param result:	the MultiviewResult
 		:return: dict of name -> numpy array
@@ -425,7 +426,7 @@ class ResultsIO:
 	@staticmethod
 	def _MDEArrays(result: MDEResult) -> dict:
 		"""
-		The arrays a MDEResult is stored as.
+		Convert a MDEResult to the arrays it is stored as.
 
 		:param result:	the MDEResult
 		:return: dict of name -> numpy array
@@ -446,7 +447,7 @@ class ResultsIO:
 	@staticmethod
 	def _MDECVResultsArrays(result: MDECVResults) -> dict:
 		"""
-		The arrays a MDECVResults is stored as.
+		Convert a MDECVResults to the arrays it is stored as.
 
 		:param result:	the MDECVResults
 		:return: dict of name -> numpy array
@@ -468,7 +469,7 @@ class ResultsIO:
 	@staticmethod
 	def _BatchedCCMArrays(result: BatchedCCMResult) -> dict:
 		"""
-		The arrays a BatchedCCMResult is stored as.
+		Convert a BatchedCCMResult to the arrays it is stored as.
 
 		:param result:	the BatchedCCMResult
 		:return: dict of name -> numpy array
@@ -483,7 +484,7 @@ class ResultsIO:
 	@staticmethod
 	def _CCMCVArrays(result: CCMCVResult) -> dict:
 		"""
-		The arrays a CCMCVResult is stored as.
+		Convert a CCMCVResult to the arrays it is stored as.
 
 		:param result:	the CCMCVResult
 		:return: dict of name -> numpy array
@@ -509,7 +510,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadSimplex(data) -> SimplexResult:
 		"""
-		A SimplexResult from its stored arrays.
+		Rebuild a SimplexResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: SimplexResult
@@ -524,7 +525,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadSMap(data) -> SMapResult:
 		"""
-		A SMapResult from its stored arrays.
+		Rebuild a SMapResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: SMapResult
@@ -542,7 +543,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadMultiview(data) -> MultiviewResult:
 		"""
-		A MultiviewResult from its stored arrays.
+		Rebuild a MultiviewResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: MultiviewResult
@@ -563,14 +564,14 @@ class ResultsIO:
 	@staticmethod
 	def _LoadMDE(data) -> MDEResult:
 		"""
-		A MDEResult from its stored arrays.
+		Rebuild a MDEResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: MDEResult
 		"""
 		def optional(key):
 			"""
-			A field that older files may lack.
+			Read a field that older files may lack.
 
 			:param key:	array name
 			:return: the array, or None when absent
@@ -589,7 +590,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadMDECVResults(data) -> MDECVResults:
 		"""
-		A MDECVResults from its stored arrays.
+		Rebuild a MDECVResults from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: MDECVResults
@@ -609,7 +610,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
 		"""
-		A BatchedCCMResult from its stored arrays.
+		Rebuild a BatchedCCMResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: BatchedCCMResult
@@ -622,7 +623,7 @@ class ResultsIO:
 	@staticmethod
 	def _LoadCCMCV(data) -> CCMCVResult:
 		"""
-		A CCMCVResult from its stored arrays.
+		Rebuild a CCMCVResult from its stored arrays.
 
 		:param data:	name -> array as written by Save or SaveToCloud
 		:return: CCMCVResult
