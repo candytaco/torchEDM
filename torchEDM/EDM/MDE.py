@@ -34,6 +34,8 @@ def MDE(X_train: ArrayOrRuns,
 		convergenceCheck: Union[str, bool] = 'post',
 		minPredictionScore: float = 0.0,
 		minCandidateScore: float = 0.5,
+		minSelectedZScore: Optional[float] = None,
+		extraStepsBelowZScore: int = 0,
 		stdThreshold: float = 1e-3,
 		convergenceSubsetPercentiles = numpy.linspace(10, 90, 5),
 		convergenceRepeats: int = 10,
@@ -72,6 +74,8 @@ def MDE(X_train: ArrayOrRuns,
 	:param convergenceCheck:	'pre' screens every candidate for convergence before selection, 'post' checks candidates in performance order at each step, False skips the check
 	:param minPredictionScore:	minimum performance a candidate must reach at a step to be selectable
 	:param minCandidateScore:	minimum peak performance a candidate alone (at its best embedding dimension) must reach predicting the target to stay in the pool; applied when the convergence check is on and the embedding dimension is searched. 0 disables
+	:param minSelectedZScore:	stop rule on how far the selected candidate stands out from the other candidates: at each step the performance of every evaluated candidate is z-scored, and a target stops expanding once its selected candidate's z-score falls below this value; None disables the rule
+	:param extraStepsBelowZScore:	number of further selection steps run after a selected candidate first falls below minSelectedZScore, to confirm the drop; the target stops once this many further steps have also fallen below it, and a step back above it restarts the count. The candidates selected during these steps stay selected
 	:param stdThreshold:	candidates whose standard deviation over the training samples is below this are dropped from the pool
 	:param convergenceSubsetPercentiles:	training-subset sizes of the convergence check, as percentages of the number of training states
 	:param convergenceRepeats:	number of random subsets drawn per size
@@ -132,7 +136,8 @@ def MDE(X_train: ArrayOrRuns,
 		trainRowMask = trainRowMask,
 		maxVariables = maxVariables, candidateColumns = candidateColumns, isTargetIncluded = isTargetIncluded,
 		convergenceCheck = convergenceCheck, minPredictionScore = minPredictionScore,
-		minCandidateScore = minCandidateScore, stdThreshold = stdThreshold,
+		minCandidateScore = minCandidateScore, minSelectedZScore = minSelectedZScore,
+		extraStepsBelowZScore = extraStepsBelowZScore, stdThreshold = stdThreshold,
 		convergenceSubsetPercentiles = convergenceSubsetPercentiles, convergenceRepeats = convergenceRepeats,
 		convergenceSlopeThreshold = convergenceSlopeThreshold, convergenceSeed = convergenceSeed,
 		convergenceMaxEmbedDimensions = convergenceMaxEmbedDimensions,
@@ -147,10 +152,12 @@ def MDE(X_train: ArrayOrRuns,
 	selectedVariables = numpy.full([numTargets, maxVariables], -1, dtype = int)
 	performance = numpy.full([numTargets, maxVariables], numpy.nan)
 	selectedSlopes = numpy.full([numTargets, maxVariables], numpy.nan)
+	selectedZScores = numpy.full([numTargets, maxVariables], numpy.nan)
 	for j in range(numTargets):
 		selectedVariables[j, :len(state.selectedVariables[j])] = state.selectedVariables[j]
 		performance[j, :len(state.scores[j])] = state.scores[j]
 		selectedSlopes[j, :len(state.slopes[j])] = state.slopes[j]
+		selectedZScores[j, :len(state.zScores[j])] = state.zScores[j]
 
 	return MDEResult(
 		Y_pred = Y_pred,
@@ -161,6 +168,7 @@ def MDE(X_train: ArrayOrRuns,
 		candidate_embed_dimensions = state.candidateEmbedDimensions,
 		candidate_peak_scores = state.candidatePeakScores,
 		candidate_slopes = state.slopeCache,
+		selected_z_scores = selectedZScores,
 		score = scores)
 
 
@@ -198,6 +206,8 @@ class _SelectionProblem:
 	convergenceCheck: Union[str, bool]
 	minPredictionScore: float
 	minCandidateScore: float
+	minSelectedZScore: Optional[float]
+	extraStepsBelowZScore: int
 	stdThreshold: float
 	convergenceSubsetPercentiles: numpy.ndarray
 	convergenceRepeats: int
@@ -218,7 +228,9 @@ class _SelectionProblem:
 @dataclass
 class _SelectionState:
 	"""
-	Hold the working state of the greedy loop. The per-candidate arrays are [nTargets,
+	Hold the working state of the greedy loop. zScores holds, per target and step, how many
+	standard deviations the selected candidate's performance lay above the mean of every
+	candidate evaluated at that step. The per-candidate arrays are [nTargets,
 	nCandidates] over the candidate view: candidateEmbedDimensions is -1 and candidatePeakScores
 	NaN where the search did not run; slopeCache is NaN for a candidate never checked and -inf
 	for a computed NaN slope, so a rejected candidate stays rejected at later steps.
@@ -227,6 +239,7 @@ class _SelectionState:
 	selectedVariables: List[List[int]]
 	scores: List[List[float]]
 	slopes: List[List[float]]
+	zScores: List[List[float]]
 	stepwiseScores: numpy.ndarray
 	candidateEmbedDimensions: numpy.ndarray
 	candidatePeakScores: numpy.ndarray
@@ -250,7 +263,7 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 	Run the greedy selection for all targets together.
 
 	:param problem:	the data views and settings
-	:return: the finished _SelectionState: selected variables, their performance and slopes, and the per-candidate diagnostics
+	:return: the finished _SelectionState: selected variables, their performance, slopes and z-scores, and the per-candidate diagnostics
 	"""
 	nTargets = problem.numTargets
 	nVars = problem.numFeatures + problem.numTargets
@@ -271,6 +284,7 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 		selectedVariables = [[] for _ in range(nTargets)],
 		scores = [[] for _ in range(nTargets)],
 		slopes = [[] for _ in range(nTargets)],
+		zScores = [[] for _ in range(nTargets)],
 		stepwiseScores = numpy.zeros([nTargets, problem.maxVariables, nVars]),
 		candidateEmbedDimensions = numpy.full([nTargets, nVars], -1, dtype = int),
 		candidatePeakScores = numpy.full([nTargets, nVars], numpy.nan),
@@ -334,6 +348,8 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 
 	# a target that selects nothing in a round can never select anything later
 	activeTargets = [True] * nTargets
+	# consecutive steps whose selected candidate fell below minSelectedZScore, per target
+	stepsBelowZScore = [0] * nTargets
 
 	for stepIndex in range(problem.maxVariables):
 		currentNeighborCounts = [len(state.selectedVariables[j]) + 2 for j in range(nTargets)]
@@ -376,6 +392,9 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 			if not activeTargets[j]:
 				continue
 			candidatePerformance[j].sort(key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf, reverse = True)
+			# the population the selected candidate is z-scored against: every candidate evaluated at this step
+			populationScores = numpy.array([score for _, score in candidatePerformance[j]], dtype = float)
+			populationScores = populationScores[numpy.isfinite(populationScores)]
 
 			if problem.minPredictionScore > 0:
 				candidatePerformance[j] = [(var, score) for var, score in candidatePerformance[j]
@@ -411,6 +430,19 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 				trainColumn = trainDataTensor[:, bestVar]
 				testColumn = testDataTensor[:, bestVar]
 				selectedDistances[j] += (trainColumn.unsqueeze(1) - testColumn.unsqueeze(0)) ** 2
+
+				zScore = _ZScore(bestScore, populationScores)
+				state.zScores[j].append(zScore)
+				if problem.minSelectedZScore is not None and numpy.isfinite(zScore):
+					if zScore < problem.minSelectedZScore:
+						stepsBelowZScore[j] += 1
+						if stepsBelowZScore[j] > problem.extraStepsBelowZScore:
+							activeTargets[j] = False
+							if problem.isVerbose:
+								print('Step {}: the selected candidate for target {} has z-score {} below {} for {} consecutive steps; terminating its expansion'.format(
+									stepIndex + 1, problem.targets[j], zScore, problem.minSelectedZScore, stepsBelowZScore[j]))
+					else:
+						stepsBelowZScore[j] = 0
 			else:
 				activeTargets[j] = False
 				if problem.isVerbose:
@@ -427,6 +459,22 @@ def _SelectVariables(problem: _SelectionProblem) -> _SelectionState:
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()
 	return state
+
+
+def _ZScore(value: float, population: numpy.ndarray) -> float:
+	"""
+	Compute how many standard deviations a value lies from the mean of a population.
+
+	:param value:	the value scored
+	:param population:	the finite values it is compared against, [n]
+	:return: (value - mean) / standard deviation; NaN when the population has fewer than two values or no spread
+	"""
+	if len(population) < 2:
+		return numpy.nan
+	spread = float(numpy.std(population))
+	if spread == 0:
+		return numpy.nan
+	return float((value - numpy.mean(population)) / spread)
 
 
 def _PredictSelected(problem: _SelectionProblem, state: _SelectionState, scoringFunction: Callable):

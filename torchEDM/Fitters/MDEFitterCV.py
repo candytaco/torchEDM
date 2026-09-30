@@ -45,6 +45,8 @@ class MDEFitterCV(EDMFitter):
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
+				 MinSelectedZScore: Optional[float] = None,
+				 ExtraStepsBelowZScore: int = 0,
 				 IterativeDimensionSearch: bool = False,
 				 progressBar: bool = True,
 				 device = None):
@@ -71,6 +73,8 @@ class MDEFitterCV(EDMFitter):
 		:param CCMMaxEmbeddingDimensions:	largest embedding dimension tried in the per-candidate search
 		:param MinPredictionThreshold:	minimum performance a candidate must reach at a step to be selectable
 		:param MinCandidatePerformance:	minimum peak performance a candidate alone (at its best embedding dimension) must reach predicting the target to stay in the pool; 0 disables
+		:param MinSelectedZScore:	stop rule on how far the selected candidate stands out from the other candidates: at each step the performance of every evaluated candidate is z-scored, and a target stops expanding once its selected candidate's z-score falls below this value; None disables the rule
+		:param ExtraStepsBelowZScore:	number of further selection steps run after a selected candidate first falls below MinSelectedZScore, to confirm the drop; the target stops once this many further steps have also fallen below it, and a step back above it restarts the count. The candidates selected during these steps stay selected
 		:param IterativeDimensionSearch:	True evaluates each embedding dimension of the per-candidate search on its own complete samples (slower, reproduces the reference); False shares the samples complete at the largest one in one pass
 		:param Folds:	number of contiguous blocks each run is cut into when LeaveOneRunOut is False; fold k holds out block k of every run
 		:param LeaveOneRunOut:	True holds out one whole run per split; False uses the n-fold blocks
@@ -104,6 +108,8 @@ class MDEFitterCV(EDMFitter):
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidatePerformance = MinCandidatePerformance
+		self.MinSelectedZScore = MinSelectedZScore
+		self.ExtraStepsBelowZScore = ExtraStepsBelowZScore
 		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.device = device
 
@@ -137,6 +143,7 @@ class MDEFitterCV(EDMFitter):
 					convergenceMaxEmbedDimensions = self.CCMMaxEmbeddingDimensions,
 					minPredictionScore = self.MinPredictionThreshold,
 					minCandidateScore = self.MinCandidatePerformance,
+					minSelectedZScore = self.MinSelectedZScore, extraStepsBelowZScore = self.ExtraStepsBelowZScore,
 					isIterativeDimensionSearch = self.IterativeDimensionSearch,
 					hasProgressBar = False,
 					device = self.device)
@@ -152,7 +159,7 @@ class MDEFitterCV(EDMFitter):
 		:param Y_test:	kept for Predict; optional
 		:param initialVariables:	indices of the candidate input variables; None uses all
 		:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData), scoring each fold's held-out prediction per target
-		:return: MDECVResults holding the selected variables, candidate performance, held-out predictions and performance of every fold, and the best fold's selection per target
+		:return: MDECVResults holding the selected variables, candidate performance, selected z-scores, held-out predictions and performance of every fold, and the best fold's selection per target
 		"""
 		self.xRuns = AsRuns(X_train)
 		self.yRuns = AsRuns(Y_train)
@@ -184,6 +191,7 @@ class MDEFitterCV(EDMFitter):
 
 		foldSelectedVariables = numpy.stack([r.selected_variables for r in self.foldResults], axis = 0)
 		foldStepwisePerformances = numpy.stack([r.stepwise_performance for r in self.foldResults], axis = 0)[:, :, :, :nFeatures]
+		foldSelectedZScores = numpy.stack([r.selected_z_scores for r in self.foldResults], axis = 0)
 
 		self.Result = MDECVResults(
 			fold_selected_variables = foldSelectedVariables,
@@ -191,7 +199,8 @@ class MDEFitterCV(EDMFitter):
 			fold_accuracies = self.foldAccuracies,
 			fold_Y_pred = [res.Y_pred for res in self.foldResults],
 			best_fold = self.bestFold,
-			selected_variables = self.bestVariablesInFold)
+			selected_variables = self.bestVariablesInFold,
+			fold_selected_z_scores = foldSelectedZScores)
 		return self.Result
 
 	def FitSingleFold(self, X_train, Y_train, X_test, Y_test, candidateColumns = None, convergenceCheck = None,
@@ -278,7 +287,8 @@ class MDEFitterCV(EDMFitter):
 			best_fold = self.bestFold,
 			selected_variables = variablesPerTarget,
 			Y_pred = Y_pred[0] if isSingleTestRun else Y_pred,
-			score = scores)
+			score = scores,
+			fold_selected_z_scores = self.Result.fold_selected_z_scores)
 		return self.Result
 
 	def ReconstructFoldPredictions(self, results: MDECVResults, X_train, Y_train, scoringFunction = Correlation):

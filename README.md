@@ -64,6 +64,12 @@ selection = MDE(lorenz[0:500, 1:5], lorenz[0:500, 5], lorenz[500:1000, 1:5], lor
 selection.selected_variables  # column indices into X_train, padded with -1
 selection.Y_pred              # shape (500, 1)
 selection.candidate_embed_dimensions  # per (target, candidate) when the convergence check searched them
+selection.selected_z_scores   # how far each selected candidate stood out from the other candidates at its step
+
+# stop expanding a target once its selected candidate no longer stands out (z-score below 2), after
+# two further selections have confirmed the drop; those further selections stay in the result
+stopped = MDE(lorenz[0:500, 1:5], lorenz[0:500, 5], lorenz[500:1000, 1:5], lorenz[500:1000, 5], maxVariables = 4,
+              convergenceCheck = False, minSelectedZScore = 2, extraStepsBelowZScore = 2)
 ```
 
 Parameter sweeps live in `torchEDM.Hyperparameters`: `FindOptimalEmbeddingDimensionality`,

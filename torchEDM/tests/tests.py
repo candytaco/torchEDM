@@ -13,6 +13,7 @@ X_train/Y_train/X_test/Y_test arrays:
 """
 import importlib.resources
 import os
+import tempfile
 import unittest
 from warnings import filterwarnings
 
@@ -508,6 +509,37 @@ class test_MDE(unittest.TestCase):
 			self.assertEqual(result.candidate_slopes[0, selected], slope)
 		self.assertTrue((result.candidate_embed_dimensions[0, :self.X.shape[1]] >= 1).all())
 
+	def test_mde_z_score_stop(self):
+		"""Expansion stops once the selected candidate no longer stands out from the other candidates."""
+		common = dict(maxVariables = 10, convergenceCheck = False, predictionHorizon = 1, hasProgressBar = False)
+		unrestricted = MDE(self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601], **common)
+		zScores = unrestricted.selected_z_scores[0]
+		self.assertEqual(int((unrestricted.selected_variables[0] >= 0).sum()), 10)
+		self.assertTrue(numpy.isfinite(zScores).all())
+		# on this data the first three selections stand about two standard deviations above the field, the fourth about 1.4
+		self.assertTrue((zScores[:3] > 2).all() and zScores[3] < 1.5)
+		expectedCounts = {(2.0, 0): 4,		# stops at the first selection below 2
+						  (2.0, 2): 6,		# two confirming selections below 2 follow it
+						  (1.5, 1): 5,		# selections 4 and 5 fall below 1.5
+						  (1.5, 2): 9}		# selection 6 rises above 1.5 and restarts the count
+		for (threshold, extraSteps), expected in expectedCounts.items():
+			result = MDE(self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601],
+						 minSelectedZScore = threshold, extraStepsBelowZScore = extraSteps, **common)
+			selected = int((result.selected_variables[0] >= 0).sum())
+			self.assertEqual(selected, expected, (threshold, extraSteps))
+			self.assertTrue(numpy.array_equal(result.selected_variables[0, :selected], unrestricted.selected_variables[0, :selected]))
+			self.assertTrue(numpy.allclose(result.selected_z_scores[0, :selected], zScores[:selected]))
+			self.assertTrue(numpy.isnan(result.selected_z_scores[0, selected:]).all())
+			self.assertEqual(result.Y_pred.shape, (301, 1))
+		fitted = MDEFitter(MaxD = 10, Convergent = False, PredictionHorizon = 1, MinSelectedZScore = 2.0, progressBar = False).Fit(
+			self.X[0:300], self.y[0:300], self.X[300:601], self.y[300:601])
+		self.assertEqual(int((fitted.selected_variables[0] >= 0).sum()), 4)
+		with tempfile.TemporaryDirectory() as folder:
+			path = os.path.join(folder, 'selection.npz')
+			ResultsIO.Save(fitted, path)
+			loaded = ResultsIO.Load(path)
+			self.assertTrue(numpy.allclose(loaded.selected_z_scores, fitted.selected_z_scores, equal_nan = True))
+
 	def test_mde_cross_validation(self):
 		"""Leave-one-run-out selection over three runs and a final prediction; then contiguous folds of one run."""
 		runs = [(0, 300), (300, 600), (600, 900)]
@@ -516,6 +548,8 @@ class test_MDE(unittest.TestCase):
 		result = fitter.Fit(X, Y)
 		self.assertEqual(result.fold_selected_variables.shape, (3, 1, 2))
 		self.assertEqual(result.fold_accuracies.shape, (3, 1))
+		self.assertEqual(result.fold_selected_z_scores.shape, (3, 1, 2))
+		self.assertTrue(numpy.isfinite(result.fold_selected_z_scores).all())
 		predicted = fitter.Predict(self.X[900:1061], self.y[900:1061])
 		self.assertEqual(predicted.Y_pred.shape, (161, 1))
 		self.assertTrue(numpy.isfinite(predicted.score).all())

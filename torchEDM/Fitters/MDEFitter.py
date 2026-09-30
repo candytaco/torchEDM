@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Optional, Union
 
 import numpy
 import torch
@@ -33,6 +33,8 @@ class MDEFitter(EDMFitter):
 				 CCMMaxEmbeddingDimensions: int = 15,
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
+				 MinSelectedZScore: Optional[float] = None,
+				 ExtraStepsBelowZScore: int = 0,
 				 IterativeDimensionSearch: bool = False,
 				 progressBar: bool = True,
 				 device = None):
@@ -59,6 +61,8 @@ class MDEFitter(EDMFitter):
 		:param CCMMaxEmbeddingDimensions:	largest embedding dimension tried in the per-candidate search
 		:param MinPredictionThreshold:	minimum performance a candidate must reach at a step to be selectable
 		:param MinCandidatePerformance:	minimum peak performance a candidate alone (at its best embedding dimension) must reach predicting the target to stay in the pool; 0 disables
+		:param MinSelectedZScore:	stop rule on how far the selected candidate stands out from the other candidates: at each step the performance of every evaluated candidate is z-scored, and a target stops expanding once its selected candidate's z-score falls below this value; None disables the rule
+		:param ExtraStepsBelowZScore:	number of further selection steps run after a selected candidate first falls below MinSelectedZScore, to confirm the drop; the target stops once this many further steps have also fallen below it, and a step back above it restarts the count. The candidates selected during these steps stay selected
 		:param IterativeDimensionSearch:	True evaluates each embedding dimension of the per-candidate search on its own complete samples (slower, reproduces the reference); False shares the samples complete at the largest one in one pass
 		:param progressBar:	True shows a progress bar over the selection steps
 		:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
@@ -86,6 +90,8 @@ class MDEFitter(EDMFitter):
 		self.CCMMaxEmbeddingDimensions = CCMMaxEmbeddingDimensions
 		self.MinPredictionThreshold = MinPredictionThreshold
 		self.MinCandidatePerformance = MinCandidatePerformance
+		self.MinSelectedZScore = MinSelectedZScore
+		self.ExtraStepsBelowZScore = ExtraStepsBelowZScore
 		self.IterativeDimensionSearch = IterativeDimensionSearch
 		self.device = device
 
@@ -105,6 +111,7 @@ class MDEFitter(EDMFitter):
 					convergenceMaxEmbedDimensions = self.CCMMaxEmbeddingDimensions,
 					minPredictionScore = self.MinPredictionThreshold,
 					minCandidateScore = self.MinCandidatePerformance,
+					minSelectedZScore = self.MinSelectedZScore, extraStepsBelowZScore = self.ExtraStepsBelowZScore,
 					isIterativeDimensionSearch = self.IterativeDimensionSearch,
 					hasProgressBar = not self.hideProgress,
 					device = self.device)

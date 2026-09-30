@@ -121,6 +121,7 @@ class MDEResult:
 	:param candidate_embed_dimensions:	best embedding dimension per (target, candidate), [nTargets, nCandidates]; -1 where the search did not run
 	:param candidate_peak_scores:	performance at that embedding dimension, [nTargets, nCandidates]; NaN where the search did not run
 	:param candidate_slopes:	convergence slope per (target, candidate), [nTargets, nCandidates]; NaN for a candidate the run never checked, -inf for a check whose slope was NaN
+	:param selected_z_scores:	z-score of each selected candidate's performance among every candidate evaluated at that step, [nTargets, maxVariables], padded with NaN; NaN also where fewer than two candidates were evaluated or they all scored alike
 	:param score:	performance per target, [nTargets], from scoringFunction over the final (Y_test, Y_pred) pairs, or None
 	"""
 	Y_pred: Optional[ArrayOrList]
@@ -131,6 +132,7 @@ class MDEResult:
 	candidate_embed_dimensions: Optional[np.ndarray] = None
 	candidate_peak_scores: Optional[np.ndarray] = None
 	candidate_slopes: Optional[np.ndarray] = None
+	selected_z_scores: Optional[np.ndarray] = None
 	score: Optional[np.ndarray] = None
 
 
@@ -143,6 +145,7 @@ class MDECVResults:
 	:param fold_stepwise_performances:	performance of every candidate per fold, [nFolds, nTargets, maxVariables, nCandidates]
 	:param fold_accuracies:	performance per fold and target, [nFolds, nTargets]
 	:param fold_Y_pred:	predicted data of each fold's held-out data
+	:param fold_selected_z_scores:	z-score of each selected candidate per fold, [nFolds, nTargets, maxVariables], padded with NaN; None in files that predate it
 	:param best_fold:	index of the best fold per target, [nTargets]
 	:param selected_variables:	indices of the final selected variables, [nTargets, maxVariables], padded with -1
 	:param Y_pred:	final predicted data with the same shape as Y_test, or None
@@ -156,6 +159,7 @@ class MDECVResults:
 	selected_variables: np.ndarray
 	Y_pred: Optional[ArrayOrList] = None
 	score: Optional[np.ndarray] = None
+	fold_selected_z_scores: Optional[np.ndarray] = None
 
 	@property
 	def selected_stepwise_performances(self) -> np.ndarray:
@@ -438,7 +442,7 @@ class ResultsIO:
 		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
 			arrays['score'] = np.asarray(result.score)
-		for key in ('candidate_embed_dimensions', 'candidate_peak_scores', 'candidate_slopes'):
+		for key in ('candidate_embed_dimensions', 'candidate_peak_scores', 'candidate_slopes', 'selected_z_scores'):
 			value = getattr(result, key)
 			if value is not None:
 				arrays[key] = np.asarray(value)
@@ -460,6 +464,8 @@ class ResultsIO:
 		ResultsIO._PackRuns(arrays, 'Y_pred', result.Y_pred)
 		if result.score is not None:
 			arrays['score'] = np.asarray(result.score)
+		if result.fold_selected_z_scores is not None:
+			arrays['fold_selected_z_scores'] = np.asarray(result.fold_selected_z_scores)
 		if result.fold_Y_pred is not None:
 			arrays['n_fold_Y_pred'] = np.array(len(result.fold_Y_pred))
 			for i, foldPrediction in enumerate(result.fold_Y_pred):
@@ -585,6 +591,7 @@ class ResultsIO:
 						 candidate_embed_dimensions = optional('candidate_embed_dimensions'),
 						 candidate_peak_scores = optional('candidate_peak_scores'),
 						 candidate_slopes = optional('candidate_slopes'),
+						 selected_z_scores = optional('selected_z_scores'),
 						 score = optional('score'))
 
 	@staticmethod
@@ -605,7 +612,8 @@ class ResultsIO:
 							best_fold = data['best_fold'],
 							selected_variables = data['selected_variables'],
 							Y_pred = ResultsIO._UnpackRuns(data, 'Y_pred'),
-							score = data['score'] if 'score' in data else None)
+							score = data['score'] if 'score' in data else None,
+							fold_selected_z_scores = data['fold_selected_z_scores'] if 'fold_selected_z_scores' in data else None)
 
 	@staticmethod
 	def _LoadBatchedCCM(data) -> BatchedCCMResult:
