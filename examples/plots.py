@@ -1,6 +1,6 @@
 """
-Plotting helpers for torchEDM results, kept out of the package so that matplotlib is not a
-dependency of the core. Rows are sample positions; there is no time axis.
+Plot torchEDM results. These helpers live outside the package so that matplotlib is not a
+dependency of the core. Every x axis counts samples; there is no time axis.
 
 Run alongside fitter_examples.py, or import from a script started in this directory.
 """
@@ -13,21 +13,34 @@ from torchEDM.Scoring import Correlation, RootMeanSquareError
 
 
 def _FirstRun(arrays):
-	"""The first run of a list or tuple of runs; a single array as is."""
+	"""
+	Return the first run of a list or tuple of runs, or a single array as is.
+
+	:param arrays:	an array or a collection of per-run arrays
+	"""
 	return arrays[0] if isinstance(arrays, (list, tuple)) else arrays
 
 
 def _Column(values, column = 0):
+	"""
+	Return one variable of a 2-D array, or a 1-D array as is.
+
+	:param values:	[nSamples] or [nSamples, nVariables]
+	:param column:	index of the variable taken from a 2-D array
+	"""
 	values = np.asarray(values)
 	return values if values.ndim == 1 else values[:, column]
 
 
 def plot_prediction(Y_true, Y_pred, title: str = "", block: bool = True):
 	"""
-	Observations and predictions against row index, with correlation and RMSE in the title.
+	Plot the true data and the predicted data against sample index, with the correlation and
+	RMSE in the title.
 
-	:param Y_true:	[nRows] or [nRows, nTargets], or a list of runs (the first run is plotted); the first target is plotted
-	:param Y_pred:	a result record with Y_pred, or an array (or list of runs) shaped like Y_true
+	:param Y_true:	true (observed) data, [nSamples] or [nSamples, nTargets]; a list of runs plots its first run; the first target is plotted
+	:param Y_pred:	predicted data with the same shape as the true data, or a result record whose Y_pred has that shape
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	predicted = _Column(_FirstRun(getattr(Y_pred, 'Y_pred', Y_pred)))
 	actual = _Column(_FirstRun(Y_true))
@@ -46,9 +59,11 @@ def plot_prediction(Y_true, Y_pred, title: str = "", block: bool = True):
 
 def plot_smap_coefficients(result, title: str = "", block: bool = True):
 	"""
-	Each coefficient of the locally weighted linear map against row index, first target.
+	Plot each coefficient of the locally weighted linear map against sample index, first target.
 
-	:param result:	an SMapResult, or an array [nRows, stateSize + 1] (or [nRows, stateSize + 1, nTargets])
+	:param result:	an SMapResult, or a coefficient array [nSamples, stateSize + 1] or [nSamples, stateSize + 1, nTargets]
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	coefficients = np.asarray(_FirstRun(getattr(result, 'coefficients', result)))
 	if coefficients.ndim == 3:
@@ -67,9 +82,11 @@ def plot_smap_coefficients(result, title: str = "", block: bool = True):
 
 def plot_ccm(result, title: str = "", block: bool = True):
 	"""
-	Cross-map skill against training-subset size, one line per source (and target).
+	Plot the cross-map performance against training-subset size, one line per source (and target).
 
-	:param result:	a BatchedCCMResult, or an array [nSizes, 1 + nLines] with the sizes in column 0
+	:param result:	a BatchedCCMResult, or an array [nSizes, 1 + nLines] holding, per size, the size itself and then one performance value per line
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	if hasattr(result, 'forward_performance'):
 		sizes = np.asarray(result.library_sizes)
@@ -88,15 +105,27 @@ def plot_ccm(result, title: str = "", block: bool = True):
 
 
 def plot_multiview(Y_true, result, title: str = "", block: bool = True):
-	"""Ensemble prediction against observations; see plot_prediction."""
+	"""
+	Plot the ensemble prediction against the true data, drawn by plot_prediction.
+
+	:param Y_true:	true (observed) data, [nSamples] or [nSamples, nTargets]; a list of runs plots its first run
+	:param result:	a MultiviewResult, or predicted data with the same shape as the true data
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
+	"""
 	plot_prediction(Y_true, result, title = title, block = block)
 
 
 def _plot_sweep(x: np.ndarray, lines: np.ndarray, labels: Optional[List[str]], xlabel: str, title: str, block: bool):
 	"""
-	:param x:		[nX] sweep values
-	:param lines:	[nLines, nX] one score curve per line
+	Plot one performance curve per line against the sweep values.
+
+	:param x:	sweep values, [nX]
+	:param lines:	one performance curve per line, [nLines, nX]
 	:param labels:	one legend entry per line; None for no legend
+	:param xlabel:	name of the sweep value
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	plt.figure()
 	for lineIndex in range(lines.shape[0]):
@@ -112,7 +141,14 @@ def _plot_sweep(x: np.ndarray, lines: np.ndarray, labels: Optional[List[str]], x
 
 
 def _SweepWithLeadingColumn(result, xlabel: str, title: str, block: bool):
-	"""A sweep table [nX, 1 + nTargets] whose column 0 holds the sweep values."""
+	"""
+	Plot a sweep table holding, per sweep value, the value itself and then the performance per target.
+
+	:param result:	sweep table, [nX, 1 + nTargets]
+	:param xlabel:	name of the sweep value
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
+	"""
 	result = np.asarray(result)
 	lines = result[:, 1:].T
 	labels = [f'target {t}' for t in range(lines.shape[0])] if lines.shape[0] > 1 else None
@@ -121,11 +157,12 @@ def _SweepWithLeadingColumn(result, xlabel: str, title: str, block: bool):
 
 def plot_embed_dimension(scores, title: str = "", block: bool = True):
 	"""
-	Scores from FindOptimalEmbeddingDimensionality against embedding dimension 1..maxDims.
+	Plot the performance from FindOptimalEmbeddingDimensionality against embedding dimension
+	1..maxDims.
 
-	:param scores:	[maxDims] for one target; [nTargets, maxDims] for several targets, or
-		[nColumns, maxDims] from the per-column sweep of one target; [nTargets, nColumns, maxDims]
-		from the per-column sweep of several targets. One line per leading index.
+	:param scores:	[maxDims] for one target; [nTargets, maxDims] for several targets, or [nVariables, maxDims] from the per-variable sweep of one target; [nTargets, nVariables, maxDims] from the per-variable sweep of several targets. One line per leading index
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	scores = np.asarray(scores)
 	if scores.ndim == 1:
@@ -145,13 +182,21 @@ def plot_embed_dimension(scores, title: str = "", block: bool = True):
 
 def plot_predict_interval(result, title: str = "", block: bool = True):
 	"""
-	:param result:	[maxHorizon, 1 + nTargets] from FindOptimalPredictionHorizon, the horizon in column 0
+	Plot the performance from FindOptimalPredictionHorizon against the horizon.
+
+	:param result:	sweep table, [maxHorizon, 1 + nTargets]: per horizon, the horizon itself and then the performance per target
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	_SweepWithLeadingColumn(result, 'Prediction horizon', title or "Prediction horizon", block)
 
 
 def plot_predict_nonlinear(result, title: str = "", block: bool = True):
 	"""
-	:param result:	[nTheta, 1 + nTargets] from FindSMapNeighborhood, theta in column 0
+	Plot the performance from FindSMapNeighborhood against the localization strength.
+
+	:param result:	sweep table, [nTheta, 1 + nTargets]: per localization strength, theta itself and then the performance per target
+	:param title:	plot title
+	:param block:	True keeps the script at plt.show until the window closes; False returns at once
 	"""
 	_SweepWithLeadingColumn(result, 'Localization (theta)', title or "Localization", block)

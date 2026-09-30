@@ -1,4 +1,4 @@
-"""Loading of example data: one float array per sample set, the time column at index 0."""
+"""Load the example data sets: one float array per set, [nSamples, nVariables], with time as variable 0."""
 
 import importlib.resources  # Get data file pathnames from EDM package
 

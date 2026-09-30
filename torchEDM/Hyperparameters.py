@@ -1,6 +1,7 @@
 """
-Parameter sweeps scored on X_train/Y_train -> X_test/Y_test with the predictors' row
-semantics (see EDM.Setup): embedding dimensions, prediction horizon, and localization.
+Sweep parameters and score each value on X_train, Y_train and X_test, Y_test with the
+predictors' sample semantics (see EDM.Setup): embedding dimensions, prediction horizon, and
+localization strength.
 """
 from typing import Callable, List, Optional
 
@@ -17,13 +18,28 @@ from .Scoring import Correlation, _FilterNonFinite
 
 
 def _ScoreFinitePairs(scoringFunction, Y_true, Y_pred):
-	"""Score only the pairs where both values are finite."""
+	"""
+	Score only the pairs where both values are finite.
+
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData)
+	:param Y_true:	true data, [n]
+	:param Y_pred:	predicted data, [n]
+	:return: the performance, or None when the metric declines
+	"""
 	Y_true, Y_pred = _FilterNonFinite(Y_true, Y_pred)
 	return scoringFunction(Y_true, Y_pred)
 
 
 def _ScoreColumns(scoringFunction, isScoringFinitePairsOnly, Y_true, Y_pred) -> numpy.ndarray:
-	"""scoringFunction per target column; a declined score is NaN. :return: [nTargets]"""
+	"""
+	Apply the performance metric per target; a declined score is NaN.
+
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData)
+	:param isScoringFinitePairsOnly:	True drops non-finite pairs before scoring
+	:param Y_true:	true data, [n, nTargets]
+	:param Y_pred:	predicted data, [n, nTargets]
+	:return: [nTargets]
+	"""
 	scores = []
 	for column in range(Y_true.shape[1]):
 		if isScoringFinitePairsOnly:
@@ -35,7 +51,15 @@ def _ScoreColumns(scoringFunction, isScoringFinitePairsOnly, Y_true, Y_pred) -> 
 
 
 def _GatherAtOffset(runs: List[numpy.ndarray], rows: numpy.ndarray, runIds: numpy.ndarray, offset: int) -> numpy.ndarray:
-	"""Y[row + offset] per state, NaN where the shifted row leaves its run. :return: [nStates, nTargets]"""
+	"""
+	Gather Y[position + offset] per state, NaN where the shifted position leaves its run.
+
+	:param runs:	list of [nSamples, nTargets] arrays, one per run
+	:param rows:	position of each state within its run, [nStates]
+	:param runIds:	run index of each state, [nStates]
+	:param offset:	number of samples added to each state's position
+	:return: [nStates, nTargets]
+	"""
 	out = numpy.full((len(rows), runs[0].shape[1]), numpy.nan)
 	for runIndex, y in enumerate(runs):
 		inRun = runIds == runIndex
@@ -66,27 +90,24 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 									   device = None,
 									   dtype: torch.dtype = torch.float32) -> numpy.ndarray:
 	"""
-	Pearson correlation of the neighbor-averaging prediction at every embedding dimension 1..maxDims.
+	Score the nearest-neighbor prediction at every embedding dimension 1..maxDims by Pearson
+	correlation.
 
-	:param X_train:		[nTrain, nFeatures] or a list of runs
-	:param Y_train:		[nTrain, nTargets] or a list of runs; None makes every X column predict every X column
-	:param X_test:		[nTest, nFeatures] or a list of runs; None scores the training rows in-sample
-	:param Y_test:		targets for X_test (required with X_test unless Y_train is None)
-	:param maxDims:		largest embedding dimension to test
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param step:		row offset between stacked copies; negative reaches into the past
-	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
-	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
-	:param isBatched:		True: every embedding dimension shares the test states complete at maxDims and the training rows
-						usable there, in one pass. False: each embedding dimension is scored on its own complete rows
-						(more rows at smaller embedding dimensions, slower).
-	:param isJoint:		True: all X columns stacked together predict each Y column, [nTargets, maxDims].
-						False: each X column alone predicts each Y column, [nTargets, nVars, maxDims].
-						Self-prediction (Y_train None) is always per column, [nVars, nVars, maxDims].
-	:param dtype:		torch dtype for the computation
-	:param batchSize:	X columns per pass in the per-column sweeps; None takes all at once
-	:param device:		torch device; None picks cuda when available
-	:return: scores with the leading target axis dropped when there is one target
+	:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+	:param Y_train:	training target data, [nTrain, nTargets] or a list of runs; None makes every input variable predict every input variable
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are scored. None scores the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; required with X_test unless Y_train is None, and a NaN sample is never scored
+	:param maxDims:	largest embedding dimension tested
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param isBatched:	True scores every embedding dimension in one pass on the test states complete at maxDims and the training samples usable there. False scores each embedding dimension on its own complete samples (more samples at smaller embedding dimensions, slower)
+	:param isJoint:	True stacks all input variables together to predict each target, giving [nTargets, maxDims]. False makes each input variable alone predict each target, giving [nTargets, nVariables, maxDims]. Self-prediction (Y_train None) is always per variable, [nVariables, nVariables, maxDims]
+	:param batchSize:	number of input variables per pass in the per-variable sweeps; None takes all at once
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances and predictions
+	:return: the performance, with the leading target axis dropped when there is one target
 	"""
 	isSelfPrediction = Y_train is None
 	if isSelfPrediction:
@@ -114,10 +135,26 @@ def FindOptimalEmbeddingDimensionality(X_train: ArrayOrRuns,
 
 
 def _FindOptimalEmbeddingDimensionalityBatched(X_train, Y_train, X_test, Y_test, maxDims, predictionHorizon, step,
-											   exclusionRadius, trainRowMask, joint, dtype, batchSize, device):
+											   exclusionRadius, trainRowMask, isJoint, dtype, batchSize, device):
 	"""
-	One pass over the rows complete at maxDims; per-column squared distances are accumulated
-	over the stacked history so every embedding dimension comes from one cumulative sum.
+	Score every embedding dimension in one pass over the samples complete at maxDims: squared
+	distances per variable are accumulated over the lagged copies, so every embedding dimension
+	comes from one cumulative sum.
+
+	:param X_train:	the caller's training input data
+	:param Y_train:	the caller's training target data
+	:param X_test:	the caller's test input data, or None in-sample
+	:param Y_test:	the caller's true test data, or None in-sample
+	:param maxDims:	largest embedding dimension tested; the samples must be complete at this depth
+	:param predictionHorizon:	number of samples between a state and the target it predicts
+	:param step:	sample offset between consecutive lagged copies
+	:param exclusionRadius:	in-sample neighbor exclusion radius in samples
+	:param trainRowMask:	optional mask over the usable training samples
+	:param isJoint:	True scores all input variables together, False each variable alone
+	:param dtype:	torch dtype of the distances and predictions
+	:param batchSize:	number of variables per pass in the per-variable sweep; None takes all
+	:param device:	torch device; None picks cuda when available
+	:return: [nTargets, maxDims] jointly, or [nTargets, nVariables, maxDims] per variable
 	"""
 	inputs = PreparePrediction(X_train, Y_train, X_test, maxDims, step, predictionHorizon, exclusionRadius, trainRowMask)
 	testTargets = TestTargets(Y_test if X_test is not None else Y_train, inputs)
@@ -133,7 +170,7 @@ def _FindOptimalEmbeddingDimensionalityBatched(X_train, Y_train, X_test, Y_test,
 		maskTensor = torch.as_tensor(inputs.exclusionMask[:, isScored], device = device)
 	nVars = trainStates.shape[1] // maxDims
 
-	if joint:
+	if isJoint:
 		return _BatchedJointPrediction(trainStates, trainTargetTensor, testStates, testTargetTensor, maxDims, nVars, device, dtype, maskTensor)
 	return _BatchedSeparatePrediction(trainStates, trainTargetTensor, testStates, testTargetTensor, maxDims, nVars, device, dtype,
 									  maskTensor, batchSize)
@@ -141,10 +178,18 @@ def _FindOptimalEmbeddingDimensionalityBatched(X_train, Y_train, X_test, Y_test,
 
 def _ComputeJointEmbeddingDistances(X_train, X_test, maxDims, nVars, device, dtype):
 	"""
-	Cumulative squared distances of all columns stacked together, one matrix per embedding dimension.
-	Stacked columns arrive variable-major (all lags of column 0, then column 1, ...); they
-	are reordered lag-major so the cumulative sum at position embedDimension * nVars - 1 holds every
-	column through that embedding dimension. :return: [maxDims, nTrain, nTest]
+	Accumulate the squared distances of all input variables stacked together, one matrix per
+	embedding dimension. Stacked dimensions arrive grouped by variable (all lags of variable 0,
+	then variable 1, and so on); they are reordered by lag so the cumulative sum at position
+	embedDimension * nVars - 1 holds every variable through that embedding dimension.
+
+	:param X_train:	training states grouped by variable, [nTrain, nVars * maxDims]
+	:param X_test:	test states grouped the same way, [nTest, nVars * maxDims]
+	:param maxDims:	number of lagged copies the states were stacked to
+	:param nVars:	number of input variables
+	:param device:	torch device
+	:param dtype:	torch dtype
+	:return: [maxDims, nTrain, nTest]
 	"""
 	trainTensor = torch.as_tensor(X_train, device = device, dtype = dtype)
 	testTensor = torch.as_tensor(X_test, device = device, dtype = dtype)
@@ -169,8 +214,17 @@ def _ComputeJointEmbeddingDistances(X_train, X_test, maxDims, nVars, device, dty
 
 def _ComputePerVariableEmbeddingDistances(X_train, X_test, maxDims, batchNumVars, colStart, colEnd, device, dtype):
 	"""
-	Cumulative squared distances per column for a batch of columns.
-	:return: [batchNumVars * maxDims, nTrain, nTest], row v * maxDims + d is column v through embedding dimension d + 1
+	Accumulate the squared distances per input variable for a batch of variables.
+
+	:param X_train:	training states grouped by variable, [nTrain, nVars * maxDims]
+	:param X_test:	test states grouped the same way, [nTest, nVars * maxDims]
+	:param maxDims:	number of lagged copies the states were stacked to
+	:param batchNumVars:	number of variables in this batch
+	:param colStart:	first state dimension of the batch
+	:param colEnd:	one past the last state dimension of the batch
+	:param device:	torch device
+	:param dtype:	torch dtype
+	:return: [batchNumVars * maxDims, nTrain, nTest]; matrix v * maxDims + d is variable v through embedding dimension d + 1
 	"""
 	numBatch = batchNumVars * maxDims
 	trainTensor = torch.as_tensor(X_train[:, colStart:colEnd], device = device, dtype = dtype)
@@ -190,13 +244,19 @@ def _ComputePerVariableEmbeddingDistances(X_train, X_test, maxDims, batchNumVars
 
 def _BatchedJointPrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars, device, dtype, maskTensor):
 	"""
-	All X columns jointly predict each target; embedding dimension d uses d * nVars + 1 neighbors.
+	Predict each target from all input variables jointly; embedding dimension d uses
+	d * nVars + 1 neighbors.
 
-	:param X_train:	stacked training states [nTrain, nVars * maxDims], source-major
-	:param Y_train:	[nTargets, nTrain] tensor
-	:param X_test:	stacked test states [nTest, nVars * maxDims]
-	:param Y_test:	[nTargets, nTest] tensor
-	:return: [nTargets, maxDims]
+	:param X_train:	training states grouped by variable, [nTrain, nVars * maxDims]
+	:param Y_train:	targets of the training states, [nTargets, nTrain] tensor
+	:param X_test:	test states grouped the same way, [nTest, nVars * maxDims]
+	:param Y_test:	true data for the test states, [nTargets, nTest] tensor
+	:param maxDims:	number of lagged copies the states were stacked to
+	:param nVars:	number of input variables
+	:param device:	torch device
+	:param dtype:	torch dtype
+	:param maskTensor:	optional boolean [nTrain, nTest] marking the pairs excluded from neighbor search
+	:return: correlations, [nTargets, maxDims]
 	"""
 	embeddingDistances = _ComputeJointEmbeddingDistances(X_train, X_test, maxDims, nVars, device, dtype)
 	if maskTensor is not None:
@@ -216,9 +276,20 @@ def _BatchedJointPrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars, de
 
 def _BatchedSeparatePrediction(X_train, Y_train, X_test, Y_test, maxDims, nVars, device, dtype, maskTensor, batchSize):
 	"""
-	Each X column alone predicts each target, columns in batches. Arrays as in
-	_BatchedJointPrediction.
-	:return: [nTargets, nVars, maxDims]
+	Predict each target from each input variable alone, variables in batches; embedding
+	dimension d uses d + 1 neighbors.
+
+	:param X_train:	training states grouped by variable, [nTrain, nVars * maxDims]
+	:param Y_train:	targets of the training states, [nTargets, nTrain] tensor
+	:param X_test:	test states grouped the same way, [nTest, nVars * maxDims]
+	:param Y_test:	true data for the test states, [nTargets, nTest] tensor
+	:param maxDims:	number of lagged copies the states were stacked to
+	:param nVars:	number of input variables
+	:param device:	torch device
+	:param dtype:	torch dtype
+	:param maskTensor:	optional boolean [nTrain, nTest] marking the pairs excluded from neighbor search
+	:param batchSize:	number of variables per batch; None takes all at once
+	:return: correlations, [nTargets, nVars, maxDims]
 	"""
 	nTargets = Y_train.shape[0]
 	scores = numpy.zeros((nTargets, nVars, maxDims), dtype = numpy.float32)
@@ -259,19 +330,26 @@ def FindSelfPredictionEmbeddingDimension(X_train: ArrayOrRuns,
 										  device = 'cuda',
 										  dtype: torch.dtype = torch.float16) -> numpy.ndarray:
 	"""
-	For every column, the embedding dimension in 1..maxDims at which its own stacked history best
-	predicts its future value. This is the embedding dimension to give a source column when it cross-maps
-	a target.
+	Find, for every variable, the embedding dimension in 1..maxDims at which its own lagged
+	history best predicts its future value. This is the embedding dimension to give a source
+	variable when it cross-maps a target.
 
-	Columns are processed in batches whose dominant tensor is [sourceBatch, nTrain, nTest].
+	Variables are processed in batches whose dominant tensor is [sourceBatch, nTrain, nTest].
 	Exclusions are pre-applied as inf so they survive the incremental lag accumulation.
 
-	:param X_train:		[nTrain, nColumns] or a list of runs
-	:param X_test:		[nTest, nColumns] or a list of runs; None scores the training rows in-sample
-	:param batchSize:	columns per batch (auto-raised to fill targetVRAM when given)
-	:param targetVRAM:	GB budget; None uses batchSize as is
-	:param hasProgressBar:	show a progress bar
-	:return: [nColumns] best embedding dimension per column, 1-based
+	:param X_train:	training data, [nTrain, nVariables] or a list of runs; every variable is both a source of states and its own target
+	:param X_test:	test data, [nTest, nVariables] or a list of runs; these samples are scored. None scores the training samples in-sample
+	:param maxDims:	largest embedding dimension tested
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param batchSize:	number of variables per batch; raised to fill targetVRAM when that is given
+	:param targetVRAM:	memory budget in GB that sizes the batch when given; None uses batchSize as is
+	:param hasProgressBar:	True shows a progress bar over the variable batches
+	:param device:	torch device; cuda falls back to cpu when unavailable
+	:param dtype:	torch dtype of the distances and predictions
+	:return: best embedding dimension per variable, [nVariables], counted from 1
 	"""
 	inputs = PreparePrediction(X_train, X_train, X_test, maxDims, step, predictionHorizon, exclusionRadius, trainRowMask)
 	targets = TestTargets(X_test if X_test is not None else X_train, inputs)
@@ -375,16 +453,25 @@ def FindOptimalPredictionHorizon(X_train: ArrayOrRuns,
 								 device = None,
 								 dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""
-	Score of the neighbor-averaging prediction at every horizon 1..maxHorizon.
+	Score the nearest-neighbor prediction at every prediction horizon 1..maxHorizon.
 
-	:param isBatched:		False (default): each horizon is refitted on its own training rows with
-						SimplexPredict. True: neighbors are found once on the training states usable at
-						maxHorizon and reused at every horizon (faster; the shared training set loses
-						maxHorizon - horizon usable rows at each shorter horizon).
-	:param scoringFunction:	scoringFunction(actual, predicted) -> float, applied per target
-	:param isScoringFinitePairsOnly:	drop pairs with a non-finite value before scoring
-	Other parameters as in SimplexPredict.
-	:return: [maxHorizon, 1 + nTargets], the horizon in column 0
+	:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+	:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted and scored. None scores the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; required with X_test, and a NaN sample is predicted but not scored
+	:param maxHorizon:	largest prediction horizon tested
+	:param embedDimensions:	number of lagged copies of each input variable that form a state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param knn:	number of nearest neighbors that vote on each prediction; 0 means the state size plus one
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param isBatched:	False refits each horizon on its own training samples with SimplexPredict. True finds the neighbors once on the training states usable at maxHorizon and reuses them at every horizon (faster; the shared training set loses maxHorizon - horizon usable samples at each shorter horizon)
+	:param isScoringFinitePairsOnly:	True drops (true, predicted) pairs with a non-finite value before calling scoringFunction; the built-in metrics already do this
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData) on two 1-D arrays, applied per target
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: sweep table, [maxHorizon, 1 + nTargets]: per horizon, the horizon itself and then the performance per target
 	"""
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score predictions on X_test')
@@ -409,8 +496,26 @@ def _FindOptimalPredictionHorizonBatched(X_train, Y_train, X_test, Y_true, horiz
 										 exclusionRadius, trainRowMask, scoringFunction, isScoringFinitePairsOnly,
 										 isTieBreakDeterministic, device, dtype):
 	"""
-	Training rows usable at the largest horizon are usable at every smaller one, so their
-	neighbors and weights are computed once; only the gathered targets change per horizon.
+	Score every horizon from one neighbor search: training samples usable at the largest
+	horizon are usable at every smaller one, so their neighbors and weights are computed once
+	and only the gathered targets change per horizon.
+
+	:param X_train:	the caller's training input data
+	:param Y_train:	the caller's training target data
+	:param X_test:	the caller's test input data, or None in-sample
+	:param Y_true:	true data for the test samples (Y_test, or Y_train in-sample)
+	:param horizons:	the horizons scored, [nHorizons]
+	:param embedDimensions:	number of lagged copies of each input variable in the state
+	:param step:	sample offset between consecutive lagged copies
+	:param knn:	number of nearest neighbors per prediction; 0 means the state size plus one
+	:param exclusionRadius:	in-sample neighbor exclusion radius in samples
+	:param trainRowMask:	optional mask over the usable training samples
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData)
+	:param isScoringFinitePairsOnly:	True drops non-finite pairs before scoring
+	:param isTieBreakDeterministic:	True orders tied neighbor distances by sample position
+	:param device:	torch device; None picks cuda when available
+	:param dtype:	torch dtype
+	:return: performance, [nHorizons, nTargets]
 	"""
 	maxHorizon = int(numpy.max(horizons))
 	inputs = PreparePrediction(X_train, Y_train, X_test, embedDimensions, step, maxHorizon, exclusionRadius, trainRowMask)
@@ -452,13 +557,26 @@ def FindSMapNeighborhood(X_train: ArrayOrRuns,
 						 device = None,
 						 dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""
-	Score of the locally weighted linear prediction at every localization value. Neighbors
+	Score the locally weighted linear prediction at every localization strength. Neighbors
 	are found once; only the weights change per value.
 
-	:param theta:	localization values; None uses 0.01, 0.1, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9
-	:param knn:		neighbors; 0 means every available training state
-	Other parameters as in SMapPredict and FindOptimalPredictionHorizon.
-	:return: [nTheta, 1 + nTargets], theta in column 0
+	:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+	:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted and scored. None scores the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; required with X_test, and a NaN sample is predicted but not scored
+	:param theta:	localization strengths tested; None uses 0.01, 0.1, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 9
+	:param embedDimensions:	number of lagged copies of each input variable that form a state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param knn:	number of nearest neighbors whose equations enter each local linear fit; 0 means every available training state
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param isScoringFinitePairsOnly:	True drops (true, predicted) pairs with a non-finite value before calling scoringFunction; the built-in metrics already do this
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData) on two 1-D arrays, applied per target
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: sweep table, [nTheta, 1 + nTargets]: per localization strength, theta itself and then the performance per target
 	"""
 	if X_test is not None and Y_test is None:
 		raise ValueError('Y_test is needed to score predictions on X_test')

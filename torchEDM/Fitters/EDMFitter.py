@@ -1,13 +1,23 @@
 class EDMFitter:
 	"""
-	Base of the parameter-holding wrappers: the constructor takes the settings, Fit takes
-	X_train, Y_train and optionally X_test, Y_test (arrays or lists of runs), and the result
-	is both returned and kept in Result.
+	Serve as the base of the parameter-holding wrappers: the constructor takes the settings,
+	Fit takes X_train, Y_train and optionally X_test, Y_test (arrays or lists of runs), and the
+	result record is both returned and kept in Result.
 	"""
 
 	def __init__(self, progressBar = True):
+		""":param progressBar:	True shows progress bars while fitting; False silences them (stored inverted as hideProgress)"""
 		self.Result = None
 		self.hideProgress = not progressBar
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
+		"""
+		Run the wrapped function on the arrays and keep its result record in Result.
+
+		:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+		:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train
+		:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted. None predicts the training samples in-sample
+		:param Y_test:	true data for the test samples, same layout as Y_train; when given, the result carries a performance score per target
+		:return: the result record of the wrapped function
+		"""
 		raise NotImplementedError

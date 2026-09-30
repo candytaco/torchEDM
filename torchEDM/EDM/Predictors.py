@@ -1,9 +1,9 @@
 """
-Array-in, array-out predictors.
+Predict from arrays and return arrays.
 
 Inputs are X_train, Y_train and optionally X_test and Y_test (see Setup.PreparePrediction
-for the row semantics). Y_pred always has the shape of Y_test (or of Y_train in-sample),
-with NaN where no complete state predicts a row. Nothing here knows about time; samples
+for the sample semantics). Y_pred always has the shape of Y_test (or of Y_train in-sample),
+with NaN where no complete state predicts a sample. Nothing here knows about time; samples
 are assumed evenly spaced.
 """
 from typing import Callable, List, Optional, Union
@@ -22,7 +22,12 @@ ArrayOrList = Union[numpy.ndarray, List[numpy.ndarray]]
 
 
 def ResolveDevice(device) -> torch.device:
-	"""None picks cuda when available; a cuda request without cuda falls back to cpu."""
+	"""
+	Return the torch device a caller asked for.
+
+	:param device:	a torch.device, a device string, or None; None picks cuda when available, and a cuda request without cuda falls back to cpu
+	:return: torch.device
+	"""
 	if device is None:
 		return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 	device = torch.device(device) if isinstance(device, str) else device
@@ -32,11 +37,23 @@ def ResolveDevice(device) -> torch.device:
 
 
 def _IsOneDimensionalTarget(Y) -> bool:
+	"""
+	Return whether Y was given without a target axis: a 1-D array, or a list of 1-D runs.
+
+	:param Y:	Y_train or Y_test as the caller passed it
+	"""
 	first = Y[0] if IsListOfRuns(Y) else Y
 	return numpy.ndim(first) == 1
 
 
 def _CheckTestTargets(Y_test, inputs: PredictionInputs) -> None:
+	"""
+	Raise ValueError unless Y_test has one run per test run, each with that run's number of
+	samples and the training targets' number of variables.
+
+	:param Y_test:	the caller's Y_test
+	:param inputs:	the PredictionInputs built from X_test
+	"""
 	runs = AsRuns(Y_test)
 	if len(runs) != len(inputs.outputLengths):
 		raise ValueError(f'Y_test has {len(runs)} runs but X_test has {len(inputs.outputLengths)}')
@@ -47,9 +64,15 @@ def _CheckTestTargets(Y_test, inputs: PredictionInputs) -> None:
 
 def _FindNeighbors(inputs: PredictionInputs, knn: int, isTieBreakDeterministic: bool, device, dtype):
 	"""
-	Distances from every training state to every test state, exclusions applied, and the
-	knn nearest per test state.
-	:return: neighborDistances [knn, nTest], neighborIndices [knn, nTest], trainStates, testStates (tensors)
+	Compute the distances from every training state to every test state, apply the exclusions,
+	and select the knn nearest neighbors per test state.
+
+	:param inputs:	the PredictionInputs holding the states and the exclusion mask
+	:param knn:	number of neighbors kept per test state
+	:param isTieBreakDeterministic:	True orders exactly tied distances by sample position (in-sample, by proximity first) instead of leaving it to torch.topk
+	:param device:	torch device the tensors are moved to
+	:param dtype:	torch dtype of the state tensors and distances
+	:return: neighborDistances [knn, nTest], neighborIndices [knn, nTest] into the training states, and trainStates, testStates as tensors on the device
 	"""
 	trainStates = torch.as_tensor(inputs.trainStates, device = device, dtype = dtype)
 	testStates = torch.as_tensor(inputs.testStates, device = device, dtype = dtype)
@@ -70,25 +93,25 @@ def SimplexPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 				   isTieBreakDeterministic: bool = False, scoringFunction: Callable = Correlation,
 				   device = None, dtype: torch.dtype = torch.float64) -> SimplexResult:
 	"""
-	Nearest-neighbor weighted-average prediction (Sugihara & May 1990).
+	Predict each test sample as the weighted average of the targets of its nearest training
+	states (Sugihara & May 1990). The knn nearest training states of each test state vote
+	with weights exp(-d / dNearest); a NaN target among the neighbors makes the prediction NaN.
 
-	Each test state's knn nearest training states vote on the target with weights
-	exp(-d / dNearest); a NaN target among the neighbors makes the prediction NaN.
-
-	:param X_train:		[nTrain, nFeatures] or a list of runs
-	:param Y_train:		[nTrain, nTargets] (1-D for one target) or a list of runs
-	:param X_test:		[nTest, nFeatures] or a list of runs; None predicts the training rows in-sample
-	:param Y_test:		matching Y_train's layout; when given, the result carries a score per target
-	:param embedDimensions:	copies of each feature column in the state; 1 uses the columns as given
-	:param step:		row offset between copies; negative reaches into the past
-	:param predictionHorizon:	rows between a state and the target it predicts
-	:param knn:			neighbors; 0 means state size plus one
-	:param exclusionRadius:	in-sample only; training states this close in rows are not neighbors
-	:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
-	:param isTieBreakDeterministic:	order exactly tied distances reproducibly (slower than topk)
-	:param scoringFunction:	scoringFunction(actual, predicted) -> float, applied per target
-	:param device:		torch device; None picks cuda when available
-	:param dtype:		torch dtype for the computation
+	:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+	:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train; NaN targets are allowed
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted. None predicts the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; when given, the result carries a performance score per target, and a NaN sample is predicted but not scored
+	:param embedDimensions:	number of lagged copies of each input variable that form a state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param knn:	number of nearest neighbors that vote on each prediction; 0 means the state size plus one
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData) on two 1-D arrays, applied per target to the finite pairs
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: SimplexResult holding Y_pred (same shape as Y_test, or Y_train in-sample), the weighted variance of the neighbor targets around each prediction, and the performance per target when Y_test was given
 	"""
 	inputs = PreparePrediction(X_train, Y_train, X_test, embedDimensions, step, predictionHorizon,
 							   exclusionRadius, trainRowMask)
@@ -117,15 +140,28 @@ def SMapPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 				isTieBreakDeterministic: bool = False, scoringFunction: Callable = Correlation,
 				device = None, dtype: torch.dtype = torch.float64) -> SMapResult:
 	"""
-	Locally weighted linear prediction (Sugihara 1994).
+	Predict each test sample with a linear map fitted locally to its nearest training states
+	(Sugihara 1994). Per test state, a linear map with intercept is fitted from the knn nearest
+	training states to their targets with weights exp(-theta * d / mean(d)) and applied to
+	the test state. A NaN neighbor target drops that neighbor's equation for that target; a
+	target with no finite neighbor target is predicted as NaN.
 
-	Per test state, a linear map with intercept is fitted from the knn nearest training
-	states to their targets with weights exp(-theta * d / mean(d)) and applied to the test
-	state. A NaN neighbor target drops that neighbor's equation for that target.
-
-	:param knn:		neighbors; 0 means every available training state
-	:param theta:	localization; 0 fits one global linear map
-	Other parameters as in SimplexPredict.
+	:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+	:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train; NaN targets are allowed
+	:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted. None predicts the training samples in-sample
+	:param Y_test:	true data for the test samples, same layout as Y_train; when given, the result carries a performance score per target, and a NaN sample is predicted but not scored
+	:param embedDimensions:	number of lagged copies of each input variable that form a state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param predictionHorizon:	number of samples between a state and the target value it predicts
+	:param knn:	number of nearest neighbors whose equations enter each local linear fit; 0 means every available training state
+	:param theta:	localization strength; 0 fits one global linear map, larger values weight near neighbors more
+	:param exclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+	:param trainRowMask:	optional boolean mask over the training samples, [nTrain] or a list with one per run; False excludes that sample from serving as a training state
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param scoringFunction:	performance metric called as scoringFunction(trueData, predictedData) on two 1-D arrays, applied per target to the finite pairs
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: SMapResult holding Y_pred (same shape as Y_test), the coefficients of each sample's fit [nSamples, stateSize + 1, nTargets] with the intercept first, the singular values of each weighted design matrix, the weighted residual variance, and the performance per target when Y_test was given
 	"""
 	inputs = PreparePrediction(X_train, Y_train, X_test, embedDimensions, step, predictionHorizon,
 							   exclusionRadius, trainRowMask)
@@ -154,7 +190,15 @@ def SMapPredict(X_train: ArrayOrRuns, Y_train: ArrayOrRuns,
 
 
 def _StateAtRow(series: numpy.ndarray, row: int, embedDimensions: int, step: int) -> numpy.ndarray:
-	"""The stacked state of one row, column-major like StackHistory, as [1, stateSize]."""
+	"""
+	Build the stacked state of one sample, grouped by variable like StackHistory.
+
+	:param series:	the series, [nSamples, nVariables]
+	:param row:	position of the sample whose state is built
+	:param embedDimensions:	number of lagged copies of each variable in the state
+	:param step:	sample offset between consecutive lagged copies
+	:return: [1, nVariables * embedDimensions]; raises ValueError when a lag leaves the series
+	"""
 	lagRows = row + step * numpy.arange(embedDimensions)
 	if lagRows.min() < 0 or lagRows.max() >= series.shape[0]:
 		raise ValueError(f'Row {row} has no complete history of {embedDimensions} samples at step {step}')
@@ -162,6 +206,19 @@ def _StateAtRow(series: numpy.ndarray, row: int, embedDimensions: int, step: int
 
 
 def _PrepareGeneration(X_train, embedDimensions, step, knn, isEveryNeighborDefault, device, dtype):
+	"""
+	Build the fixed training set for feeding a series forward: every complete state of the
+	series paired with the sample after it.
+
+	:param X_train:	one series, [nSamples, nVariables]; a list of one run is accepted
+	:param embedDimensions:	number of lagged copies of each variable in the state
+	:param step:	sample offset between consecutive lagged copies
+	:param knn:	the requested number of neighbors; 0 or None asks for the default
+	:param isEveryNeighborDefault:	False makes the default the state size plus one; True every training state
+	:param device:	torch device; None picks cuda when available
+	:param dtype:	torch dtype of the state and target tensors
+	:return: (series as a 2-D array, positions of the training states, knn, device, trainStates [nStates, stateSize], trainTargets [nStates, nVariables]), the last two as tensors on the device
+	"""
 	runs = AsRuns(X_train)
 	if len(runs) != 1:
 		raise ValueError('Generation continues a single series')
@@ -183,13 +240,19 @@ def SimplexGenerate(X_train: ArrayOrRuns, numSteps: int, embedDimensions: int = 
 					isTieBreakDeterministic: bool = False, device = None,
 					dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""
-	Feed the series forward: the state at its last row predicts the next row of every
-	column, the row is appended, and the loop repeats numSteps times. Training states
-	come from the given series and stay fixed.
+	Feed the series forward with the nearest-neighbor predictor: the state at the last sample
+	predicts the next value of every variable, the new sample is appended, and the loop repeats
+	numSteps times. Training states come from the given series and stay fixed.
 
-	:param X_train:	[nSamples, nColumns] one series
-	:param numSteps:	rows to generate
-	:return: [numSteps, nColumns] generated rows
+	:param X_train:	one series, [nSamples, nVariables]
+	:param numSteps:	number of samples to generate
+	:param embedDimensions:	number of lagged copies of each variable in the state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param knn:	number of nearest neighbors that vote on each generated sample; 0 means the state size plus one
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: generated samples, [numSteps, nVariables]
 	"""
 	X, rows, knn, device, trainStates, trainTargets = _PrepareGeneration(
 		X_train, embedDimensions, step, knn, False, device, dtype)
@@ -211,8 +274,20 @@ def SMapGenerate(X_train: ArrayOrRuns, numSteps: int, embedDimensions: int = 1, 
 				 theta: float = 0.0, isTieBreakDeterministic: bool = False, device = None,
 				 dtype: torch.dtype = torch.float64) -> numpy.ndarray:
 	"""
-	Feed the series forward with the locally weighted linear predictor; see SimplexGenerate.
-	knn 0 means every training state.
+	Feed the series forward with the locally linear predictor: the state at the last sample
+	predicts the next value of every variable, the new sample is appended, and the loop repeats
+	numSteps times. Training states come from the given series and stay fixed.
+
+	:param X_train:	one series, [nSamples, nVariables]
+	:param numSteps:	number of samples to generate
+	:param embedDimensions:	number of lagged copies of each variable in the state; 1 uses the variables as given
+	:param step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+	:param knn:	number of nearest neighbors whose equations enter each local linear fit; 0 means every training state
+	:param theta:	localization strength; 0 fits one global linear map, larger values weight near neighbors more
+	:param isTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position (in-sample, by proximity to the test sample first) so repeated runs pick the same neighbors; False leaves the order to torch.topk and is faster
+	:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+	:param dtype:	torch dtype of the distances, weights and predictions
+	:return: generated samples, [numSteps, nVariables]
 	"""
 	X, rows, knn, device, trainStates, trainTargets = _PrepareGeneration(
 		X_train, embedDimensions, step, knn, True, device, dtype)

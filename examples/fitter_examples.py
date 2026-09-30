@@ -1,11 +1,11 @@
 """
-The parameter-holding wrappers on the packaged sample data, each result plotted with the
-helpers in plots.py. Run from this directory:
+Run the parameter-holding wrappers on the packaged sample data and plot each result with
+the helpers in plots.py. Run from this directory:
 
     python fitter_examples.py
 
-Every sample array has a time column at index 0, which the functions never see. The test
-arrays start two rows before the rows of interest so those rows have history.
+Every sample array has time as variable 0, which the functions never see. The test arrays
+start two samples before the samples of interest so those samples have lagged history.
 """
 from torchEDM.ExampleData import sampleData
 from torchEDM.Fitters import CCMFitter, MultiviewFitter, SimplexFitter, SMapFitter
@@ -14,6 +14,12 @@ from plots import plot_prediction, plot_smap_coefficients, plot_ccm
 
 
 def RunFitterExamples():
+	"""
+	Fit each wrapper on a sample data set and plot its result: two SimplexFitter setups on
+	the three-species block data, a MultiviewFitter ensemble on the same data, an SMapFitter
+	on the circle with its coefficients, and a CCMFitter screen of anchovy against sea-surface
+	temperature. Each plot blocks until its window is closed.
+	"""
 	# 1: three columns as the state, no history stacking
 	data = sampleData["block_3sp"]
 	X_train, Y_train = data[0:100, [1, 4, 7]], data[0:100, 1]

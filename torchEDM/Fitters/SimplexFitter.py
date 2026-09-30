@@ -5,18 +5,20 @@ from .EDMFitter import EDMFitter
 
 
 class SimplexFitter(EDMFitter):
-	"""Parameter holder for SimplexPredict."""
+	"""Hold the parameters of SimplexPredict, the nearest-neighbor weighted-average predictor."""
 
 	def __init__(self, EmbedDimensions: int = 1, PredictionHorizon: int = 1, KNN: int = 0, Step: int = -1,
 				 ExclusionRadius: int = 0, IsTieBreakDeterministic: bool = False, device = None,
 				 dtype: torch.dtype = torch.float64):
 		"""
-		:param EmbedDimensions:	copies of each feature column in the state; 1 uses the columns as given
-		:param PredictionHorizon:	rows between a state and the target it predicts
-		:param KNN:			neighbors; 0 means state size plus one
-		:param Step:		row offset between copies; negative reaches into the past
-		:param ExclusionRadius:	in-sample only; training states this close in rows are not neighbors
-		:param IsTieBreakDeterministic:	order exactly tied neighbor distances reproducibly
+		:param EmbedDimensions:	number of lagged copies of each input variable that form a state; 1 uses the variables as given
+		:param PredictionHorizon:	number of samples between a state and the target value it predicts
+		:param KNN:	number of nearest neighbors that vote on each prediction; 0 means the state size plus one
+		:param Step:	sample offset between consecutive lagged copies; a negative offset reaches into the past
+		:param ExclusionRadius:	in-sample only: training states within this many samples of a test state are excluded from its neighbors; the test state itself is always excluded
+		:param IsTieBreakDeterministic:	True orders exactly tied neighbor distances by sample position so repeated runs pick the same neighbors; False leaves the order to torch.topk
+		:param device:	torch device for the computation; None picks cuda when available and cpu otherwise
+		:param dtype:	torch dtype of the distances, weights and predictions
 		"""
 		super().__init__()
 		self.EmbedDimensions = EmbedDimensions
@@ -29,6 +31,15 @@ class SimplexFitter(EDMFitter):
 		self.dtype = dtype
 
 	def Fit(self, X_train, Y_train, X_test = None, Y_test = None):
+		"""
+		Predict with SimplexPredict and keep the SimplexResult in Result.
+
+		:param X_train:	training input data, [nTrain, nFeatures] or a list of such arrays with one per run; the states are built from these variables
+		:param Y_train:	training target data, [nTrain, nTargets] (1-D for one target) or a list of runs aligned sample by sample with X_train
+		:param X_test:	test input data, [nTest, nFeatures] or a list of runs; these samples are predicted. None predicts the training samples in-sample
+		:param Y_test:	true data for the test samples, same layout as Y_train; when given, the result carries a performance score per target
+		:return: SimplexResult holding Y_pred with the same shape as Y_test (or Y_train in-sample)
+		"""
 		self.Result = SimplexPredict(X_train, Y_train, X_test, Y_test,
 									 embedDimensions = self.EmbedDimensions, step = self.Step,
 									 predictionHorizon = self.PredictionHorizon, knn = self.KNN,
